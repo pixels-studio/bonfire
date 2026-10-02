@@ -186,6 +186,7 @@ export async function smoke(
     );
   }
 
+  backend.store.flush();
   const restoredStore = new Store(process.env.BONFIRE_USER_DATA!);
   assert(restoredStore.state.sessions.some(({ id }) => id === session.id));
   assert.equal(

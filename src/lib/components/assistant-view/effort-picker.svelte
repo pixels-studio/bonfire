@@ -17,8 +17,8 @@
 </script>
 
 <Popover.Root>
-  <Popover.Trigger class="flex items-center gap-0.5 text-sm">
-    {label}<ChevronDown class="size-3.5" />
+  <Popover.Trigger class="flex items-center gap-2 text-sm">
+    {label}<ChevronDown class="size-3.5 text-muted-foreground" />
   </Popover.Trigger>
   <Popover.Content class="w-55 p-6" align="start" side="top">
     <p>Thinking effort · {label}</p>

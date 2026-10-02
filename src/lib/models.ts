@@ -10,6 +10,13 @@ export type Model = {
 
 export const PROVIDERS = Object.keys(PROVIDER_LABELS) as AssistantProvider[];
 
+/** Assumed for models whose window isn't known; a response reports the real one. */
+export const DEFAULT_CONTEXT_WINDOWS: Record<AssistantProvider, number> = {
+  claude: 200_000,
+  codex: 258_400,
+};
+
+/** Models offered until the providers report their own lists. */
 export const MODELS: Model[] = [
   {
     value: 'opus',
@@ -56,11 +63,3 @@ export const EFFORT_LEVELS: { value: ReasoningEffort; label: string }[] = [
   { value: 'high', label: 'High' },
   { value: 'xhigh', label: 'Max' },
 ];
-
-export function modelsFor(provider: AssistantProvider) {
-  return MODELS.filter((model) => model.provider === provider);
-}
-
-export function findModel(value: string) {
-  return MODELS.find((model) => model.value === value);
-}

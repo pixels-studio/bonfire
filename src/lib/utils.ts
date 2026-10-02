@@ -22,10 +22,12 @@ export type WithoutChildrenOrChild<T> = WithoutChildren<WithoutChild<T>> & {
   children?: Snippet;
 };
 
+export function reducedMotion() {
+  return matchMedia('(prefers-reduced-motion: reduce)').matches;
+}
+
 export function scrollBehavior(): ScrollBehavior {
-  return matchMedia('(prefers-reduced-motion: reduce)').matches
-    ? 'auto'
-    : 'smooth';
+  return reducedMotion() ? 'auto' : 'smooth';
 }
 
 export function formatBytes(bytes: number) {

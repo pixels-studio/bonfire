@@ -9,7 +9,7 @@ import {
   type Project,
   type Session,
 } from '../../shared/contracts';
-import { DEFAULT_TITLE } from '../../shared/domain';
+import { DEFAULT_TITLE, MAX_PANES, reorderLayout } from '../../shared/domain';
 import type { ChooseImage } from './assistant';
 import { ClaudeAssistant } from './claude';
 import { CodexAssistant } from './codex';
@@ -79,6 +79,11 @@ export function services(options: ServiceOptions) {
 
   /** Adds a pane at the front of the layout, defaulting to the last-used project, provider, and model. */
   async function addPane(type?: PaneType, model?: string) {
+    const open = store.state.panes.filter(
+      (pane) => !pane.archived && pane.type !== 'terminal',
+    );
+    if (type !== 'terminal' && open.length >= MAX_PANES)
+      throw new Error(`You can have up to ${MAX_PANES} panes open.`);
     const { lastProvider, lastModels } = store.state.settings;
     const paneType = type ?? lastProvider ?? 'claude';
     const pane: Pane = {
@@ -187,13 +192,24 @@ export function services(options: ServiceOptions) {
         return pane;
       },
       archive: async (id) => {
-        store.pane(id).archived = true;
+        const pane = store.pane(id);
+        // An archived pane has no view left to show or answer its turn.
+        if (pane.type !== 'terminal') assistantFor(id).cancel(id);
+        pane.archived = true;
+        store.save();
+      },
+      reorder: async (ids) => {
+        const { layout } = store.state;
+        layout.paneIds = reorderLayout(layout.paneIds, ids);
         store.save();
       },
     },
     assistant: {
       send: async (input) => assistantFor(input.paneId).send(input),
       cancel: async (paneId) => assistantFor(paneId).cancel(paneId),
+      respond: async (input) => assistantFor(input.paneId).respond(input),
+      snapshot: async (paneId) => assistantFor(paneId).snapshot(paneId),
+      models: async (provider) => assistants[provider].models(),
       pickAttachment: async (paneId) =>
         assistantFor(paneId).pickAttachment(paneId),
     },
@@ -250,6 +266,7 @@ export function services(options: ServiceOptions) {
       terminals.close();
       assistants.claude.close();
       assistants.codex.close();
+      store.flush();
       await files.close();
     },
   };
