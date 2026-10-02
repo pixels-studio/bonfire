@@ -2,15 +2,15 @@ import { contextBridge, ipcRenderer } from 'electron';
 import type { API } from '../../shared/contracts';
 const groups: Record<string, string[]> = {
   state: ['get'],
-  projects: ['list', 'add', 'remove', 'select'],
+  projects: ['list', 'add', 'remove', 'select', 'favicon'],
   sessions: ['create', 'select', 'remove'],
   panes: ['add', 'select', 'remove', 'archive'],
   assistant: ['send', 'cancel', 'pickAttachment'],
   navigation: ['help'],
+  app: ['isFullscreen'],
   terminal: ['create', 'write', 'resize', 'kill', 'snapshot'],
-  git: ['status', 'branches', 'diff'],
+  git: ['status', 'branches', 'diff', 'checkout'],
   filesystem: ['list', 'readFile', 'stat', 'watch', 'unwatch'],
-  worktrees: ['remove'],
   settings: ['update'],
 };
 const api: Record<string, Record<string, unknown>> = {};
@@ -32,4 +32,6 @@ api.assistant.onEvent = (fn: (data: unknown) => void) =>
   subscribe('assistant:event', fn);
 api.filesystem.onChange = (fn: (data: unknown) => void) =>
   subscribe('filesystem:change', fn);
-contextBridge.exposeInMainWorld('helm', api as unknown as API);
+api.app.onFullscreenChange = (fn: (data: unknown) => void) =>
+  subscribe('window:fullscreen', fn);
+contextBridge.exposeInMainWorld('bonfire', api as unknown as API);

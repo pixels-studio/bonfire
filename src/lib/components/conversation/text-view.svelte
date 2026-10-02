@@ -21,8 +21,9 @@
   }
   .user {
     align-self: flex-end;
-    width: min(400px, 88%);
-    padding: 12px 16px;
+    width: fit-content;
+    max-width: min(400px, 88%);
+    padding: 8px 16px;
     border-radius: 20px;
     background: var(--surface-raised);
     color: var(--foreground);

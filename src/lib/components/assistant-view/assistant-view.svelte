@@ -1,30 +1,24 @@
 <script lang="ts">
   import { onMount, tick, untrack } from 'svelte';
-  import Archive from '@lucide/svelte/icons/archive';
   import ArrowUp from '@lucide/svelte/icons/arrow-up';
-  import Bot from '@lucide/svelte/icons/bot';
-  import FileCode2 from '@lucide/svelte/icons/file-code-2';
-  import Files from '@lucide/svelte/icons/folder-open';
-  import GitBranch from '@lucide/svelte/icons/git-branch';
-  import Maximize2 from '@lucide/svelte/icons/maximize-2';
-  import MoreHorizontal from '@lucide/svelte/icons/ellipsis';
-  import PanelLeft from '@lucide/svelte/icons/panel-left';
-  import PanelTop from '@lucide/svelte/icons/panel-top';
-  import Paperclip from '@lucide/svelte/icons/paperclip';
+  import Check from '@lucide/svelte/icons/check';
+  import ChevronDown from '@lucide/svelte/icons/chevron-down';
   import Square from '@lucide/svelte/icons/square';
-  import Terminal from '@lucide/svelte/icons/square-terminal';
   import X from '@lucide/svelte/icons/x';
   import { Button } from '$lib/components/ui/button';
   import * as Card from '$lib/components/ui/card';
   import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
+  import * as Popover from '$lib/components/ui/popover';
   import * as Select from '$lib/components/ui/select';
+  import { Slider } from '$lib/components/ui/slider';
   import * as Tooltip from '$lib/components/ui/tooltip';
-  import TextView from './conversation/TextView.svelte';
-  import AttachmentView from './conversation/AttachmentView.svelte';
-  import ThinkingView from './conversation/ThinkingView.svelte';
-  import ToolView from './conversation/ToolView.svelte';
-  import Inspector from './Inspector.svelte';
-  import type TerminalPane from './TerminalPane.svelte';
+  import Icon from '$lib/components/icon/icon.svelte';
+  import TextView from '../conversation/text-view.svelte';
+  import AttachmentView from '../conversation/attachment-view.svelte';
+  import ThinkingView from '../conversation/thinking-view.svelte';
+  import ToolView from '../conversation/tool-view.svelte';
+  import Inspector from '../inspector/inspector.svelte';
+  import type TerminalPane from '../terminal-pane/terminal-pane.svelte';
   import type {
     AssistantEvent,
     Attachment,
@@ -42,12 +36,17 @@
     session,
     onarchive,
     onresize,
+    onrefresh,
   }: {
     pane: Pane;
     session: Session;
     onarchive: () => void;
     onresize: (size: PaneSize) => void;
+    onrefresh: () => void;
   } = $props();
+
+  const provider = $derived(pane.type === 'claude' ? 'claude' : 'codex');
+  const providerLabel = $derived(pane.type === 'claude' ? 'Claude' : 'Codex');
 
   let messages = $state<ConversationMessage[]>([
     ...untrack(() => pane.messages),
@@ -57,27 +56,78 @@
   let prompt = $state('');
   let error = $state('');
   let view = $state<View>('chat');
-  let model = $state(untrack(() => pane.model) || 'default');
   let attachments = $state<Attachment[]>([]);
   let displayTitle = $state(
     untrack(() =>
-      pane.title === 'Codex' || pane.title === 'New Conversation'
+      pane.title === 'Codex' ||
+      pane.title === 'Claude' ||
+      pane.title === 'New Conversation'
         ? 'New Conversation'
         : pane.title,
     ),
   );
   let feed = $state<HTMLDivElement>();
   let TerminalPaneComponent = $state<typeof TerminalPane>();
-  const models = [
-    { value: 'default', label: 'Default' },
-    { value: 'gpt-5.6-terra', label: 'Terra' },
-    { value: 'gpt-6-astra', label: 'Astra' },
-  ];
+  let branches = $state<string[]>([]);
+  let branchesLoading = $state(false);
+  let branchError = $state('');
+  const models = untrack(() =>
+    pane.type === 'claude'
+      ? [
+          { value: 'opus', label: 'Opus 5.5', contextWindow: 200000 },
+          { value: 'sonnet', label: 'Sonnet 5.5', contextWindow: 200000 },
+          {
+            value: 'sonnet-1m',
+            label: 'Sonnet 5.5 (1M)',
+            contextWindow: 1000000,
+          },
+          { value: 'haiku', label: 'Haiku 4.5', contextWindow: 200000 },
+        ]
+      : [
+          { value: 'gpt-5.6-terra', label: 'Terra', contextWindow: 300000 },
+          { value: 'gpt-6-astra', label: 'Astra', contextWindow: 400000 },
+        ],
+  );
+  let model = $state(
+    untrack(() =>
+      models.some((item) => item.value === pane.model)
+        ? pane.model
+        : models[0].value,
+    ),
+  );
+  const EFFORT_LEVELS = ['minimal', 'low', 'medium', 'high', 'xhigh'] as const;
+  const EFFORT_LABELS: Record<(typeof EFFORT_LEVELS)[number], string> = {
+    minimal: 'Minimal',
+    low: 'Low',
+    medium: 'Medium',
+    high: 'High',
+    xhigh: 'Max',
+  };
+  let effortValue = $state(
+    untrack(() => Math.max(0, EFFORT_LEVELS.indexOf(pane.reasoningEffort))),
+  );
+  const effort = $derived(EFFORT_LEVELS[effortValue]);
+  const contextWindow = $derived(
+    models.find((item) => item.value === model)?.contextWindow ??
+      models[0].contextWindow,
+  );
   const usedTokens = $derived(
     usage
       ? usage.inputTokens + usage.outputTokens + usage.reasoningOutputTokens
       : 0,
   );
+  const tokenPct = $derived(
+    contextWindow ? Math.min(usedTokens / contextWindow, 1) : 0,
+  );
+  const tokenRingColor = $derived(
+    tokenPct >= 0.75
+      ? 'var(--destructive)'
+      : tokenPct >= 0.5
+        ? 'var(--accent)'
+        : 'var(--foreground-subtle)',
+  );
+  const TOKEN_RING_RADIUS = 7;
+  const TOKEN_RING_CIRCUMFERENCE = 2 * Math.PI * TOKEN_RING_RADIUS;
 
   function updateMessage(message: ConversationMessage) {
     const index = messages.findIndex((item) => item.id === message.id);
@@ -97,12 +147,12 @@
     const attachmentIds = attachments.map(({ id }) => id);
     attachments = [];
     try {
-      await window.helm.assistant.send({
+      await window.bonfire.assistant.send({
         paneId: pane.id,
         text,
         attachmentIds,
-        model: model === 'default' ? '' : model,
-        reasoningEffort: pane.reasoningEffort,
+        model,
+        reasoningEffort: effort,
       });
     } catch (cause) {
       error = cause instanceof Error ? cause.message : String(cause);
@@ -113,7 +163,7 @@
   async function pickAttachment() {
     if (attachments.length >= 8) return;
     try {
-      const attachment = await window.helm.assistant.pickAttachment(pane.id);
+      const attachment = await window.bonfire.assistant.pickAttachment(pane.id);
       if (attachment) attachments = [...attachments, attachment];
     } catch (cause) {
       error = cause instanceof Error ? cause.message : String(cause);
@@ -128,7 +178,9 @@
   async function toggleView(next: View) {
     view = view === next ? 'chat' : next;
     if (view === 'terminal' && !TerminalPaneComponent)
-      TerminalPaneComponent = (await import('./TerminalPane.svelte')).default;
+      TerminalPaneComponent = (
+        await import('../terminal-pane/terminal-pane.svelte')
+      ).default;
   }
 
   function keydown(event: KeyboardEvent) {
@@ -143,8 +195,31 @@
     return tokens >= 1000 ? `${(tokens / 1000).toFixed(1)}k` : String(tokens);
   }
 
+  async function loadBranches() {
+    branchesLoading = true;
+    branchError = '';
+    try {
+      branches = await window.bonfire.git.branches(session.projectId);
+    } catch (cause) {
+      branchError = cause instanceof Error ? cause.message : String(cause);
+    } finally {
+      branchesLoading = false;
+    }
+  }
+
+  async function switchBranch(branch: string) {
+    if (branch === session.branch) return;
+    branchError = '';
+    try {
+      await window.bonfire.git.checkout(session.id, branch);
+      onrefresh();
+    } catch (cause) {
+      branchError = cause instanceof Error ? cause.message : String(cause);
+    }
+  }
+
   onMount(() =>
-    window.helm.assistant.onEvent((event: AssistantEvent) => {
+    window.bonfire.assistant.onEvent((event: AssistantEvent) => {
       if (event.paneId !== pane.id) return;
       if (event.type === 'message') updateMessage(event.message);
       if (event.type === 'usage') usage = event.usage;
@@ -156,21 +231,39 @@
   );
 </script>
 
+{#snippet branchPicker(triggerClass: string)}
+  <DropdownMenu.Root onOpenChange={(open) => open && loadBranches()}>
+    <DropdownMenu.Trigger>
+      {#snippet child({ props })}<button {...props} class={triggerClass}
+          ><Icon name="git" /> {session.branch || 'Folder'}</button
+        >{/snippet}
+    </DropdownMenu.Trigger>
+    <DropdownMenu.Content align="start">
+      <DropdownMenu.Label>Switch branch</DropdownMenu.Label>
+      {#if branchesLoading}
+        <DropdownMenu.Item disabled>Loading branches…</DropdownMenu.Item>
+      {:else if branchError}
+        <DropdownMenu.Item disabled>{branchError}</DropdownMenu.Item>
+      {:else if !branches.length}
+        <DropdownMenu.Item disabled>No branches found</DropdownMenu.Item>
+      {:else}
+        {#each branches as branch}
+          <DropdownMenu.Item onclick={() => switchBranch(branch)}
+            >{branch}{#if branch === session.branch}<Check
+                class="check"
+              />{/if}</DropdownMenu.Item
+          >
+        {/each}
+      {/if}
+    </DropdownMenu.Content>
+  </DropdownMenu.Root>
+{/snippet}
+
 <Card.Root class="assistant-card">
   <header class="pane-header">
     <div class="pane-title">
-      <Bot aria-hidden="true" />
-      <span title={displayTitle}>{displayTitle}</span>
-      <Tooltip.Root>
-        <Tooltip.Trigger>
-          {#snippet child({ props })}<button {...props} class="branch-chip"
-              ><GitBranch /> {session.branch || 'Folder'}</button
-            >{/snippet}
-        </Tooltip.Trigger>
-        <Tooltip.Content
-          >{session.ownsWorktree ? 'Worktree' : 'Local project'} · {session.worktreePath}</Tooltip.Content
-        >
-      </Tooltip.Root>
+      <Icon name="bot" aria-hidden="true" />
+      <span class="text-sm" title={displayTitle}>{displayTitle}</span>
     </div>
     <div class="pane-actions">
       <Button
@@ -179,14 +272,14 @@
         aria-label="Open file preview"
         class={view === 'files' ? 'active' : ''}
         onclick={() => (view = view === 'files' ? 'chat' : 'files')}
-        ><Files /></Button
+        ><Icon name="folder" /></Button
       >
       <Button
         variant="ghost"
         size="icon"
         aria-label="Open terminal"
         class={view === 'terminal' ? 'active' : ''}
-        onclick={() => toggleView('terminal')}><Terminal /></Button
+        onclick={() => toggleView('terminal')}><Icon name="terminal" /></Button
       >
       <Button
         variant="ghost"
@@ -194,7 +287,7 @@
         aria-label="Open code diff"
         class={view === 'diff' ? 'active' : ''}
         onclick={() => (view = view === 'diff' ? 'chat' : 'diff')}
-        ><FileCode2 /></Button
+        ><Icon name="code" /></Button
       >
       <DropdownMenu.Root>
         <DropdownMenu.Trigger>
@@ -202,23 +295,23 @@
               {...props}
               variant="ghost"
               size="icon"
-              aria-label="Conversation options"><MoreHorizontal /></Button
+              aria-label="Conversation options"><Icon name="dots" /></Button
             >{/snippet}
         </DropdownMenu.Trigger>
         <DropdownMenu.Content align="end">
           <DropdownMenu.Label>Pane size</DropdownMenu.Label>
           <DropdownMenu.Item onclick={() => onresize('full')}
-            ><Maximize2 /> Full</DropdownMenu.Item
+            ><Icon name="full" /> Full</DropdownMenu.Item
           >
           <DropdownMenu.Item onclick={() => onresize('half')}
-            ><PanelLeft /> Half</DropdownMenu.Item
+            ><Icon name="half" /> Half</DropdownMenu.Item
           >
           <DropdownMenu.Item onclick={() => onresize('third')}
-            ><PanelTop /> Third</DropdownMenu.Item
+            ><Icon name="one-third" /> Third</DropdownMenu.Item
           >
           <DropdownMenu.Separator />
-          <DropdownMenu.Item onclick={onarchive}
-            ><Archive /> Archive</DropdownMenu.Item
+          <DropdownMenu.Item variant="destructive" onclick={onarchive}
+            ><Icon name="archive" /> Archive</DropdownMenu.Item
           >
         </DropdownMenu.Content>
       </DropdownMenu.Root>
@@ -230,8 +323,10 @@
       <div class="conversation" bind:this={feed} aria-live="polite">
         {#if messages.length === 0}
           <div class="empty-conversation">
-            <Bot />
-            <p>Ask Codex to explore, explain, or change this project.</p>
+            <Icon name={provider} />
+            <p class="text-sm">
+              Ask {providerLabel} to explore, explain, or change this project.
+            </p>
           </div>
         {/if}
         {#each messages as message (message.id)}
@@ -242,7 +337,11 @@
           {:else if message.kind === 'tool'}
             <ToolView {message} />
           {:else if message.kind === 'attachment'}
-            <AttachmentView name={message.text} detail="Image" />
+            <AttachmentView
+              name={message.text}
+              size={message.size}
+              previewUrl={message.previewUrl}
+            />
           {/if}
         {/each}
         {#if error}<p class="pane-error" role="alert">{error}</p>{/if}
@@ -264,17 +363,9 @@
 
   {#if view === 'chat'}
     <div class="composer-wrap">
-      {#if messages.length === 0}
-        <div class="new-conversation-options">
-          <span
-            title={session.ownsWorktree
-              ? 'This conversation uses an isolated Git worktree'
-              : 'This conversation uses your local checkout'}
-            >{session.ownsWorktree ? 'Use worktree' : 'Use local'}</span
-          >
-          <span><GitBranch /> {session.branch || 'Folder'}</span>
-        </div>
-      {/if}
+      <div class="composer-branch-row">
+        {@render branchPicker('composer-branch-trigger')}
+      </div>
       <form
         class="composer"
         onsubmit={(event) => {
@@ -286,7 +377,11 @@
           <div class="pending-attachments" aria-label="Selected attachments">
             {#each attachments as attachment (attachment.id)}
               <div class="attachment-chip">
-                <AttachmentView name={attachment.name} detail="Image" />
+                <AttachmentView
+                  name={attachment.name}
+                  size={attachment.size}
+                  previewUrl={attachment.previewUrl}
+                />
                 <button
                   type="button"
                   aria-label={`Remove ${attachment.name}`}
@@ -300,7 +395,8 @@
           </div>
         {/if}
         <textarea
-          aria-label="Message Codex"
+          class="text-sm"
+          aria-label={`Message ${providerLabel}`}
           placeholder="Ask for changes"
           bind:value={prompt}
           onkeydown={keydown}
@@ -318,18 +414,77 @@
                   >{/each}
               </Select.Content>
             </Select.Root>
-            <span class="effort">· {pane.reasoningEffort}</span>
+            <Popover.Root>
+              <Popover.Trigger>
+                {#snippet child({ props })}<button
+                    {...props}
+                    class="effort text-sm"
+                    >{EFFORT_LABELS[effort]}<ChevronDown /></button
+                  >{/snippet}
+              </Popover.Trigger>
+              <Popover.Content
+                class="effort-popover p-[24px]"
+                align="start"
+                side="top"
+              >
+                <p class="effort-popover-label text-sm">
+                  Thinking effort · {EFFORT_LABELS[effort]}
+                </p>
+                <div class="effort-slider-wrap">
+                  <Slider
+                    type="single"
+                    bind:value={effortValue}
+                    min={0}
+                    max={EFFORT_LEVELS.length - 1}
+                    step={1}
+                  />
+                  <div class="effort-marks" aria-hidden="true">
+                    {#each EFFORT_LEVELS as _level, i}
+                      <span
+                        class="effort-mark"
+                        style:left={`${(i / (EFFORT_LEVELS.length - 1)) * 100}%`}
+                      ></span>
+                    {/each}
+                  </div>
+                </div>
+              </Popover.Content>
+            </Popover.Root>
             <Tooltip.Root>
               <Tooltip.Trigger>
                 {#snippet child({ props })}<button
                     {...props}
                     class="context-usage"
-                    >{contextLabel(usedTokens)} tokens</button
+                    aria-label={`${contextLabel(usedTokens)} of ${contextLabel(contextWindow)} tokens used`}
+                  >
+                    <svg class="token-ring" viewBox="0 0 18 18" aria-hidden="true">
+                      <circle
+                        cx="9"
+                        cy="9"
+                        r={TOKEN_RING_RADIUS}
+                        fill="none"
+                        stroke="var(--control-active)"
+                        stroke-width="2.5"
+                      />
+                      <circle
+                        cx="9"
+                        cy="9"
+                        r={TOKEN_RING_RADIUS}
+                        fill="none"
+                        stroke={tokenRingColor}
+                        stroke-width="2.5"
+                        stroke-linecap="round"
+                        stroke-dasharray={TOKEN_RING_CIRCUMFERENCE}
+                        stroke-dashoffset={TOKEN_RING_CIRCUMFERENCE *
+                          (1 - tokenPct)}
+                        transform="rotate(-90 9 9)"
+                      />
+                    </svg>
+                  </button
                   >{/snippet}
               </Tooltip.Trigger>
               <Tooltip.Content>
                 {usage
-                  ? `${usage.inputTokens.toLocaleString()} input · ${usage.outputTokens.toLocaleString()} output · ${usage.reasoningOutputTokens.toLocaleString()} reasoning`
+                  ? `${contextLabel(usedTokens)} / ${contextLabel(contextWindow)} tokens · ${usage.inputTokens.toLocaleString()} input · ${usage.outputTokens.toLocaleString()} output · ${usage.reasoningOutputTokens.toLocaleString()} reasoning`
                   : 'Context usage appears after the first response'}
               </Tooltip.Content>
             </Tooltip.Root>
@@ -339,11 +494,11 @@
               <Tooltip.Trigger>
                 {#snippet child({ props })}<Button
                     {...props}
-                    variant="ghost"
+                    variant="secondary"
                     size="icon"
                     aria-label="Add image"
                     disabled={running || attachments.length >= 8}
-                    onclick={pickAttachment}><Paperclip /></Button
+                    onclick={pickAttachment}><Icon name="attachment" /></Button
                   >{/snippet}
               </Tooltip.Trigger>
               <Tooltip.Content>Add image</Tooltip.Content>
@@ -353,7 +508,7 @@
                 variant="secondary"
                 size="icon"
                 aria-label="Stop response"
-                onclick={() => window.helm.assistant.cancel(pane.id)}
+                onclick={() => window.bonfire.assistant.cancel(pane.id)}
                 ><Square /></Button
               >
             {:else}
@@ -391,8 +546,7 @@
   .composer-footer,
   .composer-meta,
   .composer-actions,
-  .new-conversation-options,
-  .branch-chip {
+  .composer-branch-row {
     display: flex;
     align-items: center;
   }
@@ -411,21 +565,8 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  .branch-chip {
-    flex: none;
-    gap: 5px;
-    padding: 0 8px;
-    border: 0;
-    border-radius: 48px;
-    background: var(--control);
-    color: var(--foreground);
-    font: inherit;
-    font-size: 12px;
-    line-height: 20px;
-  }
-  .branch-chip :global(svg) {
-    width: 13px;
-    height: 13px;
+  :global(.check) {
+    margin-left: auto;
   }
   .pane-actions {
     gap: 8px;
@@ -455,6 +596,7 @@
   .empty-conversation {
     display: grid;
     flex: 1;
+    gap: 4px;
     place-content: center;
     justify-items: center;
     color: var(--foreground-subtle);
@@ -466,6 +608,7 @@
   }
   .empty-conversation p {
     max-width: 260px;
+    text-wrap: pretty;
   }
   .pane-error {
     color: var(--destructive);
@@ -478,18 +621,23 @@
     flex: none;
     padding: 0 16px 16px;
   }
-  .new-conversation-options {
+  .composer-branch-row {
     gap: 24px;
     padding: 0 2px 12px;
     color: var(--foreground-subtle);
     font-size: 14px;
   }
-  .new-conversation-options span {
+  .composer-branch-trigger {
     display: flex;
     align-items: center;
     gap: 7px;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    font: inherit;
   }
-  .new-conversation-options :global(svg) {
+  .composer-branch-row :global(svg) {
     width: 16px;
     height: 16px;
   }
@@ -533,9 +681,6 @@
     outline: 0;
     background: transparent;
     color: var(--foreground);
-    font: inherit;
-    font-size: 16px;
-    line-height: 20px;
   }
   textarea::placeholder {
     color: var(--foreground-subtle);
@@ -546,7 +691,7 @@
   }
   .composer-meta {
     min-width: 0;
-    gap: 3px;
+    gap: 24px;
   }
   :global(.model-trigger) {
     border: 0;
@@ -554,17 +699,59 @@
     background: transparent;
     color: var(--foreground);
   }
-  .effort,
-  .context-usage {
-    color: var(--foreground-subtle);
-    font-size: 12px;
-    text-transform: capitalize;
+  .effort {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: var(--foreground);
+  }
+  .effort :global(svg) {
+    width: 14px;
+    height: 14px;
   }
   .context-usage {
-    margin-left: 7px;
+    display: grid;
+    flex: none;
+    place-items: center;
     padding: 4px;
     border: 0;
     background: transparent;
+  }
+  .token-ring {
+    width: 16px;
+    height: 16px;
+  }
+  .token-ring circle {
+    transition: stroke-dashoffset 200ms ease-out;
+  }
+  :global(.effort-popover) {
+    width: 220px;
+    gap: 10px;
+  }
+  .effort-popover-label {
+    margin: 0;
+    color: var(--foreground);
+  }
+  .effort-slider-wrap {
+    position: relative;
+    padding: 4px 0;
+  }
+  .effort-marks {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+  }
+  .effort-mark {
+    position: absolute;
+    top: 50%;
+    width: 4px;
+    height: 4px;
+    border-radius: 50%;
+    background: var(--foreground-subtle);
+    transform: translate(-50%, -50%);
   }
   .composer-actions {
     gap: 10px;

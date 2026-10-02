@@ -1,11 +1,10 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
-  import Bot from '@lucide/svelte/icons/bot';
-  import FolderPlus from '@lucide/svelte/icons/folder-plus';
   import { Button } from '$lib/components/ui/button';
   import * as Card from '$lib/components/ui/card';
-  import AppHeader from '$lib/components/AppHeader.svelte';
-  import AssistantView from '$lib/components/AssistantView.svelte';
+  import AppHeader from '$lib/components/app-header/app-header.svelte';
+  import AssistantView from '$lib/components/assistant-view/assistant-view.svelte';
+  import Icon from '$lib/components/icon/icon.svelte';
   import type { Pane, State } from '$shared/contracts';
 
   type PaneSize = 'full' | 'half' | 'third';
@@ -41,7 +40,7 @@
   });
 
   async function refresh() {
-    workspaceState = await window.helm.state.get();
+    workspaceState = await window.bonfire.state.get();
   }
 
   async function action(run: () => Promise<unknown>) {
@@ -58,16 +57,16 @@
   }
 
   function addProject() {
-    void action(() => window.helm.projects.add());
+    void action(() => window.bonfire.projects.add());
   }
 
   function selectProject(id: string) {
-    void action(() => window.helm.projects.select(id));
+    void action(() => window.bonfire.projects.select(id));
   }
 
-  async function addPane() {
+  async function addPane(type: 'claude' | 'codex' = 'codex') {
     if (!session || busy) return;
-    await action(() => window.helm.panes.add(session.id, 'codex'));
+    await action(() => window.bonfire.panes.add(session.id, type));
     await tick();
     paneStrip?.scrollTo({
       left: 0,
@@ -76,7 +75,7 @@
   }
 
   async function archivePane(id: string) {
-    await action(() => window.helm.panes.archive(id));
+    await action(() => window.bonfire.panes.archive(id));
   }
 
   function resizePane(id: string, size: PaneSize) {
@@ -108,14 +107,14 @@
   }
 
   onMount(() => {
-    if (!window.helm) {
-      error = 'Launch Helm with npm start or npm run dev.';
+    if (!window.bonfire) {
+      error = 'Launch Bonfire with npm start or npm run dev.';
       return;
     }
     void refresh()
       .then(async () => {
         if (workspaceState.lastProjectId && !workspaceState.lastSessionId) {
-          await window.helm.projects.select(workspaceState.lastProjectId);
+          await window.bonfire.projects.select(workspaceState.lastProjectId);
           await refresh();
         }
         loaded = true;
@@ -126,7 +125,7 @@
   });
 </script>
 
-<svelte:head><title>Helm</title></svelte:head>
+<svelte:head><title>Bonfire</title></svelte:head>
 
 <div class="app-shell">
   <AppHeader
@@ -134,10 +133,10 @@
     active={project}
     onselect={selectProject}
     onaddProject={addProject}
-    onaddPane={() => void addPane()}
+    onaddPane={(type) => void addPane(type)}
     onprevious={() => scrollPane(-1)}
     onnext={() => scrollPane(1)}
-    onhelp={() => void window.helm.navigation.help()}
+    onhelp={() => void window.bonfire.navigation.help()}
   />
 
   {#if error}
@@ -164,24 +163,27 @@
               {session}
               onarchive={() => void archivePane(pane.id)}
               onresize={(size) => resizePane(pane.id, size)}
+              onrefresh={() => void refresh()}
             />
           </section>
         {/each}
       </div>
     {:else}
       <Card.Root class="welcome-card">
-        <Bot />
-        <h1>{project ? 'Start a conversation' : 'Open a local project'}</h1>
-        <p>
+        <Icon name="bot" />
+        <h1 class="text-sm">
+          {project ? 'Start a conversation' : 'Open a local project'}
+        </h1>
+        <p class="text-sm">
           {project
-            ? 'Create a Codex pane to work in this repository.'
+            ? 'Create a Claude or Codex pane to work in this repository.'
             : 'Choose a project from your computer to begin.'}
         </p>
         <Button
           disabled={!loaded || busy}
           onclick={project ? () => void addPane() : addProject}
         >
-          <FolderPlus /> {project ? 'New conversation' : 'Add project'}
+          {project ? 'New conversation' : 'Add project'}
         </Button>
       </Card.Root>
     {/if}
@@ -222,7 +224,6 @@
     height: 100%;
     place-content: center;
     justify-items: center;
-    gap: 12px;
     background: var(--panel);
     color: var(--foreground-subtle);
     text-align: center;
@@ -232,13 +233,13 @@
     height: 28px;
   }
   :global(.welcome-card h1) {
-    margin: 0;
+    margin: 24px 0 0;
     color: var(--foreground);
-    font-size: 18px;
     font-weight: 500;
   }
   :global(.welcome-card p) {
-    margin: 0 0 8px;
+    margin: 0 0 24px;
+    color: var(--foreground-subtle);
   }
   .global-error {
     position: fixed;

@@ -1,5 +1,5 @@
 {
-  "name": "helm",
+  "name": "bonfire",
   "version": "0.1.0",
   "description": "Local-first workspace for coding agent CLIs",
   "main": "dist/main/index.cjs",
@@ -20,6 +20,7 @@
   "license": "ISC",
   "type": "module",
   "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.3.287",
     "@lucide/svelte": "^1.47.0",
     "@openai/codex-sdk": "^0.155.1",
     "@sveltejs/adapter-static": "^3.0.10",
@@ -41,6 +42,7 @@
   },
   "devDependencies": {
     "@electron/rebuild": "^4.2.0",
+    "@internationalized/date": "^3.12.4",
     "@types/node": "^26.6.1",
     "electron": "^44.4.3",
     "esbuild": "^0.28.2",

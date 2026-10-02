@@ -10,7 +10,7 @@ export async function smoke(
   win: BrowserWindow,
   backend: ReturnType<typeof services>,
 ) {
-  if (process.env.HELM_SMOKE === 'restart') {
+  if (process.env.BONFIRE_SMOKE === 'restart') {
     await new Promise((r) => setTimeout(r, 1800));
     assert.equal(backend.store.state.sessions.length, 1);
     assert.equal(backend.store.state.panes.length, 4);
@@ -20,16 +20,19 @@ export async function smoke(
       /Smoke repository/,
     );
     console.log(
-      'HELM_RESTART_OK: project, session, worktree, pane layout restored; four fresh PTYs',
+      'BONFIRE_RESTART_OK: project, session, pane layout restored; four fresh PTYs',
     );
     return;
   }
-  const root = await mkdtemp(join(tmpdir(), 'helm-smoke-')),
-    repo = join(root, 'repo');
+  const root = await mkdtemp(join(tmpdir(), 'bonfire-smoke-')),
+    repo = join(root, 'repo'),
+    outside = join(root, 'outside');
   await mkdir(repo);
+  await mkdir(outside);
+  await writeFile(join(outside, 'secret.txt'), 'nope\n');
   await git(repo, ['init', '-b', 'main']);
-  await git(repo, ['config', 'user.email', 'test@helm.local']);
-  await git(repo, ['config', 'user.name', 'Helm Test']);
+  await git(repo, ['config', 'user.email', 'test@bonfire.local']);
+  await git(repo, ['config', 'user.name', 'Bonfire Test']);
   await writeFile(join(repo, 'hello.txt'), 'original\n');
   await git(repo, ['add', '.']);
   await git(repo, ['commit', '-m', 'Initial']);
@@ -47,10 +50,8 @@ export async function smoke(
   const session = await api.sessions.create({
     projectId: project.id,
     title: 'Implement Meeting Link',
-    base: 'main',
-    useWorktree: true,
   });
-  assert.notEqual(session.worktreePath, repo);
+  assert.equal(session.worktreePath, repo);
   assert.equal(
     await readFile(join(session.worktreePath, 'hello.txt'), 'utf8'),
     'original\n',
@@ -62,7 +63,7 @@ export async function smoke(
   await new Promise((r) => setTimeout(r, 1000));
   assert.equal(
     await win.webContents.executeJavaScript(
-      'typeof window.helm.terminal.create',
+      'typeof window.bonfire.terminal.create',
     ),
     'function',
   );
@@ -79,11 +80,11 @@ export async function smoke(
   await api.terminal.resize(terminalId, 100, 30);
   await api.terminal.write(
     terminalId,
-    "printf 'shared change\\n' > hello.txt; printf 'HELM_PTY_OK\\n'; pwd\r",
+    "printf 'shared change\\n' > hello.txt; printf 'BONFIRE_PTY_OK\\n'; pwd\r",
   );
   await new Promise((r) => setTimeout(r, 1500));
   const snap = await api.terminal.snapshot(terminalId);
-  assert.match(snap.data, /HELM_PTY_OK/);
+  assert.match(snap.data, /BONFIRE_PTY_OK/);
   assert.equal(
     await api.filesystem.readFile(session.id, 'hello.txt'),
     'shared change\n',
@@ -104,13 +105,12 @@ export async function smoke(
   await api.sessions.select(session.id);
   assert.equal((await api.terminal.snapshot(terminalId)).exitCode, undefined);
   await assert.rejects(() =>
-    api.filesystem.readFile(session.id, '../repo/hello.txt'),
+    api.filesystem.readFile(session.id, '../outside/secret.txt'),
   );
-  await symlink(repo, join(session.worktreePath, 'escape'));
+  await symlink(outside, join(session.worktreePath, 'escape'));
   await assert.rejects(() =>
-    api.filesystem.readFile(session.id, 'escape/hello.txt'),
+    api.filesystem.readFile(session.id, 'escape/secret.txt'),
   );
-  await assert.rejects(() => api.worktrees.remove(session.id));
   for (const type of ['claude', 'codex'] as const) {
     const pane = await api.panes.add(session.id, type);
     const id = await api.terminal.create({
@@ -129,7 +129,7 @@ export async function smoke(
     );
     assert(result.data.length > 0, `${type} must produce terminal output`);
   }
-  const restored = new Store(process.env.HELM_USER_DATA!);
+  const restored = new Store(process.env.BONFIRE_USER_DATA!);
   assert(restored.state.sessions.some((s) => s.id === session.id));
   assert.equal(
     restored.state.panes.filter((p) => p.sessionId === session.id).length,
@@ -154,6 +154,6 @@ export async function smoke(
     (await win.webContents.capturePage()).toPNG(),
   );
   console.log(
-    'HELM_SMOKE_OK: renderer, isolated IPC, worktree, concurrent PTYs, CLIs, Git diff, confined files, persistence',
+    'BONFIRE_SMOKE_OK: renderer, isolated IPC, concurrent PTYs, CLIs, Git diff, confined files, persistence',
   );
 }

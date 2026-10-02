@@ -14,13 +14,13 @@ import { requests } from '../../shared/contracts';
 import { services } from './services';
 protocol.registerSchemesAsPrivileged([
   {
-    scheme: 'helm',
+    scheme: 'bonfire',
     privileges: { standard: true, secure: true, supportFetchAPI: true },
   },
 ]);
-app.setName('Helm');
-if (process.env.HELM_USER_DATA)
-  app.setPath('userData', process.env.HELM_USER_DATA);
+app.setName('Bonfire');
+if (process.env.BONFIRE_USER_DATA)
+  app.setPath('userData', process.env.BONFIRE_USER_DATA);
 process.env.PATH = [
   process.env.PATH,
   join(homedir(), '.local/bin'),
@@ -32,11 +32,11 @@ process.env.PATH = [
   .join(process.platform === 'win32' ? ';' : ':');
 let win: BrowserWindow;
 let backend: ReturnType<typeof services>;
-const dev = process.env.HELM_DEV_URL;
+const dev = process.env.BONFIRE_DEV_URL;
 const trusted = (url: string) =>
   dev
     ? new URL(url).origin === new URL(dev).origin
-    : new URL(url).protocol === 'helm:' && new URL(url).hostname === 'app';
+    : new URL(url).protocol === 'bonfire:' && new URL(url).hostname === 'app';
 async function window() {
   win = new BrowserWindow({
     width: 1280,
@@ -44,9 +44,9 @@ async function window() {
     minWidth: 850,
     minHeight: 550,
     backgroundColor: '#151619',
-    title: 'Helm',
+    title: 'Bonfire',
     titleBarStyle: 'hiddenInset',
-    trafficLightPosition: { x: 20, y: 22 },
+    trafficLightPosition: { x: 20, y: 19 },
     webPreferences: {
       preload: join(__dirname, '../preload/index.cjs'),
       contextIsolation: true,
@@ -61,13 +61,21 @@ async function window() {
   win.webContents.session.setPermissionRequestHandler(
     (_wc, _permission, callback) => callback(false),
   );
-  await win.loadURL(dev || 'helm://app/');
+  const sendFullscreen = (value: boolean) => {
+    if (!win.isDestroyed()) win.webContents.send('window:fullscreen', value);
+  };
+  win.on('enter-full-screen', () => sendFullscreen(true));
+  win.on('leave-full-screen', () => sendFullscreen(false));
+  win.webContents.on('did-finish-load', () =>
+    sendFullscreen(win.isFullScreen()),
+  );
+  await win.loadURL(dev || 'bonfire://app/');
 }
 app
   .whenReady()
   .then(async () => {
     const root = resolve(__dirname, '../../build');
-    protocol.handle('helm', (request) => {
+    protocol.handle('bonfire', (request) => {
       const url = new URL(request.url);
       const path = resolve(
         root,
@@ -109,6 +117,7 @@ app
         if (win && !win.isDestroyed()) win.webContents.send(channel, data);
       },
       () => shell.openExternal('https://artifacts.studio/helm'),
+      () => win.isFullScreen(),
     );
     for (const [channel, schema] of Object.entries(requests))
       ipcMain.handle(channel, async (event, ...args) => {
@@ -127,7 +136,7 @@ app
         return api[group][method](...validated);
       });
     await window();
-    if (process.env.HELM_SMOKE) {
+    if (process.env.BONFIRE_SMOKE) {
       const { smoke } = await import('./smoke');
       await smoke(win, backend);
       app.quit();

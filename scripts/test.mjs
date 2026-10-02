@@ -3,12 +3,12 @@ import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import electron from 'electron';
-const data = await mkdtemp(join(tmpdir(), 'helm-test-state-'));
+const data = await mkdtemp(join(tmpdir(), 'bonfire-test-state-'));
 for (const phase of ['1', 'restart']) {
   const code = await new Promise((resolve) => {
     const child = spawn(electron, ['.'], {
       stdio: 'inherit',
-      env: { ...process.env, HELM_SMOKE: phase, HELM_USER_DATA: data },
+      env: { ...process.env, BONFIRE_SMOKE: phase, BONFIRE_USER_DATA: data },
     });
     const timeout = setTimeout(() => {
       console.error('Smoke test timed out');

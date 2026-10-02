@@ -2,28 +2,29 @@ import { randomUUID } from 'node:crypto';
 import { basename } from 'node:path';
 import { realpath } from 'node:fs/promises';
 import { Store } from './persistence';
-import { Worktrees } from './worktrees';
 import { Filesystem } from './filesystem';
 import { Terminals } from './terminal';
 import { Assistant } from './assistant';
+import { ClaudeAssistant } from './claude';
+import { favicon } from './favicon';
 import * as git from './git';
-import type { API, Session } from '../../shared/contracts';
+import type { API, AssistantEvent, Session } from '../../shared/contracts';
 export function services(
   root: string,
   choose: () => Promise<string | undefined>,
   chooseAttachment: () => Promise<{ name: string; path: string } | undefined>,
   emit: (channel: string, data: unknown) => void,
   openHelp: () => Promise<void>,
+  isFullscreen: () => boolean,
 ) {
   const store = new Store(root),
-    worktrees = new Worktrees(root),
     fs = new Filesystem(),
     terminal = new Terminals(store, (e) => emit('terminal:data', e)),
-    assistant = new Assistant(
-      store,
-      (e) => emit('assistant:event', e),
-      chooseAttachment,
-    );
+    assistantEmit = (e: AssistantEvent) => emit('assistant:event', e),
+    assistant = new Assistant(store, assistantEmit, chooseAttachment),
+    claudeAssistant = new ClaudeAssistant(store, assistantEmit, chooseAttachment),
+    assistantFor = (paneId: string) =>
+      store.pane(paneId).type === 'claude' ? claudeAssistant : assistant;
   const createPane = (sessionId: string) => ({
     id: randomUUID(),
     sessionId,
@@ -48,7 +49,6 @@ export function services(
       title: 'Workspace',
       worktreePath: project.path,
       branch: (await git.status(project.path)).branch,
-      ownsWorktree: false,
       createdAt: Date.now(),
       lastOpenedAt: Date.now(),
       layout: { paneIds: [pane.id], activePaneId: pane.id },
@@ -58,8 +58,7 @@ export function services(
     return session;
   };
   const removeSession = async (id: string) => {
-    const s = store.session(id);
-    if (s.ownsWorktree) await worktrees.remove(s);
+    store.session(id);
     terminal.closeSession(id);
     await fs.unwatch(id);
     store.state.sessions = store.state.sessions.filter((s) => s.id !== id);
@@ -67,10 +66,11 @@ export function services(
     if (store.state.lastSessionId === id) delete store.state.lastSessionId;
     store.save();
   };
-  const api: Omit<API, 'terminal' | 'filesystem' | 'assistant'> & {
+  const api: Omit<API, 'terminal' | 'filesystem' | 'assistant' | 'app'> & {
     terminal: Omit<API['terminal'], 'onData'>;
     filesystem: Omit<API['filesystem'], 'onChange'>;
     assistant: Omit<API['assistant'], 'onEvent'>;
+    app: Omit<API['app'], 'onFullscreenChange'>;
   } = {
     state: { get: async () => store.state },
     projects: {
@@ -130,21 +130,18 @@ export function services(
         }
         store.save();
       },
+      favicon: async (id) => favicon(store.project(id).path),
     },
     sessions: {
       create: async (input) => {
         const p = store.project(input.projectId),
           id = randomUUID();
-        const wt = input.useWorktree
-          ? await worktrees.create(p.path, p.id, id, input.title, input.base)
-          : undefined;
         const s: Session = {
           id,
           projectId: p.id,
           title: input.title,
-          worktreePath: wt?.path ?? p.path,
-          branch: wt?.branch || (await git.status(p.path)).branch,
-          ownsWorktree: !!wt,
+          worktreePath: p.path,
+          branch: (await git.status(p.path)).branch,
           createdAt: Date.now(),
           lastOpenedAt: Date.now(),
           layout: { paneIds: [] },
@@ -210,11 +207,13 @@ export function services(
       },
     },
     assistant: {
-      send: async (input) => assistant.send(input),
-      cancel: async (paneId) => assistant.cancel(paneId),
-      pickAttachment: async (paneId) => assistant.pickAttachment(paneId),
+      send: async (input) => assistantFor(input.paneId).send(input),
+      cancel: async (paneId) => assistantFor(paneId).cancel(paneId),
+      pickAttachment: async (paneId) =>
+        assistantFor(paneId).pickAttachment(paneId),
     },
     navigation: { help: openHelp },
+    app: { isFullscreen: async () => isFullscreen() },
     terminal: {
       create: async (i) => terminal.create(i),
       write: async (id, data) => terminal.write(id, data),
@@ -239,6 +238,12 @@ export function services(
           return 'Untracked file\n\n' + (await fs.read(root, path));
         return git.diff(root, path);
       },
+      checkout: async (id, branch) => {
+        const s = store.session(id);
+        await git.checkout(s.worktreePath, branch);
+        s.branch = branch;
+        store.save();
+      },
     },
     filesystem: {
       list: async (id, path) => fs.list(store.session(id).worktreePath, path),
@@ -254,7 +259,6 @@ export function services(
         await fs.unwatch(id);
       },
     },
-    worktrees: { remove: removeSession },
     settings: {
       update: async (settings) => {
         store.state.settings = settings;
@@ -269,6 +273,7 @@ export function services(
     close: async () => {
       terminal.close();
       assistant.close();
+      claudeAssistant.close();
       await fs.close();
     },
   };

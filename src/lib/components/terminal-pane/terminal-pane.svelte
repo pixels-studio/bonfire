@@ -43,7 +43,7 @@
     lastSequence = 0;
     error = '';
     try {
-      terminalId = await window.helm.terminal.create({
+      terminalId = await window.bonfire.terminal.create({
         sessionId: pane.sessionId,
         paneId: pane.id,
         type:
@@ -51,7 +51,7 @@
             ? 'shell'
             : (pane.type as 'claude' | 'codex'),
       });
-      const snapshot = await window.helm.terminal.snapshot(terminalId);
+      const snapshot = await window.bonfire.terminal.snapshot(terminalId);
       if (!mounted) return;
       term.write(snapshot.data);
       lastSequence = snapshot.sequence;
@@ -72,7 +72,7 @@
   function resize() {
     if (!mounted || !active || !fit || !terminalId) return;
     fit.fit();
-    void window.helm.terminal
+    void window.bonfire.terminal
       .resize(terminalId, term.cols, term.rows)
       .catch((e) => (error = String(e)));
     term.focus();
@@ -95,13 +95,13 @@
     fit = new FitAddon();
     term.loadAddon(fit);
     term.open(host);
-    const off = window.helm.terminal.onData((e) =>
+    const off = window.bonfire.terminal.onData((e) =>
       ready ? receive(e) : queue.push(e),
     );
     void launch();
     const input = term.onData((data) => {
       if (terminalId)
-        void window.helm.terminal
+        void window.bonfire.terminal
           .write(terminalId, data)
           .catch((e) => (error = String(e)));
     });

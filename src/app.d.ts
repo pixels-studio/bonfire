@@ -1,7 +1,7 @@
 import type { API } from '../shared/contracts';
 declare global {
   interface Window {
-    helm: API;
+    bonfire: API;
   }
 }
 export {};

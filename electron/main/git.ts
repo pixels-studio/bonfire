@@ -60,3 +60,6 @@ export async function diff(cwd: string, path: string) {
     git(cwd, ['diff', '--', path]),
   );
 }
+export async function checkout(cwd: string, branch: string) {
+  await git(cwd, ['checkout', branch]);
+}

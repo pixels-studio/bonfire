@@ -15,6 +15,8 @@ export const conversationMessageSchema = z.object({
   kind: z.enum(['text', 'thinking', 'tool', 'attachment', 'error']),
   text: z.string(),
   status: z.enum(['streaming', 'complete', 'failed']).default('complete'),
+  size: z.number().int().nonnegative().optional(),
+  previewUrl: z.string().optional(),
 });
 export const usageSchema = z.object({
   inputTokens: z.number().int().nonnegative(),
@@ -25,6 +27,8 @@ export const usageSchema = z.object({
 export const attachmentSchema = z.object({
   id,
   name: z.string(),
+  size: z.number().int().nonnegative(),
+  previewUrl: z.string(),
 });
 export const paneSchema = z.object({
   id,
@@ -47,7 +51,6 @@ export const sessionSchema = z.object({
   title: z.string(),
   branch: z.string().optional(),
   worktreePath: z.string(),
-  ownsWorktree: z.boolean(),
   createdAt: z.number(),
   lastOpenedAt: z.number(),
   layout: z.object({ paneIds: z.array(id), activePaneId: id.optional() }),
@@ -102,12 +105,11 @@ export const requests = {
   'projects.add': z.tuple([]),
   'projects.remove': z.tuple([id]),
   'projects.select': z.tuple([id]),
+  'projects.favicon': z.tuple([id]),
   'sessions.create': z.tuple([
     z.object({
       projectId: id,
       title: z.string().trim().min(1).max(120),
-      base: z.string().max(200),
-      useWorktree: z.boolean(),
     }),
   ]),
   'sessions.select': z.tuple([id]),
@@ -146,6 +148,7 @@ export const requests = {
   'git.status': z.tuple([id]),
   'git.branches': z.tuple([id]),
   'git.diff': z.tuple([id, z.string().max(4096)]),
+  'git.checkout': z.tuple([id, z.string().trim().min(1).max(200)]),
   'filesystem.list': z.tuple([id, z.string().max(4096)]),
   'filesystem.readFile': z.tuple([id, z.string().max(4096)]),
   'filesystem.stat': z.tuple([id, z.string().max(4096)]),
@@ -153,7 +156,7 @@ export const requests = {
   'filesystem.unwatch': z.tuple([id]),
   'settings.update': z.tuple([stateSchema.shape.settings]),
   'state.get': z.tuple([]),
-  'worktrees.remove': z.tuple([id]),
+  'app.isFullscreen': z.tuple([]),
 };
 export type API = {
   state: { get(): Promise<State> };
@@ -162,14 +165,10 @@ export type API = {
     add(): Promise<Project | null>;
     remove(id: string): Promise<void>;
     select(id: string): Promise<void>;
+    favicon(id: string): Promise<string | null>;
   };
   sessions: {
-    create(input: {
-      projectId: string;
-      title: string;
-      base: string;
-      useWorktree: boolean;
-    }): Promise<Session>;
+    create(input: { projectId: string; title: string }): Promise<Session>;
     select(id: string): Promise<void>;
     remove(id: string): Promise<void>;
   };
@@ -195,6 +194,10 @@ export type API = {
     onEvent(fn: (event: AssistantEvent) => void): () => void;
   };
   navigation: { help(): Promise<void> };
+  app: {
+    isFullscreen(): Promise<boolean>;
+    onFullscreenChange(fn: (fullscreen: boolean) => void): () => void;
+  };
   terminal: {
     create(input: {
       sessionId: string;
@@ -213,6 +216,7 @@ export type API = {
     status(sessionId: string): Promise<GitStatus>;
     branches(projectId: string): Promise<string[]>;
     diff(sessionId: string, path: string): Promise<string>;
+    checkout(sessionId: string, branch: string): Promise<void>;
   };
   filesystem: {
     list(sessionId: string, path: string): Promise<Entry[]>;
@@ -227,6 +231,5 @@ export type API = {
       fn: (event: { sessionId: string; path: string }) => void,
     ): () => void;
   };
-  worktrees: { remove(sessionId: string): Promise<void> };
   settings: { update(settings: State['settings']): Promise<void> };
 };

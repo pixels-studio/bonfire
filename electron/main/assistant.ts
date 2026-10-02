@@ -6,6 +6,7 @@ import type {
   Usage,
 } from '../../shared/contracts';
 import type { Store } from './persistence';
+import { readAttachment } from './attachments';
 
 type SendInput = {
   paneId: string;
@@ -20,7 +21,13 @@ export class Assistant {
   private readonly turns = new Map<string, AbortController>();
   private readonly attachments = new Map<
     string,
-    { paneId: string; name: string; path: string }
+    {
+      paneId: string;
+      name: string;
+      path: string;
+      size: number;
+      previewUrl: string;
+    }
   >();
 
   constructor(
@@ -37,8 +44,9 @@ export class Assistant {
       throw Error('This pane is not a Codex assistant');
     const file = await this.chooseAttachment();
     if (!file) return null;
-    const attachment = { id: randomUUID(), name: file.name };
-    this.attachments.set(attachment.id, { paneId, ...file });
+    const { size, previewUrl } = await readAttachment(file.path);
+    const attachment = { id: randomUUID(), name: file.name, size, previewUrl };
+    this.attachments.set(attachment.id, { paneId, ...file, size, previewUrl });
     return attachment;
   }
 
@@ -70,6 +78,8 @@ export class Assistant {
         kind: 'attachment',
         text: attachment.name,
         status: 'complete',
+        size: attachment.size,
+        previewUrl: attachment.previewUrl,
       };
       pane.messages.push(message);
       this.emit({ paneId: pane.id, type: 'message', message });

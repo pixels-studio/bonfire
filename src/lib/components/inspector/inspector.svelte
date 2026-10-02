@@ -22,8 +22,8 @@
     const token = ++generation;
     try {
       const [s, e] = await Promise.all([
-        window.helm.git.status(session.id),
-        window.helm.filesystem.list(session.id, path),
+        window.bonfire.git.status(session.id),
+        window.bonfire.filesystem.list(session.id, path),
       ]);
       if (token !== generation) return;
       status = s;
@@ -39,8 +39,8 @@
     try {
       content =
         mode === 'diff'
-          ? await window.helm.git.diff(session.id, file)
-          : await window.helm.filesystem.readFile(session.id, file);
+          ? await window.bonfire.git.diff(session.id, file)
+          : await window.bonfire.filesystem.readFile(session.id, file);
     } catch (e) {
       content = String(e);
     }
@@ -54,11 +54,11 @@
   onMount(() => {
     mode = initialMode;
     void refresh();
-    void window.helm.filesystem
+    void window.bonfire.filesystem
       .watch(session.id)
       .catch((e) => (error = String(e)));
     let timer: ReturnType<typeof setTimeout>;
-    const off = window.helm.filesystem.onChange((e) => {
+    const off = window.bonfire.filesystem.onChange((e) => {
       if (e.sessionId === session.id) {
         clearTimeout(timer);
         timer = setTimeout(() => void refresh(), 180);
@@ -70,7 +70,7 @@
       off();
       clearTimeout(timer);
       clearInterval(poll);
-      void window.helm.filesystem.unwatch(session.id);
+      void window.bonfire.filesystem.unwatch(session.id);
     };
   });
 </script>
