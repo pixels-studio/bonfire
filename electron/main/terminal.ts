@@ -1,118 +1,142 @@
 import * as pty from 'node-pty';
 import { randomUUID } from 'node:crypto';
+import type {
+  TerminalCreateInput,
+  TerminalEvent,
+  TerminalSnapshot,
+} from '../../shared/contracts';
 import type { Store } from './persistence';
-import type { TerminalEvent } from '../../shared/contracts';
-type Record = {
-  id: string;
+
+const SCROLLBACK_BYTES = 1024 * 1024;
+
+type TerminalRecord = TerminalSnapshot & {
   paneId: string;
   sessionId: string;
+  type: TerminalCreateInput['type'];
   process: pty.IPty;
-  sequence: number;
-  data: string;
-  exitCode?: number;
 };
+
 export class Terminals {
-  records = new Map<string, Record>();
+  private readonly records = new Map<string, TerminalRecord>();
+
   constructor(
-    private store: Store,
-    private emit: (e: TerminalEvent) => void,
+    private readonly store: Store,
+    private readonly emit: (event: TerminalEvent) => void,
   ) {}
-  create(input: {
-    sessionId: string;
-    paneId: string;
-    type: 'claude' | 'codex' | 'shell';
-  }) {
-    const session = this.store.session(input.sessionId);
-    const pane = this.store.pane(input.paneId);
+
+  /** Starts a PTY for the pane, or returns its running one. Shells may attach to any pane. */
+  create({ sessionId, paneId, type }: TerminalCreateInput) {
+    const session = this.store.session(sessionId);
+    const pane = this.store.pane(paneId);
+    const paneTerminalType = pane.type === 'terminal' ? 'shell' : pane.type;
     if (
       pane.sessionId !== session.id ||
-      (pane.type === 'terminal' ? 'shell' : pane.type) !== input.type
+      (type !== 'shell' && type !== paneTerminalType)
     )
       throw Error('Pane/session mismatch');
-    const existing = [...this.records.values()].find(
-      (r) => r.paneId === pane.id && r.exitCode === undefined,
-    );
-    if (existing) return existing.id;
-    const command =
-      input.type === 'shell'
-        ? process.env.SHELL ||
-          (process.platform === 'win32' ? 'powershell.exe' : '/bin/sh')
-        : input.type;
-    const env = Object.fromEntries(
-      Object.entries(process.env).filter(
-        (entry): entry is [string, string] => entry[1] !== undefined,
-      ),
-    );
-    delete env.ELECTRON_RUN_AS_NODE;
-    env.TERM = 'xterm-256color';
-    env.COLORTERM = 'truecolor';
-    let proc: pty.IPty;
+
+    for (const [id, record] of this.records)
+      if (
+        record.paneId === pane.id &&
+        record.type === type &&
+        record.exitCode === undefined
+      )
+        return id;
+
+    const command = type === 'shell' ? defaultShell() : type;
+    let process: pty.IPty;
     try {
-      proc = pty.spawn(
+      process = pty.spawn(
         command,
-        input.type === 'shell' && process.platform !== 'win32' ? ['-l'] : [],
+        type === 'shell' && !isWindows() ? ['-l'] : [],
         {
           name: 'xterm-256color',
           cols: 80,
           rows: 24,
           cwd: session.worktreePath,
-          env,
+          env: terminalEnvironment(),
         },
       );
-    } catch (e) {
+    } catch (cause) {
       throw Error(
-        `Could not launch ${command}. Install the CLI and ensure it is on PATH. ${String(e)}`,
+        `Could not launch ${command}. Install the CLI and ensure it is on PATH. ${String(cause)}`,
       );
     }
+
     const id = randomUUID();
-    const r: Record = {
-      id,
+    const record: TerminalRecord = {
       paneId: pane.id,
       sessionId: session.id,
-      process: proc,
+      type,
+      process,
       sequence: 0,
       data: '',
     };
-    this.records.set(id, r);
-    proc.onData((data) => {
-      r.data = (r.data + data).slice(-1024 * 1024);
-      this.emit({ terminalId: id, sequence: ++r.sequence, data });
+    this.records.set(id, record);
+    process.onData((data) => {
+      record.data = (record.data + data).slice(-SCROLLBACK_BYTES);
+      this.emit({ terminalId: id, sequence: ++record.sequence, data });
     });
-    proc.onExit(({ exitCode }) => {
-      r.exitCode = exitCode;
-      this.emit({ terminalId: id, sequence: ++r.sequence, exitCode });
+    process.onExit(({ exitCode }) => {
+      record.exitCode = exitCode;
+      this.emit({ terminalId: id, sequence: ++record.sequence, exitCode });
     });
     return id;
   }
-  get(id: string) {
-    const r = this.records.get(id);
-    if (!r) throw Error('Terminal not found');
-    return r;
+
+  snapshot(id: string): TerminalSnapshot {
+    const { data, sequence, exitCode } = this.get(id);
+    return { data, sequence, exitCode };
   }
+
   write(id: string, data: string) {
-    const r = this.get(id);
-    if (r.exitCode === undefined) r.process.write(data);
+    const record = this.get(id);
+    if (record.exitCode === undefined) record.process.write(data);
   }
+
   resize(id: string, cols: number, rows: number) {
-    const r = this.get(id);
-    if (r.exitCode === undefined) r.process.resize(cols, rows);
+    const record = this.get(id);
+    if (record.exitCode === undefined) record.process.resize(cols, rows);
   }
-  kill(id: string) {
-    const r = this.get(id);
-    if (r.exitCode === undefined) r.process.kill();
-  }
-  closePane(id: string) {
-    for (const [key, r] of this.records)
-      if (r.paneId === id) {
-        this.kill(key);
-        this.records.delete(key);
+
+  closeSession(sessionId: string) {
+    for (const [id, record] of this.records)
+      if (record.sessionId === sessionId) {
+        this.kill(id);
+        this.records.delete(id);
       }
   }
-  closeSession(id: string) {
-    for (const r of this.records.values())
-      if (r.sessionId === id) this.closePane(r.paneId);
-  }
+
   close() {
     for (const id of this.records.keys()) this.kill(id);
   }
+
+  private get(id: string) {
+    const record = this.records.get(id);
+    if (!record) throw Error('Terminal not found');
+    return record;
+  }
+
+  private kill(id: string) {
+    const record = this.get(id);
+    if (record.exitCode === undefined) record.process.kill();
+  }
+}
+
+function isWindows() {
+  return process.platform === 'win32';
+}
+
+function defaultShell() {
+  return process.env.SHELL || (isWindows() ? 'powershell.exe' : '/bin/sh');
+}
+
+function terminalEnvironment() {
+  const env = Object.fromEntries(
+    Object.entries(process.env).filter(
+      (entry): entry is [string, string] => entry[1] !== undefined,
+    ),
+  );
+  delete env.ELECTRON_RUN_AS_NODE;
+  return { ...env, TERM: 'xterm-256color', COLORTERM: 'truecolor' };
 }

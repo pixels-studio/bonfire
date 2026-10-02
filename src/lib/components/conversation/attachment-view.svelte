@@ -1,63 +1,39 @@
 <script lang="ts">
   import Icon from '$lib/components/icon/icon.svelte';
+  import { cn, formatBytes } from '$lib/utils';
 
   let {
     name,
     size,
     previewUrl,
-  }: { name: string; size?: number; previewUrl?: string } = $props();
-
-  function formatSize(bytes?: number) {
-    if (bytes === undefined) return '';
-    if (bytes < 1024) return `${bytes} B`;
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-  }
+    class: className,
+  }: {
+    name: string;
+    size?: number;
+    previewUrl?: string;
+    class?: string;
+  } = $props();
 </script>
 
-<div class="attachment">
+<div
+  class={cn(
+    'flex w-fit items-center gap-2.5 rounded-lg bg-surface-raised px-3 py-2.5',
+    className,
+  )}
+>
   {#if previewUrl}
-    <img class="thumb" src={previewUrl} alt="" />
+    <img
+      class="size-9 shrink-0 rounded-md object-cover"
+      src={previewUrl}
+      alt=""
+    />
   {:else}
-    <Icon name="file" />
+    <Icon name="file" class="size-4.5 shrink-0" />
   {/if}
-  <span><strong>{name}</strong><small>{formatSize(size)}</small></span>
+  <span class="grid min-w-0">
+    <strong class="truncate">{name}</strong>
+    {#if size !== undefined}
+      <small class="text-xs text-muted-foreground">{formatBytes(size)}</small>
+    {/if}
+  </span>
 </div>
-
-<style>
-  .attachment {
-    display: flex;
-    align-self: flex-end;
-    align-items: center;
-    width: fit-content;
-    max-width: min(400px, 88%);
-    gap: 10px;
-    padding: 10px 12px;
-    border-radius: 8px;
-    background: var(--surface-raised);
-    color: var(--foreground);
-  }
-  .thumb {
-    flex: none;
-    width: 36px;
-    height: 36px;
-    border-radius: 6px;
-    object-fit: cover;
-  }
-  :global(svg) {
-    width: 18px;
-    height: 18px;
-  }
-  span {
-    display: grid;
-    min-width: 0;
-  }
-  strong {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  small {
-    color: var(--foreground-subtle);
-  }
-</style>

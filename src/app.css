@@ -1,107 +1,66 @@
 @import 'tailwindcss';
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --color-card: var(--panel);
-  --color-card-foreground: var(--foreground);
-  --color-popover: var(--popover);
-  --color-popover-foreground: var(--foreground);
-  --color-primary: var(--foreground);
-  --color-primary-foreground: var(--background);
-  --color-secondary: var(--control);
-  --color-secondary-foreground: var(--foreground);
-  --color-muted: var(--control-active);
-  --color-muted-foreground: var(--foreground-subtle);
-  --color-accent: var(--control-active);
-  --color-accent-foreground: var(--foreground);
-  --color-destructive: var(--destructive);
-  --color-border: var(--border);
-  --color-input: var(--border);
-  --color-ring: var(--foreground-subtle);
-}
-
-:root {
-  color-scheme: dark;
-  font-family:
-    Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI",
+@theme {
+  --font-sans:
+    Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI',
     sans-serif;
-  font-size: 16px;
-  font-synthesis: none;
-  -webkit-font-smoothing: antialiased;
-  --background: #111111;
-  --panel: #1a1a1a;
-  --popover: #252525;
-  --composer: #242424;
-  --surface-raised: #303030;
-  --control: rgb(255 255 255 / 8%);
-  --control-active: rgb(255 255 255 / 12%);
-  --border: rgb(255 255 255 / 10%);
-  --foreground: #ffffff;
-  --foreground-muted: rgb(255 255 255 / 80%);
-  --foreground-subtle: rgb(255 255 255 / 60%);
-  --accent: #ea580c;
-  --destructive: #ff8c73;
-  --destructive-surface: #3a211d;
-  --success: #48b005;
-  --radius: 8px;
-  --z-dropdown: 100;
-  --z-tooltip: 200;
+  --font-mono: 'SFMono-Regular', Menlo, Consolas, monospace;
+
+  --color-background: #111111;
+  --color-foreground: #ffffff;
+  --color-card: #1a1a1a;
+  --color-card-foreground: #ffffff;
+  --color-popover: #252525;
+  --color-popover-foreground: #ffffff;
+  --color-composer: #242424;
+  --color-surface-raised: #303030;
+  --color-primary: #ffffff;
+  --color-primary-foreground: #111111;
+  --color-secondary: rgb(255 255 255 / 8%);
+  --color-secondary-foreground: #ffffff;
+  --color-muted: rgb(255 255 255 / 12%);
+  --color-muted-foreground: rgb(255 255 255 / 60%);
+  --color-accent: rgb(255 255 255 / 12%);
+  --color-accent-foreground: #ffffff;
+  --color-brand: #ea580c;
+  --color-success: #48b005;
+  --color-destructive: #ff8c73;
+  --color-destructive-surface: #3a211d;
+  --color-border: rgb(255 255 255 / 10%);
+  --color-input: rgb(255 255 255 / 10%);
+  --color-ring: rgb(255 255 255 / 60%);
 }
 
-* {
-  box-sizing: border-box;
+@utility app-drag {
+  -webkit-app-region: drag;
 }
 
-html,
-body {
-  margin: 0;
-  min-width: 760px;
-  min-height: 540px;
-  overflow: hidden;
-  background: var(--background);
-  color: var(--foreground);
+@utility app-no-drag {
+  -webkit-app-region: no-drag;
 }
 
-button,
-textarea,
-input,
-select {
-  font: inherit;
-  touch-action: manipulation;
+@utility scrollbar-none {
+  scrollbar-width: none;
 }
 
-button:not(:disabled) {
-  cursor: pointer;
-}
-
-button:focus-visible,
-textarea:focus-visible,
-input:focus-visible,
-select:focus-visible,
-[role='menuitem']:focus-visible {
-  outline: 2px solid rgb(255 255 255 / 70%);
-  outline-offset: 2px;
-}
-
-pre {
-  font-family: "SFMono-Regular", Menlo, Consolas, monospace;
-}
-
-::selection {
-  background: rgb(234 88 12 / 42%);
-}
-
-@media (hover: hover) and (pointer: fine) {
-  button:not(:disabled):hover {
-    color: var(--foreground);
+@layer base {
+  html {
+    @apply scheme-dark;
   }
-}
 
-@media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
-    scroll-behavior: auto !important;
+  body {
+    @apply min-h-135 min-w-190 overflow-hidden bg-background font-sans text-foreground antialiased;
+  }
+
+  button:not(:disabled) {
+    @apply cursor-pointer;
+  }
+
+  :is(button, textarea, input, select):focus-visible {
+    @apply outline-2 outline-offset-2 outline-foreground/70;
+  }
+
+  ::selection {
+    @apply bg-brand/40;
   }
 }

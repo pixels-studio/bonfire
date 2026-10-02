@@ -1,208 +1,189 @@
 import { randomUUID } from 'node:crypto';
-import { basename } from 'node:path';
 import { realpath } from 'node:fs/promises';
-import { Store } from './persistence';
-import { Filesystem } from './filesystem';
-import { Terminals } from './terminal';
-import { Assistant } from './assistant';
+import { basename } from 'node:path';
+import {
+  events,
+  type Backend,
+  type Pane,
+  type PaneType,
+  type Project,
+  type Session,
+} from '../../shared/contracts';
+import { DEFAULT_TITLE } from '../../shared/domain';
+import type { ChooseImage } from './assistant';
 import { ClaudeAssistant } from './claude';
+import { CodexAssistant } from './codex';
 import { favicon } from './favicon';
+import { Filesystem } from './filesystem';
 import * as git from './git';
-import type { API, AssistantEvent, Session } from '../../shared/contracts';
-export function services(
-  root: string,
-  choose: () => Promise<string | undefined>,
-  chooseAttachment: () => Promise<{ name: string; path: string } | undefined>,
-  emit: (channel: string, data: unknown) => void,
-  openHelp: () => Promise<void>,
-  isFullscreen: () => boolean,
-) {
-  const store = new Store(root),
-    fs = new Filesystem(),
-    terminal = new Terminals(store, (e) => emit('terminal:data', e)),
-    assistantEmit = (e: AssistantEvent) => emit('assistant:event', e),
-    assistant = new Assistant(store, assistantEmit, chooseAttachment),
-    claudeAssistant = new ClaudeAssistant(store, assistantEmit, chooseAttachment),
-    assistantFor = (paneId: string) =>
-      store.pane(paneId).type === 'claude' ? claudeAssistant : assistant;
-  const createPane = (sessionId: string) => ({
-    id: randomUUID(),
-    sessionId,
-    type: 'codex' as const,
-    title: 'New Conversation',
-    messages: [],
-    model: '',
-    reasoningEffort: 'medium' as const,
-    archived: false,
-  });
-  const ensureSession = async (projectId: string) => {
-    const existing = store.state.sessions
-      .filter((session) => session.projectId === projectId)
-      .sort((a, b) => b.lastOpenedAt - a.lastOpenedAt)[0];
-    if (existing) return existing;
-    const project = store.project(projectId);
-    const sessionId = randomUUID();
-    const pane = createPane(sessionId);
+import { Store } from './persistence';
+import { Terminals } from './terminal';
+
+export type ServiceOptions = {
+  dataDirectory: string;
+  chooseDirectory: () => Promise<string | undefined>;
+  chooseImage: ChooseImage;
+  send: (channel: string, data: unknown) => void;
+  openHelp: () => Promise<void>;
+  isFullscreen: () => boolean;
+};
+
+export function services(options: ServiceOptions) {
+  const store = new Store(options.dataDirectory);
+  const files = new Filesystem();
+  const terminals = new Terminals(store, (event) =>
+    options.send(events.terminalData, event),
+  );
+  const emitAssistantEvent = (event: unknown) =>
+    options.send(events.assistantEvent, event);
+  const assistants = {
+    claude: new ClaudeAssistant(store, emitAssistantEvent, options.chooseImage),
+    codex: new CodexAssistant(store, emitAssistantEvent, options.chooseImage),
+  };
+
+  const assistantFor = (paneId: string) =>
+    assistants[store.pane(paneId).type === 'claude' ? 'claude' : 'codex'];
+  const worktree = (sessionId: string) => store.session(sessionId).worktreePath;
+
+  async function createSession(project: Project, title: string) {
     const session: Session = {
-      id: sessionId,
-      projectId,
-      title: 'Workspace',
+      id: randomUUID(),
+      projectId: project.id,
+      title,
       worktreePath: project.path,
       branch: (await git.status(project.path)).branch,
       createdAt: Date.now(),
       lastOpenedAt: Date.now(),
-      layout: { paneIds: [pane.id], activePaneId: pane.id },
+      layout: { paneIds: [] },
     };
     store.state.sessions.push(session);
-    store.state.panes.push(pane);
     return session;
-  };
-  const removeSession = async (id: string) => {
-    store.session(id);
-    terminal.closeSession(id);
-    await fs.unwatch(id);
-    store.state.sessions = store.state.sessions.filter((s) => s.id !== id);
-    store.state.panes = store.state.panes.filter((p) => p.sessionId !== id);
-    if (store.state.lastSessionId === id) delete store.state.lastSessionId;
+  }
+
+  /** Adds a pane at the front of the layout, defaulting to the last-used provider and model. */
+  function addPane(session: Session, type?: PaneType, model?: string) {
+    const { lastProvider, lastModels } = store.state.settings;
+    const paneType = type ?? lastProvider ?? 'claude';
+    const pane: Pane = {
+      id: randomUUID(),
+      sessionId: session.id,
+      type: paneType,
+      title: paneType === 'terminal' ? 'Terminal' : DEFAULT_TITLE,
+      messages: [],
+      model:
+        model ??
+        (paneType === 'terminal' ? '' : (lastModels?.[paneType] ?? '')),
+      reasoningEffort: 'medium',
+      archived: false,
+    };
+    store.state.panes.push(pane);
+    session.layout.paneIds.unshift(pane.id);
+    session.layout.activePaneId = pane.id;
+    return pane;
+  }
+
+  async function latestSession(project: Project) {
+    const latest = store.state.sessions
+      .filter((session) => session.projectId === project.id)
+      .sort((first, second) => second.lastOpenedAt - first.lastOpenedAt)[0];
+    if (latest) return latest;
+    const session = await createSession(project, 'Workspace');
+    addPane(session);
+    return session;
+  }
+
+  async function openProject(project: Project) {
+    const session = await latestSession(project);
+    project.lastOpenedAt = session.lastOpenedAt = Date.now();
+    store.state.lastProjectId = project.id;
+    store.state.lastSessionId = session.id;
     store.save();
-  };
-  const api: Omit<API, 'terminal' | 'filesystem' | 'assistant' | 'app'> & {
-    terminal: Omit<API['terminal'], 'onData'>;
-    filesystem: Omit<API['filesystem'], 'onChange'>;
-    assistant: Omit<API['assistant'], 'onEvent'>;
-    app: Omit<API['app'], 'onFullscreenChange'>;
-  } = {
+  }
+
+  const api: Backend = {
     state: { get: async () => store.state },
     projects: {
-      list: async () => store.state.projects,
       add: async () => {
-        const selected = await choose();
+        const selected = await options.chooseDirectory();
         if (!selected) return null;
         const path = await realpath(selected);
-        let p = store.state.projects.find((p) => p.path === path);
-        if (!p) {
-          p = {
+        let project = store.state.projects.find((item) => item.path === path);
+        if (!project) {
+          project = {
             id: randomUUID(),
             name: basename(path),
             path,
             createdAt: Date.now(),
             lastOpenedAt: Date.now(),
           };
-          store.state.projects.push(p);
+          store.state.projects.push(project);
         }
-        store.state.lastProjectId = p.id;
-        const session = await ensureSession(p.id);
-        store.state.lastSessionId = session.id;
-        store.save();
-        return p;
+        await openProject(project);
+        return project;
       },
-      select: async (id) => {
-        store.project(id).lastOpenedAt = Date.now();
-        store.state.lastProjectId = id;
-        const session = await ensureSession(id);
-        session.lastOpenedAt = Date.now();
-        store.state.lastSessionId = session.id;
-        store.save();
-      },
+      select: async (id) => openProject(store.project(id)),
       remove: async (id) => {
         store.project(id);
-        for (const s of store.state.sessions.filter(
-          (s) => s.projectId === id,
-        )) {
-          terminal.closeSession(s.id);
-          await fs.unwatch(s.id);
-        }
-        const ids = new Set(
+        const sessionIds = new Set(
           store.state.sessions
-            .filter((s) => s.projectId === id)
-            .map((s) => s.id),
+            .filter((session) => session.projectId === id)
+            .map((session) => session.id),
         );
-        store.state.panes = store.state.panes.filter(
-          (p) => !ids.has(p.sessionId),
+        for (const sessionId of sessionIds) {
+          terminals.closeSession(sessionId);
+          await files.unwatch(sessionId);
+        }
+        const { state } = store;
+        state.panes = state.panes.filter(
+          (pane) => !sessionIds.has(pane.sessionId),
         );
-        store.state.sessions = store.state.sessions.filter(
-          (s) => s.projectId !== id,
+        state.sessions = state.sessions.filter(
+          (session) => !sessionIds.has(session.id),
         );
-        store.state.projects = store.state.projects.filter((p) => p.id !== id);
-        if (store.state.lastProjectId === id) {
-          delete store.state.lastProjectId;
-          delete store.state.lastSessionId;
+        state.projects = state.projects.filter((project) => project.id !== id);
+        if (state.lastProjectId === id) {
+          delete state.lastProjectId;
+          delete state.lastSessionId;
         }
         store.save();
       },
       favicon: async (id) => favicon(store.project(id).path),
     },
     sessions: {
-      create: async (input) => {
-        const p = store.project(input.projectId),
-          id = randomUUID();
-        const s: Session = {
-          id,
-          projectId: p.id,
-          title: input.title,
-          worktreePath: p.path,
-          branch: (await git.status(p.path)).branch,
-          createdAt: Date.now(),
-          lastOpenedAt: Date.now(),
-          layout: { paneIds: [] },
-        };
-        store.state.sessions.push(s);
-        store.state.lastProjectId = p.id;
-        store.state.lastSessionId = s.id;
+      create: async ({ projectId, title }) => {
+        const session = await createSession(store.project(projectId), title);
+        store.state.lastProjectId = projectId;
+        store.state.lastSessionId = session.id;
         store.save();
-        return s;
+        return session;
       },
       select: async (id) => {
-        const s = store.session(id);
-        s.lastOpenedAt = Date.now();
+        const session = store.session(id);
+        session.lastOpenedAt = Date.now();
         store.state.lastSessionId = id;
-        store.state.lastProjectId = s.projectId;
+        store.state.lastProjectId = session.projectId;
         store.save();
       },
-      remove: removeSession,
     },
     panes: {
-      add: async (sessionId, type) => {
-        const s = store.session(sessionId);
-        const p = {
-          id: randomUUID(),
-          sessionId,
-          type,
-          title:
-            type === 'terminal'
-              ? 'Terminal'
-              : type === 'claude'
-                ? 'Claude'
-                : 'Codex',
-          messages: [],
-          model: '',
-          reasoningEffort: 'medium' as const,
-          archived: false,
-        };
-        store.state.panes.push(p);
-        s.layout.paneIds.unshift(p.id);
-        s.layout.activePaneId = p.id;
+      add: async (sessionId, type, model) => {
+        const pane = addPane(store.session(sessionId), type, model);
         store.save();
-        return p;
+        return pane;
       },
-      select: async (id) => {
-        const p = store.pane(id);
-        store.session(p.sessionId).layout.activePaneId = id;
+      retype: async (id, type, model) => {
+        const pane = store.pane(id);
+        if (pane.messages.length)
+          throw Error(
+            'Cannot change provider after the conversation has started',
+          );
+        pane.type = type;
+        pane.model = model;
         store.save();
-      },
-      remove: async (id) => {
-        const p = store.pane(id),
-          s = store.session(p.sessionId);
-        terminal.closePane(id);
-        store.state.panes = store.state.panes.filter((p) => p.id !== id);
-        s.layout.paneIds = s.layout.paneIds.filter((pid) => pid !== id);
-        if (s.layout.activePaneId === id)
-          s.layout.activePaneId = s.layout.paneIds[0];
-        store.save();
+        return pane;
       },
       archive: async (id) => {
-        const pane = store.pane(id);
-        pane.archived = true;
+        store.pane(id).archived = true;
         store.save();
       },
     },
@@ -212,69 +193,60 @@ export function services(
       pickAttachment: async (paneId) =>
         assistantFor(paneId).pickAttachment(paneId),
     },
-    navigation: { help: openHelp },
-    app: { isFullscreen: async () => isFullscreen() },
+    navigation: { help: options.openHelp },
+    app: { isFullscreen: async () => options.isFullscreen() },
     terminal: {
-      create: async (i) => terminal.create(i),
-      write: async (id, data) => terminal.write(id, data),
-      resize: async (id, c, r) => terminal.resize(id, c, r),
-      kill: async (id) => terminal.kill(id),
-      snapshot: async (id) => {
-        const r = terminal.get(id);
-        return { data: r.data, sequence: r.sequence, exitCode: r.exitCode };
-      },
+      create: async (input) => terminals.create(input),
+      write: async (id, data) => terminals.write(id, data),
+      resize: async (id, cols, rows) => terminals.resize(id, cols, rows),
+      snapshot: async (id) => terminals.snapshot(id),
     },
     git: {
-      status: async (id) => git.status(store.session(id).worktreePath),
-      branches: async (id) => git.branches(store.project(id).path),
-      diff: async (id, path) => {
-        const root = store.session(id).worktreePath;
+      status: async (sessionId) => git.status(worktree(sessionId)),
+      branches: async (projectId) =>
+        git.branches(store.project(projectId).path),
+      diff: async (sessionId, path) => {
+        const root = worktree(sessionId);
         if (path.includes('\0') || path.split(/[\\/]/).includes('..'))
           throw Error('Invalid path');
-        const s = await git.status(root);
-        const change = s.changes.find((c) => c.path === path);
+        const change = (await git.status(root)).changes.find(
+          (item) => item.path === path,
+        );
         if (!change) throw Error('File is not a current change');
         if (change.index === '?')
-          return 'Untracked file\n\n' + (await fs.read(root, path));
+          return `Untracked file\n\n${await files.read(root, path)}`;
         return git.diff(root, path);
       },
-      checkout: async (id, branch) => {
-        const s = store.session(id);
-        await git.checkout(s.worktreePath, branch);
-        s.branch = branch;
+      checkout: async (sessionId, branch) => {
+        const session = store.session(sessionId);
+        await git.checkout(session.worktreePath, branch);
+        session.branch = branch;
         store.save();
       },
     },
     filesystem: {
-      list: async (id, path) => fs.list(store.session(id).worktreePath, path),
-      readFile: async (id, path) =>
-        fs.read(store.session(id).worktreePath, path),
-      stat: async (id, path) => fs.stat(store.session(id).worktreePath, path),
-      watch: async (id) =>
-        fs.watch(id, store.session(id).worktreePath, (e) =>
-          emit('filesystem:change', e),
+      list: async (sessionId, path) => files.list(worktree(sessionId), path),
+      readFile: async (sessionId, path) =>
+        files.read(worktree(sessionId), path),
+      watch: async (sessionId) =>
+        files.watch(sessionId, worktree(sessionId), (event) =>
+          options.send(events.fileChange, event),
         ),
-      unwatch: async (id) => {
-        store.session(id);
-        await fs.unwatch(id);
-      },
-    },
-    settings: {
-      update: async (settings) => {
-        store.state.settings = settings;
-        store.save();
+      unwatch: async (sessionId) => {
+        store.session(sessionId);
+        await files.unwatch(sessionId);
       },
     },
   };
+
   return {
     api,
     store,
-    terminal,
     close: async () => {
-      terminal.close();
-      assistant.close();
-      claudeAssistant.close();
-      await fs.close();
+      terminals.close();
+      assistants.claude.close();
+      assistants.codex.close();
+      await files.close();
     },
   };
 }

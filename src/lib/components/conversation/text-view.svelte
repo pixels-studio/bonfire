@@ -1,31 +1,16 @@
 <script lang="ts">
+  import { cn } from '$lib/utils';
   import type { ConversationMessage } from '$shared/contracts';
 
   let { message }: { message: ConversationMessage } = $props();
 </script>
 
-<article class:user={message.role === 'user'} class="message">
-  <p>{message.text}</p>
-</article>
-
-<style>
-  .message {
-    color: var(--foreground-muted);
-    font-size: 14px;
-    line-height: 20px;
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
-  }
-  .message p {
-    margin: 0;
-  }
-  .user {
-    align-self: flex-end;
-    width: fit-content;
-    max-width: min(400px, 88%);
-    padding: 8px 16px;
-    border-radius: 20px;
-    background: var(--surface-raised);
-    color: var(--foreground);
-  }
-</style>
+<p
+  class={cn(
+    'text-sm whitespace-pre-wrap text-foreground/80 wrap-anywhere',
+    message.role === 'user' &&
+      'w-fit max-w-4/5 self-end rounded-3xl bg-surface-raised px-4 py-2 text-foreground @lg:max-w-100',
+  )}
+>
+  {message.text}
+</p>

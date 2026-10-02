@@ -10,7 +10,7 @@
 </script>
 
 <svg
-  class={cn('size-5', className)}
+  class={cn('size-4', className)}
   viewBox="0 0 24 24"
   fill="currentColor"
   aria-hidden="true"

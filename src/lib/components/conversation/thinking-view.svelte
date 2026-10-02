@@ -2,25 +2,12 @@
   import type { ConversationMessage } from '$shared/contracts';
 
   let { message }: { message: ConversationMessage } = $props();
+  const streaming = $derived(message.status === 'streaming');
 </script>
 
-<details class="thinking" open={message.status === 'streaming'}>
-  <summary>{message.status === 'streaming' ? 'Thinking…' : 'Thought process'}</summary>
-  <p>{message.text}</p>
+<details class="text-sm text-muted-foreground" open={streaming}>
+  <summary class="w-fit cursor-pointer">
+    {streaming ? 'Thinking…' : 'Thought process'}
+  </summary>
+  <p class="mt-2 whitespace-pre-wrap">{message.text}</p>
 </details>
-
-<style>
-  .thinking {
-    color: var(--foreground-subtle);
-    font-size: 13px;
-    line-height: 19px;
-  }
-  summary {
-    cursor: pointer;
-    width: fit-content;
-  }
-  p {
-    margin: 8px 0 0;
-    white-space: pre-wrap;
-  }
-</style>

@@ -10,7 +10,7 @@ import {
 import { basename, join, resolve, relative, isAbsolute } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { homedir } from 'node:os';
-import { requests } from '../../shared/contracts';
+import { events, requests } from '../../shared/contracts';
 import { services } from './services';
 protocol.registerSchemesAsPrivileged([
   {
@@ -30,20 +30,32 @@ process.env.PATH = [
 ]
   .filter(Boolean)
   .join(process.platform === 'win32' ? ';' : ':');
-let win: BrowserWindow;
+const DEV_URL = process.env.BONFIRE_DEV_URL;
+const HELP_URL = 'https://artifacts.studio/helm';
+const IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'webp', 'gif'];
+
+let mainWindow: BrowserWindow;
 let backend: ReturnType<typeof services>;
-const dev = process.env.BONFIRE_DEV_URL;
-const trusted = (url: string) =>
-  dev
-    ? new URL(url).origin === new URL(dev).origin
-    : new URL(url).protocol === 'bonfire:' && new URL(url).hostname === 'app';
-async function window() {
-  win = new BrowserWindow({
+
+function isTrustedUrl(url: string) {
+  const { origin, protocol, hostname } = new URL(url);
+  return DEV_URL
+    ? origin === new URL(DEV_URL).origin
+    : protocol === 'bonfire:' && hostname === 'app';
+}
+
+function send(channel: string, data: unknown) {
+  if (mainWindow && !mainWindow.isDestroyed())
+    mainWindow.webContents.send(channel, data);
+}
+
+async function createWindow() {
+  mainWindow = new BrowserWindow({
     width: 1280,
     height: 820,
     minWidth: 850,
     minHeight: 550,
-    backgroundColor: '#151619',
+    backgroundColor: '#111111',
     title: 'Bonfire',
     titleBarStyle: 'hiddenInset',
     trafficLightPosition: { x: 20, y: 19 },
@@ -54,91 +66,87 @@ async function window() {
       sandbox: true,
     },
   });
-  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
-  win.webContents.on('will-navigate', (event, url) => {
-    if (!trusted(url)) event.preventDefault();
+  mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    if (!isTrustedUrl(url)) event.preventDefault();
   });
-  win.webContents.session.setPermissionRequestHandler(
-    (_wc, _permission, callback) => callback(false),
+  mainWindow.webContents.session.setPermissionRequestHandler(
+    (_contents, _permission, callback) => callback(false),
   );
-  const sendFullscreen = (value: boolean) => {
-    if (!win.isDestroyed()) win.webContents.send('window:fullscreen', value);
-  };
-  win.on('enter-full-screen', () => sendFullscreen(true));
-  win.on('leave-full-screen', () => sendFullscreen(false));
-  win.webContents.on('did-finish-load', () =>
-    sendFullscreen(win.isFullScreen()),
+  mainWindow.on('enter-full-screen', () => send(events.fullscreen, true));
+  mainWindow.on('leave-full-screen', () => send(events.fullscreen, false));
+  mainWindow.webContents.on('did-finish-load', () =>
+    send(events.fullscreen, mainWindow.isFullScreen()),
   );
-  await win.loadURL(dev || 'bonfire://app/');
+  await mainWindow.loadURL(DEV_URL || 'bonfire://app/');
 }
+
+function serveBuild(root: string) {
+  protocol.handle('bonfire', (request) => {
+    const url = new URL(request.url);
+    const pathname = url.pathname === '/' ? '/index.html' : url.pathname;
+    const path = resolve(root, `.${decodeURIComponent(pathname)}`);
+    const relativePath = relative(root, path);
+    if (
+      url.host !== 'app' ||
+      relativePath.startsWith('..') ||
+      isAbsolute(relativePath)
+    )
+      return new Response('Forbidden', { status: 403 });
+    return net.fetch(pathToFileURL(path).href);
+  });
+}
+
+/** Routes each validated IPC channel to `backend.api[group][method]`, trusting only our main frame. */
+function registerIpc() {
+  const api = backend.api as unknown as Record<
+    string,
+    Record<string, (...args: unknown[]) => unknown>
+  >;
+  for (const [channel, schema] of Object.entries(requests)) {
+    const [group, method] = channel.split('.');
+    ipcMain.handle(channel, async (event, ...args) => {
+      if (
+        event.sender !== mainWindow.webContents ||
+        event.senderFrame !== mainWindow.webContents.mainFrame ||
+        !isTrustedUrl(event.senderFrame.url)
+      )
+        throw Error('Untrusted IPC sender');
+      return api[group][method](...schema.parse(args));
+    });
+  }
+}
+
 app
   .whenReady()
   .then(async () => {
-    const root = resolve(__dirname, '../../build');
-    protocol.handle('bonfire', (request) => {
-      const url = new URL(request.url);
-      const path = resolve(
-        root,
-        '.' +
-          decodeURIComponent(
-            url.pathname === '/' ? '/index.html' : url.pathname,
-          ),
-      );
-      const rel = relative(root, path);
-      if (url.host !== 'app' || rel.startsWith('..') || isAbsolute(rel))
-        return new Response('Forbidden', { status: 403 });
-      return net.fetch(pathToFileURL(path).href);
-    });
-    backend = services(
-      app.getPath('userData'),
-      async () => {
-        const result = await dialog.showOpenDialog(win, {
+    serveBuild(resolve(__dirname, '../../build'));
+    backend = services({
+      dataDirectory: app.getPath('userData'),
+      chooseDirectory: async () => {
+        const result = await dialog.showOpenDialog(mainWindow, {
           properties: ['openDirectory'],
         });
         return result.canceled ? undefined : result.filePaths[0];
       },
-      async () => {
-        const result = await dialog.showOpenDialog(win, {
+      chooseImage: async () => {
+        const result = await dialog.showOpenDialog(mainWindow, {
           properties: ['openFile'],
-          filters: [
-            {
-              name: 'Images',
-              extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif'],
-            },
-          ],
+          filters: [{ name: 'Images', extensions: IMAGE_EXTENSIONS }],
         });
         if (result.canceled) return undefined;
-        return {
-          name: basename(result.filePaths[0]),
-          path: result.filePaths[0],
-        };
+        const [path] = result.filePaths;
+        return { name: basename(path), path };
       },
-      (channel, data) => {
-        if (win && !win.isDestroyed()) win.webContents.send(channel, data);
-      },
-      () => shell.openExternal('https://artifacts.studio/helm'),
-      () => win.isFullScreen(),
-    );
-    for (const [channel, schema] of Object.entries(requests))
-      ipcMain.handle(channel, async (event, ...args) => {
-        if (
-          event.sender !== win.webContents ||
-          event.senderFrame !== win.webContents.mainFrame ||
-          !trusted(event.senderFrame.url)
-        )
-          throw Error('Untrusted IPC sender');
-        const validated = schema.parse(args);
-        const [group, method] = channel.split('.');
-        const api = backend.api as unknown as Record<
-          string,
-          Record<string, (...args: unknown[]) => unknown>
-        >;
-        return api[group][method](...validated);
-      });
-    await window();
+      send,
+      openHelp: () => shell.openExternal(HELP_URL),
+      isFullscreen: () => mainWindow.isFullScreen(),
+    });
+    registerIpc();
+    await createWindow();
     if (process.env.BONFIRE_SMOKE) {
       const { smoke } = await import('./smoke');
-      await smoke(win, backend);
+      await smoke(mainWindow, backend);
       app.quit();
     }
   })
@@ -146,6 +154,7 @@ app
     console.error(error);
     app.exit(1);
   });
+
 app.on('window-all-closed', () => app.quit());
 app.on('before-quit', () => {
   void backend?.close();
