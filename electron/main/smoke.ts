@@ -112,7 +112,7 @@ export async function smoke(
     'undefined',
   );
 
-  const firstShellPane = await api.panes.add(session.id, 'terminal');
+  const firstShellPane = await api.panes.add('terminal');
   const firstTerminalId = await api.terminal.create({
     sessionId: session.id,
     paneId: firstShellPane.id,
@@ -134,14 +134,13 @@ export async function smoke(
   assert(gitStatus.changes.some((change) => change.path === 'hello.txt'));
   assert.match(await api.git.diff(session.id, 'hello.txt'), /shared change/);
 
-  const secondShellPane = await api.panes.add(session.id, 'terminal');
+  const secondShellPane = await api.panes.add('terminal');
   const secondTerminalId = await api.terminal.create({
     sessionId: session.id,
     paneId: secondShellPane.id,
     type: 'shell',
   });
   assert.notEqual(secondTerminalId, firstTerminalId);
-  await api.sessions.select(session.id);
   assert.equal(
     (await api.terminal.snapshot(firstTerminalId)).exitCode,
     undefined,
@@ -156,7 +155,7 @@ export async function smoke(
   );
 
   for (const provider of ['claude', 'codex'] as const) {
-    const chatPane = await api.panes.add(session.id, provider);
+    const chatPane = await api.panes.add(provider);
     const cliTerminalId = await api.terminal.create({
       sessionId: session.id,
       paneId: chatPane.id,

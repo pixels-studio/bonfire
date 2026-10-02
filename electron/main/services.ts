@@ -44,6 +44,7 @@ export function services(options: ServiceOptions) {
   const assistantFor = (paneId: string) =>
     assistants[store.pane(paneId).type === 'claude' ? 'claude' : 'codex'];
   const worktree = (sessionId: string) => store.session(sessionId).worktreePath;
+  const hasStarted = (pane: Pane) => pane.messages.length > 0;
 
   async function createSession(project: Project, title: string) {
     const session: Session = {
@@ -54,19 +55,34 @@ export function services(options: ServiceOptions) {
       branch: (await git.status(project.path)).branch,
       createdAt: Date.now(),
       lastOpenedAt: Date.now(),
-      layout: { paneIds: [] },
     };
     store.state.sessions.push(session);
     return session;
   }
 
-  /** Adds a pane at the front of the layout, defaulting to the last-used provider and model. */
-  function addPane(session: Session, type?: PaneType, model?: string) {
+  /** The project's most recently opened session, created on first use. */
+  async function latestSession(project: Project) {
+    const latest = store.state.sessions
+      .filter((session) => session.projectId === project.id)
+      .sort((first, second) => second.lastOpenedAt - first.lastOpenedAt)[0];
+    return latest ?? createSession(project, 'Workspace');
+  }
+
+  /** Binds the pane to the project's session and makes it the default for new panes. */
+  async function assignProject(pane: Pane, project: Project) {
+    const session = await latestSession(project);
+    if (pane.sessionId !== session.id) terminals.closePane(pane.id);
+    pane.sessionId = session.id;
+    project.lastOpenedAt = session.lastOpenedAt = Date.now();
+    store.state.lastProjectId = project.id;
+  }
+
+  /** Adds a pane at the front of the layout, defaulting to the last-used project, provider, and model. */
+  async function addPane(type?: PaneType, model?: string) {
     const { lastProvider, lastModels } = store.state.settings;
     const paneType = type ?? lastProvider ?? 'claude';
     const pane: Pane = {
       id: randomUUID(),
-      sessionId: session.id,
       type: paneType,
       title: paneType === 'terminal' ? 'Terminal' : DEFAULT_TITLE,
       messages: [],
@@ -76,28 +92,11 @@ export function services(options: ServiceOptions) {
       reasoningEffort: 'medium',
       archived: false,
     };
+    const { lastProjectId } = store.state;
+    if (lastProjectId) await assignProject(pane, store.project(lastProjectId));
     store.state.panes.push(pane);
-    session.layout.paneIds.unshift(pane.id);
-    session.layout.activePaneId = pane.id;
+    store.state.layout.paneIds.unshift(pane.id);
     return pane;
-  }
-
-  async function latestSession(project: Project) {
-    const latest = store.state.sessions
-      .filter((session) => session.projectId === project.id)
-      .sort((first, second) => second.lastOpenedAt - first.lastOpenedAt)[0];
-    if (latest) return latest;
-    const session = await createSession(project, 'Workspace');
-    addPane(session);
-    return session;
-  }
-
-  async function openProject(project: Project) {
-    const session = await latestSession(project);
-    project.lastOpenedAt = session.lastOpenedAt = Date.now();
-    store.state.lastProjectId = project.id;
-    store.state.lastSessionId = session.id;
-    store.save();
   }
 
   const api: Backend = {
@@ -118,10 +117,9 @@ export function services(options: ServiceOptions) {
           };
           store.state.projects.push(project);
         }
-        await openProject(project);
+        store.save();
         return project;
       },
-      select: async (id) => openProject(store.project(id)),
       remove: async (id) => {
         store.project(id);
         const sessionIds = new Set(
@@ -134,17 +132,21 @@ export function services(options: ServiceOptions) {
           await files.unwatch(sessionId);
         }
         const { state } = store;
-        state.panes = state.panes.filter(
-          (pane) => !sessionIds.has(pane.sessionId),
+        // Unstarted panes stay open and can pick another project; conversations go with it.
+        const affected = (pane: Pane) =>
+          !!pane.sessionId && sessionIds.has(pane.sessionId);
+        for (const pane of state.panes)
+          if (affected(pane) && !hasStarted(pane)) delete pane.sessionId;
+        state.panes = state.panes.filter((pane) => !affected(pane));
+        const paneIds = new Set(state.panes.map((pane) => pane.id));
+        state.layout.paneIds = state.layout.paneIds.filter((paneId) =>
+          paneIds.has(paneId),
         );
         state.sessions = state.sessions.filter(
           (session) => !sessionIds.has(session.id),
         );
         state.projects = state.projects.filter((project) => project.id !== id);
-        if (state.lastProjectId === id) {
-          delete state.lastProjectId;
-          delete state.lastSessionId;
-        }
+        if (state.lastProjectId === id) delete state.lastProjectId;
         store.save();
       },
       favicon: async (id) => favicon(store.project(id).path),
@@ -153,27 +155,29 @@ export function services(options: ServiceOptions) {
       create: async ({ projectId, title }) => {
         const session = await createSession(store.project(projectId), title);
         store.state.lastProjectId = projectId;
-        store.state.lastSessionId = session.id;
         store.save();
         return session;
       },
-      select: async (id) => {
-        const session = store.session(id);
-        session.lastOpenedAt = Date.now();
-        store.state.lastSessionId = id;
-        store.state.lastProjectId = session.projectId;
-        store.save();
-      },
     },
     panes: {
-      add: async (sessionId, type, model) => {
-        const pane = addPane(store.session(sessionId), type, model);
+      add: async (type, model) => {
+        const pane = await addPane(type, model);
+        store.save();
+        return pane;
+      },
+      setProject: async (id, projectId) => {
+        const pane = store.pane(id);
+        if (hasStarted(pane))
+          throw Error(
+            'Cannot change project after the conversation has started',
+          );
+        await assignProject(pane, store.project(projectId));
         store.save();
         return pane;
       },
       retype: async (id, type, model) => {
         const pane = store.pane(id);
-        if (pane.messages.length)
+        if (hasStarted(pane))
           throw Error(
             'Cannot change provider after the conversation has started',
           );

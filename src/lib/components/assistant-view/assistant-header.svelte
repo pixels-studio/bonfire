@@ -13,11 +13,13 @@
   let {
     title,
     view = $bindable(),
+    toolsDisabled,
     onresize,
     onarchive,
   }: {
     title: string;
     view: PaneView;
+    toolsDisabled: boolean;
     onresize: (size: PaneSize) => void;
     onarchive: () => void;
   } = $props();
@@ -36,6 +38,7 @@
         class="text-muted-foreground aria-pressed:bg-muted aria-pressed:text-foreground"
         aria-label={tool.label}
         aria-pressed={view === tool.view}
+        disabled={toolsDisabled}
         onclick={() => (view = view === tool.view ? 'chat' : tool.view)}
       >
         <Icon name={tool.icon} />

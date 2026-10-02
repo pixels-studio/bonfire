@@ -13,6 +13,7 @@
   import ContextUsage from './context-usage.svelte';
   import EffortPicker from './effort-picker.svelte';
   import ModelSelect from './model-select.svelte';
+  import ProjectPicker from './project-picker.svelte';
   import { MODELS, findModel, modelsFor } from '$lib/models';
   import {
     DEFAULT_TITLE,
@@ -27,6 +28,7 @@
     AssistantProvider,
     ConversationMessage,
     Pane,
+    Project,
     ReasoningEffort,
     Session,
     Usage,
@@ -35,6 +37,11 @@
   let {
     pane,
     session,
+    projects,
+    project,
+    onselectproject,
+    onaddproject,
+    onremoveproject,
     onarchive,
     onresize,
     onrefresh,
@@ -42,7 +49,12 @@
     onretype,
   }: {
     pane: Pane;
-    session: Session;
+    session?: Session;
+    projects: Project[];
+    project?: Project;
+    onselectproject: (projectId: string) => void;
+    onaddproject: () => void;
+    onremoveproject: (projectId: string) => void;
     onarchive: () => void;
     onresize: (size: PaneSize) => void;
     onrefresh: () => void;
@@ -131,7 +143,13 @@
 </script>
 
 <Card.Root class="h-full min-w-0">
-  <AssistantHeader {title} bind:view {onresize} {onarchive} />
+  <AssistantHeader
+    {title}
+    bind:view
+    toolsDisabled={!session}
+    {onresize}
+    {onarchive}
+  />
 
   <div class="relative min-h-0 flex-1">
     {#if view === 'chat'}
@@ -173,9 +191,11 @@
             </p>{/if}
         </div>
       </div>
+    {:else if !session}
+      <!-- Tool views need a project; the header disables them until one is chosen. -->
     {:else if view === 'terminal'}
       {#await import('../terminal-pane/terminal-pane.svelte') then { default: TerminalPane }}
-        <TerminalPane sessionId={pane.sessionId} paneId={pane.id} />
+        <TerminalPane sessionId={session.id} paneId={pane.id} />
       {/await}
     {:else}
       {#key view}<Inspector {session} initialMode={view} />{/key}
@@ -185,13 +205,22 @@
   {#if view === 'chat'}
     <div class="shrink-0 px-4 pb-4">
       <div class="mx-auto max-w-3xl">
-        <div class="flex px-0.5 pb-3">
-          <BranchPicker {session} onswitch={onrefresh} />
+        <div class="flex min-w-0 items-center gap-6 px-0.5 pb-3">
+          <ProjectPicker
+            {projects}
+            active={project}
+            locked={messages.length > 0}
+            onselect={onselectproject}
+            onadd={onaddproject}
+            onremove={onremoveproject}
+          />
+          {#if session}<BranchPicker {session} onswitch={onrefresh} />{/if}
         </div>
         <Composer
           paneId={pane.id}
           label={`Message ${providerLabel}`}
           {running}
+          disabled={!session}
           onsend={send}
         >
           <ModelSelect value={model} onchange={changeModel} />

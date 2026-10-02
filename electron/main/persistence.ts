@@ -18,7 +18,7 @@ export class Store {
     mkdirSync(directory, { recursive: true });
     this.file = join(directory, 'state.json');
     this.state = existsSync(this.file)
-      ? stateSchema.parse(JSON.parse(readFileSync(this.file, 'utf8')))
+      ? stateSchema.parse(migrate(JSON.parse(readFileSync(this.file, 'utf8'))))
       : emptyState();
   }
 
@@ -43,7 +43,22 @@ export class Store {
   }
 }
 
-function find<Item extends { id: string }>(items: Item[], id: string, label: string) {
+/** Layout used to live on each session; the last-open session's panes become the workspace. */
+function migrate(raw: {
+  layout?: unknown;
+  lastSessionId?: string;
+  sessions?: { id: string; layout?: { paneIds: string[] } }[];
+}) {
+  if (raw.layout) return raw;
+  const session = raw.sessions?.find(({ id }) => id === raw.lastSessionId);
+  return { ...raw, layout: { paneIds: session?.layout?.paneIds ?? [] } };
+}
+
+function find<Item extends { id: string }>(
+  items: Item[],
+  id: string,
+  label: string,
+) {
   const item = items.find((candidate) => candidate.id === id);
   if (!item) throw Error(`${label} not found`);
   return item;

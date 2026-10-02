@@ -1,5 +1,6 @@
 <script lang="ts">
   import Check from '@lucide/svelte/icons/check';
+  import ChevronDown from '@lucide/svelte/icons/chevron-down';
   import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
   import Icon from '$lib/components/icon/icon.svelte';
   import { errorMessage } from '$shared/domain';
@@ -38,10 +39,11 @@
 
 <DropdownMenu.Root onOpenChange={(open) => open && loadBranches()}>
   <DropdownMenu.Trigger
-    class="flex items-center gap-2 text-sm text-muted-foreground"
+    class="flex max-w-[calc(50%-0.75rem)] min-w-0 items-center gap-2 text-sm text-muted-foreground hover:text-foreground"
   >
-    <Icon name="git" class="size-4" />
-    {session.branch || 'Folder'}
+    <Icon name="git" class="size-4 shrink-0" />
+    <span class="truncate">{session.branch || 'Folder'}</span>
+    <ChevronDown class="size-3.5 shrink-0" />
   </DropdownMenu.Trigger>
   <DropdownMenu.Content align="start" side="top" class="w-64">
     <DropdownMenu.Label>Switch branch</DropdownMenu.Label>

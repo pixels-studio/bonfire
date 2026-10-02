@@ -100,8 +100,16 @@ export class Terminals {
   }
 
   closeSession(sessionId: string) {
+    this.closeWhere((record) => record.sessionId === sessionId);
+  }
+
+  closePane(paneId: string) {
+    this.closeWhere((record) => record.paneId === paneId);
+  }
+
+  private closeWhere(matches: (record: TerminalRecord) => boolean) {
     for (const [id, record] of this.records)
-      if (record.sessionId === sessionId) {
+      if (matches(record)) {
         this.kill(id);
         this.records.delete(id);
       }
