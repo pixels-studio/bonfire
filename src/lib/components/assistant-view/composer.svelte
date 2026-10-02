@@ -17,12 +17,15 @@
     paneId,
     label,
     running,
+    disabled,
     onsend,
     children,
   }: {
     paneId: string;
     label: string;
     running: boolean;
+    /** Blocks sending, e.g. until a project is chosen. */
+    disabled: boolean;
     onsend: (text: string, attachmentIds: string[]) => void;
     children: Snippet;
   } = $props();
@@ -33,7 +36,7 @@
 
   function send() {
     const text = prompt.trim();
-    if (!text || running) return;
+    if (!text || running || disabled) return;
     onsend(
       text,
       attachments.map(({ id }) => id),
@@ -97,7 +100,7 @@
   <textarea
     class="block min-h-15 w-full resize-none bg-transparent text-sm outline-none placeholder:text-muted-foreground"
     aria-label={label}
-    placeholder="Ask for changes"
+    placeholder={disabled ? 'Select a project to start' : 'Ask for changes'}
     bind:value={prompt}
     onkeydown={handleKeydown}
     disabled={running}></textarea>
@@ -138,7 +141,7 @@
           size="icon"
           class="bg-brand text-white hover:bg-brand/80"
           aria-label="Send message"
-          disabled={!prompt.trim()}
+          disabled={disabled || !prompt.trim()}
         >
           <ArrowUp />
         </Button>

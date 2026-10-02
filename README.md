@@ -21,10 +21,11 @@ restart after main/preload edits.
 
 ## Use
 
-1. Add an existing local repository from the project switcher (**+ Project**).
-2. Add Claude or Codex chat panes with **＋** in the header; pick a model and thinking effort
+1. Add Claude or Codex chat panes with **＋** in the header; pick a model and thinking effort
    in the composer. Switching provider mid-chat opens a new pane.
-3. All panes operate directly in the project's own working directory and branch, and use your
+2. Choose each pane's project from the picker above its composer (**New project** adds a local
+   repository). Panes can target different projects; the project locks after the first message.
+3. Panes operate directly in their project's own working directory and branch, and use your
    existing CLI login. Switch branches from the picker above the composer.
 4. Each pane's toolbar toggles a file browser, a shell terminal, and the Git diff view.
 5. Conversations, layout, and models persist. Quitting stops running turns and terminals.

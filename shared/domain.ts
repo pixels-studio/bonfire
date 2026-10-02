@@ -23,7 +23,14 @@ export function titleFrom(text: string) {
 }
 
 export function emptyState(): State {
-  return { version: 1, projects: [], sessions: [], panes: [], settings: {} };
+  return {
+    version: 1,
+    projects: [],
+    sessions: [],
+    panes: [],
+    layout: { paneIds: [] },
+    settings: {},
+  };
 }
 
 export function errorMessage(cause: unknown) {

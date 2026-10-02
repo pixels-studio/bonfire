@@ -83,6 +83,8 @@ export abstract class ChatAssistant {
     const pane = this.paneFor(input.paneId);
     const label = PROVIDER_LABELS[this.provider];
     if (this.turns.has(pane.id)) throw Error(`${label} is already responding`);
+    if (!pane.sessionId) throw Error('Select a project first');
+    const session = this.store.session(pane.sessionId);
 
     const attachments = input.attachmentIds.map((id) => {
       const attachment = this.attachments.get(id);
@@ -124,7 +126,6 @@ export abstract class ChatAssistant {
     this.emit({ paneId: pane.id, type: 'status', status: 'running' });
 
     try {
-      const session = this.store.session(pane.sessionId);
       await this.run({ pane, session, input, attachments, controller });
     } catch (cause) {
       if (!controller.signal.aborted) {

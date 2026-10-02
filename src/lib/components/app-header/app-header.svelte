@@ -2,28 +2,16 @@
   import { onMount } from 'svelte';
   import { Button } from '$lib/components/ui/button';
   import Icon from '$lib/components/icon/icon.svelte';
-  import ProjectSwitcher from '../project-switcher/project-switcher.svelte';
   import { cn } from '$lib/utils';
-  import type { Project } from '$shared/contracts';
 
   type HeaderAction = { icon: string; label: string; onclick?: () => void };
 
   let {
-    projects,
-    active,
-    onselect,
-    onaddProject,
-    onremoveProject,
     onaddPane,
     onprevious,
     onnext,
     onhelp,
   }: {
-    projects: Project[];
-    active?: Project;
-    onselect: (id: string) => void;
-    onaddProject: () => void;
-    onremoveProject: (id: string) => void;
     onaddPane: () => void;
     onprevious: () => void;
     onnext: () => void;
@@ -77,14 +65,6 @@
   )}
 >
   <div class="flex items-center gap-3 app-no-drag">
-    <ProjectSwitcher
-      {projects}
-      {active}
-      {onselect}
-      onadd={onaddProject}
-      onremove={onremoveProject}
-    />
-    <span class="h-8.5 w-px bg-foreground/10" aria-hidden="true"></span>
     {@render actionButtons(paneActions)}
   </div>
   <div class="flex items-center gap-3 app-no-drag">

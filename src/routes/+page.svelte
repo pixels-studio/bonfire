@@ -17,14 +17,8 @@
   let paneStrip = $state<HTMLDivElement>();
   let sizeOverrides = $state<Record<string, PaneSize>>({});
 
-  const project = $derived(
-    workspace.projects.find(({ id }) => id === workspace.lastProjectId),
-  );
-  const session = $derived(
-    workspace.sessions.find(({ id }) => id === workspace.lastSessionId),
-  );
   const panes = $derived(
-    (session?.layout.paneIds ?? [])
+    workspace.layout.paneIds
       .map((id) => workspace.panes.find((pane) => pane.id === id))
       .filter(
         (pane): pane is Pane =>
@@ -52,15 +46,25 @@
     }
   }
 
-  function addProject() {
-    void runAction(() => window.bonfire.projects.add());
+  function sessionFor(pane: Pane) {
+    return workspace.sessions.find(({ id }) => id === pane.sessionId);
+  }
+
+  function projectFor(pane: Pane) {
+    const session = sessionFor(pane);
+    return workspace.projects.find(({ id }) => id === session?.projectId);
+  }
+
+  function addProject(paneId: string) {
+    void runAction(async () => {
+      const project = await window.bonfire.projects.add();
+      if (project) await window.bonfire.panes.setProject(paneId, project.id);
+    });
   }
 
   async function addPane(provider?: AssistantProvider, model?: string) {
-    if (!session || busy) return;
-    await runAction(() =>
-      window.bonfire.panes.add(session.id, provider, model),
-    );
+    if (busy) return;
+    await runAction(() => window.bonfire.panes.add(provider, model));
     await tick();
     paneStrip?.scrollTo({ left: 0, behavior: scrollBehavior() });
   }
@@ -86,10 +90,6 @@
     }
     try {
       await refresh();
-      if (workspace.lastProjectId && !workspace.lastSessionId) {
-        await window.bonfire.projects.select(workspace.lastProjectId);
-        await refresh();
-      }
       loaded = true;
     } catch (cause) {
       showError(cause);
@@ -101,12 +101,6 @@
 
 <div class="flex h-screen flex-col">
   <AppHeader
-    projects={workspace.projects}
-    active={project}
-    onselect={(id) => runAction(() => window.bonfire.projects.select(id))}
-    onaddProject={addProject}
-    onremoveProject={(id) =>
-      runAction(() => window.bonfire.projects.remove(id))}
     onaddPane={() => addPane()}
     onprevious={() => scrollPanes(-1)}
     onnext={() => scrollPanes(1)}
@@ -114,7 +108,7 @@
   />
 
   <main class="min-h-0 flex-1 px-2 pb-2">
-    {#if session && panes.length}
+    {#if panes.length}
       <div
         bind:this={paneStrip}
         class="-mx-1 flex h-full snap-x snap-mandatory overflow-x-auto overscroll-x-contain scrollbar-none"
@@ -129,7 +123,16 @@
           >
             <AssistantView
               {pane}
-              {session}
+              session={sessionFor(pane)}
+              projects={workspace.projects}
+              project={projectFor(pane)}
+              onselectproject={(projectId) =>
+                runAction(() =>
+                  window.bonfire.panes.setProject(pane.id, projectId),
+                )}
+              onaddproject={() => addProject(pane.id)}
+              onremoveproject={(projectId) =>
+                runAction(() => window.bonfire.projects.remove(projectId))}
               onarchive={() =>
                 runAction(() => window.bonfire.panes.archive(pane.id))}
               onresize={(size) => (sizeOverrides[pane.id] = size)}
@@ -148,19 +151,12 @@
         class="grid h-full place-content-center justify-items-center text-center text-muted-foreground"
       >
         <Icon name="bot" class="size-7" />
-        <h1 class="mt-6 font-medium text-foreground">
-          {project ? 'Start a conversation' : 'Open a local project'}
-        </h1>
+        <h1 class="mt-6 font-medium text-foreground">Start a conversation</h1>
         <p class="mb-6">
-          {project
-            ? 'Create a Claude or Codex pane to work in this repository.'
-            : 'Choose a project from your computer to begin.'}
+          Create a Claude or Codex pane, then choose a project to work in.
         </p>
-        <Button
-          disabled={!loaded || busy}
-          onclick={project ? () => addPane() : addProject}
-        >
-          {project ? 'New conversation' : 'Add project'}
+        <Button disabled={!loaded || busy} onclick={() => addPane()}>
+          New conversation
         </Button>
       </Card.Root>
     {/if}

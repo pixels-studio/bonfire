@@ -37,7 +37,8 @@ export const attachmentSchema = z.object({
 
 export const paneSchema = z.object({
   id,
-  sessionId: id,
+  /** Unset until a project is chosen; locked once the conversation starts. */
+  sessionId: id.optional(),
   type: paneType,
   title: z.string(),
   threadId: z.string().optional(),
@@ -56,7 +57,6 @@ export const sessionSchema = z.object({
   worktreePath: z.string(),
   createdAt: z.number(),
   lastOpenedAt: z.number(),
-  layout: z.object({ paneIds: z.array(id), activePaneId: id.optional() }),
 });
 
 export const projectSchema = z.object({
@@ -72,8 +72,9 @@ export const stateSchema = z.object({
   projects: z.array(projectSchema),
   sessions: z.array(sessionSchema),
   panes: z.array(paneSchema),
+  layout: z.object({ paneIds: z.array(id) }),
+  /** Default project for new panes. */
   lastProjectId: id.optional(),
-  lastSessionId: id.optional(),
   settings: z.object({
     lastProvider: assistantProvider.optional(),
     lastModels: z
@@ -141,17 +142,12 @@ export const requests = {
   'state.get': z.tuple([]),
   'projects.add': z.tuple([]),
   'projects.remove': z.tuple([id]),
-  'projects.select': z.tuple([id]),
   'projects.favicon': z.tuple([id]),
   'sessions.create': z.tuple([
     z.object({ projectId: id, title: z.string().trim().min(1).max(120) }),
   ]),
-  'sessions.select': z.tuple([id]),
-  'panes.add': z.tuple([
-    id,
-    paneType.optional(),
-    z.string().max(100).optional(),
-  ]),
+  'panes.add': z.tuple([paneType.optional(), z.string().max(100).optional()]),
+  'panes.setProject': z.tuple([id, id]),
   'panes.retype': z.tuple([id, assistantProvider, z.string().max(100)]),
   'panes.archive': z.tuple([id]),
   'assistant.send': z.tuple([assistantSendInput]),
@@ -192,15 +188,14 @@ export type API = {
   projects: {
     add(): Promise<Project | null>;
     remove(id: string): Promise<void>;
-    select(id: string): Promise<void>;
     favicon(id: string): Promise<string | null>;
   };
   sessions: {
     create(input: { projectId: string; title: string }): Promise<Session>;
-    select(id: string): Promise<void>;
   };
   panes: {
-    add(sessionId: string, type?: PaneType, model?: string): Promise<Pane>;
+    add(type?: PaneType, model?: string): Promise<Pane>;
+    setProject(id: string, projectId: string): Promise<Pane>;
     retype(id: string, type: AssistantProvider, model: string): Promise<Pane>;
     archive(id: string): Promise<void>;
   };
