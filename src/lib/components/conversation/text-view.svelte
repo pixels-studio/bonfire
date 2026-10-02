@@ -1,16 +1,20 @@
 <script lang="ts">
-  import { cn } from '$lib/utils';
+  import Markdown from './markdown.svelte';
   import type { ConversationMessage } from '$shared/contracts';
 
   let { message }: { message: ConversationMessage } = $props();
 </script>
 
-<p
-  class={cn(
-    'text-sm whitespace-pre-wrap text-foreground/80 wrap-anywhere',
-    message.role === 'user' &&
-      'w-fit max-w-4/5 self-end rounded-3xl bg-surface-raised px-4 py-2 text-foreground @lg:max-w-100',
-  )}
->
-  {message.text}
-</p>
+{#if message.role === 'user'}
+  <p
+    class="w-fit max-w-4/5 self-end rounded-3xl bg-surface-raised px-4 py-2 text-sm whitespace-pre-wrap text-foreground wrap-anywhere @lg:max-w-100"
+  >
+    {message.text}
+  </p>
+{:else if message.kind === 'error'}
+  <p class="text-sm whitespace-pre-wrap text-destructive wrap-anywhere">
+    {message.text}
+  </p>
+{:else}
+  <Markdown text={message.text} />
+{/if}

@@ -36,3 +36,18 @@ export function emptyState(): State {
 export function errorMessage(cause: unknown) {
   return cause instanceof Error ? cause.message : String(cause);
 }
+
+/** The most conversation panes that can be open at once. */
+export const MAX_PANES = 12;
+
+/**
+ * Reorders `ids` among the layout slots they already occupy, leaving every other
+ * pane (archived, terminal) where it was. Throws if `ids` isn't a subset of the layout.
+ */
+export function reorderLayout(paneIds: string[], ids: string[]) {
+  const moving = new Set(ids);
+  if (moving.size !== ids.length || ids.some((id) => !paneIds.includes(id)))
+    throw new Error('Invalid pane order');
+  const queue = [...ids];
+  return paneIds.map((id) => (moving.has(id) ? queue.shift()! : id));
+}

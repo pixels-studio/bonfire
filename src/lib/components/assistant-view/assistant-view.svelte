@@ -2,10 +2,8 @@
   import { onMount, tick, untrack } from 'svelte';
   import * as Card from '$lib/components/ui/card';
   import Icon from '$lib/components/icon/icon.svelte';
-  import AttachmentView from '../conversation/attachment-view.svelte';
-  import TextView from '../conversation/text-view.svelte';
-  import ThinkingView from '../conversation/thinking-view.svelte';
-  import ToolView from '../conversation/tool-view.svelte';
+  import RequestView from '../conversation/request-view.svelte';
+  import TurnView from '../conversation/turn-view.svelte';
   import Inspector from '../inspector/inspector.svelte';
   import AssistantHeader from './assistant-header.svelte';
   import BranchPicker from './branch-picker.svelte';
@@ -14,7 +12,8 @@
   import EffortPicker from './effort-picker.svelte';
   import ModelSelect from './model-select.svelte';
   import ProjectPicker from './project-picker.svelte';
-  import { MODELS, findModel, modelsFor } from '$lib/models';
+  import { DEFAULT_CONTEXT_WINDOWS } from '$lib/models';
+  import { catalog } from '$lib/stores/models.svelte';
   import {
     DEFAULT_TITLE,
     PROVIDER_LABELS,
@@ -23,9 +22,13 @@
     titleFrom,
   } from '$shared/domain';
   import type { PaneSize, PaneView } from '$lib/panes';
+  import type { HTMLButtonAttributes } from 'svelte/elements';
   import { toast } from '$lib/stores/toast.svelte';
   import type {
+    AssistantEvent,
     AssistantProvider,
+    AssistantRequest,
+    AssistantRespondInput,
     ConversationMessage,
     Pane,
     Project,
@@ -42,6 +45,7 @@
     onselectproject,
     onaddproject,
     onremoveproject,
+    dragHandle,
     onarchive,
     onresize,
     onrefresh,
@@ -55,6 +59,7 @@
     onselectproject: (projectId: string) => void;
     onaddproject: () => void;
     onremoveproject: (projectId: string) => void;
+    dragHandle: HTMLButtonAttributes;
     onarchive: () => void;
     onresize: (size: PaneSize) => void;
     onrefresh: () => void;
@@ -72,6 +77,9 @@
   );
   let usage = $state<Usage | undefined>(untrack(() => pane.usage));
   let running = $state(false);
+  let requests = $state<AssistantRequest[]>([]);
+  /** Spoken to screen readers in place of the streaming text, which would be read out token by token. */
+  let announcement = $state('');
   let error = $state('');
   let view = $state<PaneView>('chat');
   let feed = $state<HTMLDivElement>();
@@ -81,24 +89,140 @@
   let effort = $state<ReasoningEffort>(untrack(() => pane.reasoningEffort));
   let model = $state(
     untrack(() => {
-      const available = modelsFor(provider);
+      const available = catalog.for(provider);
       return available.some((item) => item.value === pane.model)
         ? pane.model
         : available[0].value;
     }),
   );
-  const contextWindow = $derived((findModel(model) ?? MODELS[0]).contextWindow);
+  // The provider's own list can replace the built-in one after the pane has chosen a model.
+  $effect(() => {
+    const available = catalog.for(provider);
+    if (!available.some((item) => item.value === model))
+      model = available[0].value;
+  });
+  /** The feed's vertical padding (`pt-6` + `pb-7`), excluded from the latest turn's height. */
+  const FEED_PADDING = 52;
+  const contextWindow = $derived(
+    usage?.contextWindow ??
+      catalog.find(model)?.contextWindow ??
+      DEFAULT_CONTEXT_WINDOWS[provider],
+  );
+
+  let feedHeight = $state(0);
+  let latest = $state<HTMLDivElement>();
+  let latestContent = $state<HTMLDivElement>();
+  /** Whether the feed is kept scrolled to the end as the reply grows; scrolling up lets go. */
+  let following = true;
+
+  /** Messages split into turns, each starting at a run of user messages. */
+  const turns = $derived(
+    messages.reduce<ConversationMessage[][]>((result, item, index) => {
+      const startsTurn =
+        item.role === 'user' &&
+        (index === 0 || messages[index - 1].role !== 'user');
+      if (startsTurn || !result.length) result.push([item]);
+      else result[result.length - 1].push(item);
+      return result;
+    }, []),
+  );
+  const lastTurn = $derived(turns.at(-1) ?? []);
+  /** Turns that ran while this view was open, keyed by their first message. They aren't folded afterwards. */
+  let watched = $state<Record<string, true>>({});
+  $effect(() => {
+    if (running && lastTurn.length) watched[lastTurn[0].id] = true;
+  });
+  const assistantStarted = $derived(
+    lastTurn.some((item) => item.role === 'assistant'),
+  );
 
   function upsertMessage(message: ConversationMessage) {
     const index = messages.findIndex((item) => item.id === message.id);
     if (index === -1) messages.push(message);
     else messages[index] = message;
-    void tick().then(() => feed?.scrollTo({ top: feed.scrollHeight }));
+    // Only a new prompt moves the feed; replies fill the space below it.
+    if (index === -1 && message.role === 'user')
+      void tick().then(() => latest?.scrollIntoView({ block: 'start' }));
   }
+
+  /** Adds streamed text to a message in place, so a long reply isn't re-sent whole. */
+  function appendDelta(id: string, field: 'text' | 'output', text: string) {
+    const message = messages.findLast((item) => item.id === id);
+    if (!message) return;
+    if (field === 'text') message.text += text;
+    else if (message.tool) message.tool.output += text;
+  }
+
+  function handleEvent(event: AssistantEvent) {
+    if (event.paneId !== pane.id) return;
+    switch (event.type) {
+      case 'message':
+        upsertMessage(event.message);
+        break;
+      case 'delta':
+        appendDelta(event.id, event.field, event.text);
+        break;
+      case 'usage':
+        usage = event.usage;
+        break;
+      case 'status':
+        running = event.status === 'running';
+        if (event.status === 'running')
+          announcement = `${providerLabel} is responding`;
+        else if (event.status === 'failed')
+          announcement = 'The response failed';
+        else announcement = 'Response complete';
+        break;
+      case 'request':
+        if (!requests.some((item) => item.id === event.request.id))
+          requests.push(event.request);
+        announcement = `${providerLabel} is waiting for your response`;
+        break;
+      case 'request-resolved':
+        requests = requests.filter((item) => item.id !== event.requestId);
+        break;
+    }
+  }
+
+  async function respond(
+    request: AssistantRequest,
+    response: Pick<AssistantRespondInput, 'decision' | 'answers'>,
+  ) {
+    try {
+      await window.bonfire.assistant.respond({
+        paneId: pane.id,
+        requestId: request.id,
+        ...response,
+      });
+    } catch (cause) {
+      toast(errorMessage(cause), { variant: 'error' });
+    }
+  }
+
+  /** Keeps the end of a long reply in view, once it has outgrown the space under its prompt. */
+  function followReply() {
+    if (!following || !feed || !latest || !latestContent) return;
+    const replyBottom = latest.offsetTop + latestContent.offsetHeight;
+    if (replyBottom > feed.scrollTop + feed.clientHeight - FEED_PADDING / 2)
+      feed.scrollTo({ top: feed.scrollHeight, behavior: 'instant' });
+  }
+
+  function trackFollowing() {
+    if (!feed) return;
+    following = feed.scrollHeight - feed.scrollTop - feed.clientHeight < 40;
+  }
+
+  $effect(() => {
+    if (!latestContent) return;
+    const observer = new ResizeObserver(followReply);
+    observer.observe(latestContent);
+    return () => observer.disconnect();
+  });
 
   async function send(text: string, attachmentIds: string[]) {
     error = '';
     running = true;
+    following = true;
     if (title === DEFAULT_TITLE) title = titleFrom(text);
     try {
       await window.bonfire.assistant.send({
@@ -115,7 +239,7 @@
   }
 
   function changeModel(next: string) {
-    const target = findModel(next);
+    const target = catalog.find(next);
     if (!target || next === model) return;
     if (target.provider !== provider) {
       if (messages.length) onswitchprovider(target.provider, next);
@@ -129,17 +253,27 @@
       );
   }
 
-  onMount(() =>
-    window.bonfire.assistant.onEvent((event) => {
-      if (event.paneId !== pane.id) return;
-      if (event.type === 'message') upsertMessage(event.message);
-      if (event.type === 'usage') usage = event.usage;
-      if (event.type === 'status') {
-        running = event.status === 'running';
-        if (event.error) error = event.error;
-      }
-    }),
-  );
+  onMount(() => {
+    catalog.load();
+    feed?.scrollTo({ top: feed.scrollHeight, behavior: 'instant' });
+    const stop = window.bonfire.assistant.onEvent(handleEvent);
+    // Events sent before this view mounted (or while the page reloaded) are caught up from main.
+    void window.bonfire.assistant
+      .snapshot(pane.id)
+      .then((snapshot) => {
+        const grew = snapshot.messages.length !== messages.length;
+        messages = snapshot.messages;
+        usage = snapshot.usage;
+        running = snapshot.running;
+        requests = snapshot.requests;
+        if (grew)
+          void tick().then(() =>
+            feed?.scrollTo({ top: feed.scrollHeight, behavior: 'instant' }),
+          );
+      })
+      .catch(() => {});
+    return stop;
+  });
 </script>
 
 <Card.Root class="h-full min-w-0">
@@ -147,35 +281,53 @@
     {title}
     bind:view
     toolsDisabled={!session}
+    {dragHandle}
     {onresize}
     {onarchive}
   />
+
+  <p class="sr-only" role="status">{announcement}</p>
 
   <div class="relative min-h-0 flex-1">
     {#if view === 'chat'}
       <div
         bind:this={feed}
+        bind:clientHeight={feedHeight}
         class="absolute inset-0 flex flex-col overflow-y-auto px-4 pt-6 pb-7 motion-safe:scroll-smooth"
-        aria-live="polite"
+        onscroll={trackFollowing}
       >
         <div
           class="@container mx-auto flex w-full max-w-3xl flex-1 flex-col gap-6"
         >
-          {#each messages as message (message.id)}
-            {#if message.kind === 'text' || message.kind === 'error'}
-              <TextView {message} />
-            {:else if message.kind === 'thinking'}
-              <ThinkingView {message} />
-            {:else if message.kind === 'tool'}
-              <ToolView {message} />
-            {:else if message.kind === 'attachment'}
-              <AttachmentView
-                class="max-w-4/5 self-end @lg:max-w-100"
-                name={message.text}
-                size={message.size}
-                previewUrl={message.previewUrl}
-              />
-            {/if}
+          {#each turns.slice(0, -1) as turn (turn[0].id)}
+            <TurnView messages={turn} expanded={!!watched[turn[0].id]} />
+          {/each}
+          {#if messages.length}
+            <!-- The latest turn fills the feed so a new prompt can sit at the top. -->
+            <div
+              bind:this={latest}
+              class="flex scroll-mt-6 flex-col gap-6"
+              style:min-height={`${Math.max(0, feedHeight - FEED_PADDING)}px`}
+            >
+              <div bind:this={latestContent} class="flex flex-col gap-6">
+                <TurnView
+                  messages={lastTurn}
+                  expanded={!!watched[lastTurn[0].id]}
+                />
+                {#if running && !assistantStarted && !requests.length}
+                  <p class="w-fit text-sm shimmer-text">Thinking</p>
+                {/if}
+                {#each requests as request (request.id)}
+                  <RequestView
+                    {request}
+                    onrespond={(response) => respond(request, response)}
+                  />
+                {/each}
+                {#if error}<p class="text-sm text-destructive" role="alert">
+                    {error}
+                  </p>{/if}
+              </div>
+            </div>
           {:else}
             <div
               class="grid flex-1 place-content-center justify-items-center gap-1 text-center text-muted-foreground"
@@ -184,11 +336,11 @@
               <p class="max-w-65 text-sm text-pretty">
                 Ask {providerLabel} to explore, explain, or change this project.
               </p>
+              {#if error}<p class="text-sm text-destructive" role="alert">
+                  {error}
+                </p>{/if}
             </div>
-          {/each}
-          {#if error}<p class="text-sm text-destructive" role="alert">
-              {error}
-            </p>{/if}
+          {/if}
         </div>
       </div>
     {:else if !session}
@@ -205,7 +357,7 @@
   {#if view === 'chat'}
     <div class="shrink-0 px-4 pb-4">
       <div class="mx-auto max-w-3xl">
-        <div class="flex min-w-0 items-center gap-6 px-0.5 pb-3">
+        <div class="flex min-w-0 items-center gap-6 px-0.5 py-3">
           <ProjectPicker
             {projects}
             active={project}

@@ -1,6 +1,7 @@
 <script lang="ts">
   import * as Select from '$lib/components/ui/select';
-  import { MODELS, PROVIDERS, modelsFor } from '$lib/models';
+  import { PROVIDERS } from '$lib/models';
+  import { catalog } from '$lib/stores/models.svelte';
   import { PROVIDER_LABELS } from '$shared/domain';
 
   let {
@@ -9,10 +10,10 @@
   }: { value: string; onchange: (value: string) => void } = $props();
 </script>
 
-<Select.Root type="single" items={MODELS} {value} onValueChange={onchange}>
+<Select.Root type="single" items={catalog.all} {value} onValueChange={onchange}>
   <Select.Trigger
     aria-label="Select model"
-    class="border-0 bg-transparent px-0 dark:bg-transparent dark:hover:bg-transparent"
+    class="gap-2 border-0 bg-transparent px-0 dark:bg-transparent dark:hover:bg-transparent"
   >
     <Select.Value placeholder="Default" />
   </Select.Trigger>
@@ -20,7 +21,7 @@
     {#each PROVIDERS as provider (provider)}
       <Select.Group>
         <Select.GroupHeading>{PROVIDER_LABELS[provider]}</Select.GroupHeading>
-        {#each modelsFor(provider) as model (model.value)}
+        {#each catalog.for(provider) as model (model.value)}
           <Select.Item value={model.value} label={model.label}
             >{model.label}</Select.Item
           >

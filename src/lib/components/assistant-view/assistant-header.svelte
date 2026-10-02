@@ -3,6 +3,7 @@
   import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
   import Icon from '$lib/components/icon/icon.svelte';
   import { PANE_SIZES, type PaneSize, type PaneView } from '$lib/panes';
+  import type { HTMLButtonAttributes } from 'svelte/elements';
 
   const TOOL_VIEWS: { view: PaneView; icon: string; label: string }[] = [
     { view: 'files', icon: 'folder', label: 'Open file preview' },
@@ -14,20 +15,30 @@
     title,
     view = $bindable(),
     toolsDisabled,
+    dragHandle,
     onresize,
     onarchive,
   }: {
     title: string;
     view: PaneView;
     toolsDisabled: boolean;
+    dragHandle: HTMLButtonAttributes;
     onresize: (size: PaneSize) => void;
     onarchive: () => void;
   } = $props();
 </script>
 
 <header class="flex shrink-0 items-center justify-between gap-3 px-4 py-3">
-  <div class="flex min-w-0 items-center gap-2">
-    <Icon name="bot" class="size-5 shrink-0" />
+  <div class="flex min-w-0 items-center gap-1">
+    <button
+      type="button"
+      class="-ml-1.5 shrink-0 cursor-grab touch-none rounded-md p-0.5 text-muted-foreground transition-colors outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60 active:cursor-grabbing"
+      aria-label="Reorder pane"
+      title="Drag to reorder"
+      {...dragHandle}
+    >
+      <Icon name="drag" class="size-5" />
+    </button>
     <span class="truncate text-sm" {title}>{title}</span>
   </div>
   <div class="flex items-center gap-2">

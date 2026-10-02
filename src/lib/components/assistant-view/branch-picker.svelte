@@ -39,11 +39,11 @@
 
 <DropdownMenu.Root onOpenChange={(open) => open && loadBranches()}>
   <DropdownMenu.Trigger
-    class="flex max-w-[calc(50%-0.75rem)] min-w-0 items-center gap-2 text-sm text-muted-foreground hover:text-foreground"
+    class="flex max-w-[calc(50%-0.75rem)] min-w-0 items-center gap-2 text-sm text-foreground"
   >
-    <Icon name="git" class="size-4 shrink-0" />
+    <Icon name="git" class="size-4 shrink-0 text-muted-foreground" />
     <span class="truncate">{session.branch || 'Folder'}</span>
-    <ChevronDown class="size-3.5 shrink-0" />
+    <ChevronDown class="size-3.5 shrink-0 text-muted-foreground" />
   </DropdownMenu.Trigger>
   <DropdownMenu.Content align="start" side="top" class="w-64">
     <DropdownMenu.Label>Switch branch</DropdownMenu.Label>

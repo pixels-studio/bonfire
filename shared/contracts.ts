@@ -19,13 +19,32 @@ export const conversationMessageSchema = z.object({
   status: z.enum(['streaming', 'complete', 'failed']).default('complete'),
   size: z.number().int().nonnegative().optional(),
   previewUrl: z.string().optional(),
+  /** Structured details for tool-call messages. */
+  tool: z
+    .object({
+      name: z.string(),
+      /** The call's key argument, such as a shell command or file path. */
+      input: z.string().default(''),
+      output: z.string().default(''),
+    })
+    .optional(),
 });
 
+export const approvalMode = z.enum(['ask', 'auto']);
+
+/**
+ * What currently occupies the context window after the latest model call. The four
+ * counts are disjoint, so their sum is the context size.
+ */
 export const usageSchema = z.object({
+  /** Input tokens that were not served from cache. */
   inputTokens: z.number().int().nonnegative(),
   cachedInputTokens: z.number().int().nonnegative(),
+  /** Output tokens excluding reasoning. */
   outputTokens: z.number().int().nonnegative(),
   reasoningOutputTokens: z.number().int().nonnegative(),
+  /** The window size when the provider reports one. */
+  contextWindow: z.number().int().positive().optional(),
 });
 
 export const attachmentSchema = z.object({
@@ -94,6 +113,17 @@ export const assistantSendInput = z.object({
   reasoningEffort,
 });
 
+export const assistantRespondInput = z.object({
+  paneId: id,
+  requestId: z.string().max(200),
+  /** Answer to an approval request. */
+  decision: z.enum(['allow', 'allow-session', 'deny']).optional(),
+  /** Answers to a question request, keyed by question id. */
+  answers: z
+    .record(z.string(), z.array(z.string().max(10_000)).max(20))
+    .optional(),
+});
+
 export const terminalCreateInput = z.object({
   sessionId: id,
   paneId: id,
@@ -110,17 +140,56 @@ export type Attachment = z.infer<typeof attachmentSchema>;
 export type AssistantProvider = z.infer<typeof assistantProvider>;
 export type ReasoningEffort = z.infer<typeof reasoningEffort>;
 export type AssistantSendInput = z.infer<typeof assistantSendInput>;
+export type AssistantRespondInput = z.infer<typeof assistantRespondInput>;
+export type ApprovalMode = z.infer<typeof approvalMode>;
 export type TerminalCreateInput = z.infer<typeof terminalCreateInput>;
 export type State = z.infer<typeof stateSchema>;
+export type Question = {
+  id: string;
+  header: string;
+  question: string;
+  options: { label: string; description?: string }[];
+  multiple: boolean;
+};
+/** Something the assistant is waiting on the user for. */
+export type AssistantRequest =
+  | {
+      id: string;
+      kind: 'approval';
+      title: string;
+      /** The command, file, or other target the approval covers. */
+      detail: string;
+      reason?: string;
+      /** Whether the provider can remember the approval for the rest of the session. */
+      canRemember: boolean;
+    }
+  | { id: string; kind: 'question'; questions: Question[] };
 export type AssistantEvent =
   | { paneId: string; type: 'message'; message: ConversationMessage }
-  | { paneId: string; type: 'usage'; usage: Usage }
+  /** Text appended to a streaming message's `text` or a tool message's `tool.output`. */
   | {
       paneId: string;
-      type: 'status';
-      status: 'running' | 'idle' | 'failed';
-      error?: string;
-    };
+      type: 'delta';
+      id: string;
+      field: 'text' | 'output';
+      text: string;
+    }
+  | { paneId: string; type: 'usage'; usage: Usage }
+  | { paneId: string; type: 'status'; status: 'running' | 'idle' | 'failed' }
+  | { paneId: string; type: 'request'; request: AssistantRequest }
+  | { paneId: string; type: 'request-resolved'; requestId: string };
+/** The main process's live view of a pane, for a renderer that missed events. */
+export type AssistantSnapshot = {
+  running: boolean;
+  messages: ConversationMessage[];
+  usage?: Usage;
+  requests: AssistantRequest[];
+};
+export type ModelOption = {
+  value: string;
+  label: string;
+  contextWindow?: number;
+};
 export type Change = { path: string; index: string; worktree: string };
 export type GitStatus = { isGit: boolean; branch: string; changes: Change[] };
 export type Entry = { name: string; directory: boolean };
@@ -150,9 +219,13 @@ export const requests = {
   'panes.setProject': z.tuple([id, id]),
   'panes.retype': z.tuple([id, assistantProvider, z.string().max(100)]),
   'panes.archive': z.tuple([id]),
+  'panes.reorder': z.tuple([z.array(id).max(100)]),
   'assistant.send': z.tuple([assistantSendInput]),
   'assistant.pickAttachment': z.tuple([id]),
   'assistant.cancel': z.tuple([id]),
+  'assistant.respond': z.tuple([assistantRespondInput]),
+  'assistant.snapshot': z.tuple([id]),
+  'assistant.models': z.tuple([assistantProvider]),
   'navigation.help': z.tuple([]),
   'app.isFullscreen': z.tuple([]),
   'terminal.create': z.tuple([terminalCreateInput]),
@@ -198,11 +271,16 @@ export type API = {
     setProject(id: string, projectId: string): Promise<Pane>;
     retype(id: string, type: AssistantProvider, model: string): Promise<Pane>;
     archive(id: string): Promise<void>;
+    /** Reorders the given panes among the layout slots they already occupy. */
+    reorder(ids: string[]): Promise<void>;
   };
   assistant: {
     send(input: AssistantSendInput): Promise<void>;
     pickAttachment(paneId: string): Promise<Attachment | null>;
     cancel(paneId: string): Promise<void>;
+    respond(input: AssistantRespondInput): Promise<void>;
+    snapshot(paneId: string): Promise<AssistantSnapshot>;
+    models(provider: AssistantProvider): Promise<ModelOption[]>;
     onEvent(listener: (event: AssistantEvent) => void): Unsubscribe;
   };
   navigation: { help(): Promise<void> };
