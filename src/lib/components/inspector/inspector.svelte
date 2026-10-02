@@ -1,220 +1,166 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
-  import type { Session, GitStatus, Entry } from '$shared/contracts';
+  import { onMount, untrack } from 'svelte';
+  import ArrowUp from '@lucide/svelte/icons/arrow-up';
+  import { Button } from '$lib/components/ui/button';
+  import { errorMessage } from '$shared/domain';
+  import type { Entry, GitStatus, Session } from '$shared/contracts';
+
+  type InspectorMode = 'diff' | 'files';
+
+  const REFRESH_DEBOUNCE_MS = 180;
+  const POLL_INTERVAL_MS = 5000;
+  const FILE_ROW = 'flex w-full items-center gap-3 py-3.5 text-left text-sm';
+  const CODE_BLOCK =
+    'mb-3 overflow-auto rounded-lg border border-border p-3 font-mono text-xs/relaxed whitespace-pre';
+
   let {
     session,
     initialMode = 'diff',
-    embedded = false,
-  }: {
-    session: Session;
-    initialMode?: 'diff' | 'files';
-    embedded?: boolean;
-  } = $props();
-  let mode = $state<'diff' | 'files'>('diff');
+  }: { session: Session; initialMode?: InspectorMode } = $props();
+
+  let mode = $state(untrack(() => initialMode));
   let status = $state<GitStatus>({ isGit: false, branch: '', changes: [] });
   let entries = $state<Entry[]>([]);
-  let path = $state('');
+  let directory = $state('');
+  let selectedPath = $state('');
   let content = $state('');
-  let selected = $state('');
   let error = $state('');
   let generation = 0;
+
+  const parentDirectory = $derived(directory.split('/').slice(0, -1).join('/'));
+
+  function joinPath(...segments: string[]) {
+    return segments.filter(Boolean).join('/');
+  }
+
+  function diffLineClass(line: string) {
+    if (line.startsWith('@@')) return 'text-indigo-300';
+    if (line.startsWith('+')) return 'bg-green-950 text-green-300';
+    if (line.startsWith('-')) return 'bg-red-950 text-red-300';
+    return '';
+  }
+
   async function refresh() {
     const token = ++generation;
     try {
-      const [s, e] = await Promise.all([
+      const [nextStatus, nextEntries] = await Promise.all([
         window.bonfire.git.status(session.id),
-        window.bonfire.filesystem.list(session.id, path),
+        window.bonfire.filesystem.list(session.id, directory),
       ]);
       if (token !== generation) return;
-      status = s;
-      entries = e;
-      if (selected) await preview(selected);
+      status = nextStatus;
+      entries = nextEntries;
+      if (selectedPath) await preview(selectedPath);
       error = '';
-    } catch (e) {
-      error = String(e);
+    } catch (cause) {
+      error = errorMessage(cause);
     }
   }
-  async function preview(file: string) {
-    selected = file;
+
+  async function preview(path: string) {
+    selectedPath = path;
     try {
       content =
         mode === 'diff'
-          ? await window.bonfire.git.diff(session.id, file)
-          : await window.bonfire.filesystem.readFile(session.id, file);
-    } catch (e) {
-      content = String(e);
+          ? await window.bonfire.git.diff(session.id, path)
+          : await window.bonfire.filesystem.readFile(session.id, path);
+    } catch (cause) {
+      content = errorMessage(cause);
     }
   }
-  async function folder(next: string) {
-    path = next;
-    selected = '';
+
+  function openDirectory(path: string) {
+    directory = path;
+    selectedPath = '';
     content = '';
-    await refresh();
-  }
-  onMount(() => {
-    mode = initialMode;
     void refresh();
-    void window.bonfire.filesystem
+  }
+
+  onMount(() => {
+    void refresh();
+    window.bonfire.filesystem
       .watch(session.id)
-      .catch((e) => (error = String(e)));
-    let timer: ReturnType<typeof setTimeout>;
-    const off = window.bonfire.filesystem.onChange((e) => {
-      if (e.sessionId === session.id) {
-        clearTimeout(timer);
-        timer = setTimeout(() => void refresh(), 180);
-      }
+      .catch((cause) => (error = errorMessage(cause)));
+
+    let debounce: ReturnType<typeof setTimeout>;
+    const unsubscribe = window.bonfire.filesystem.onChange((event) => {
+      if (event.sessionId !== session.id) return;
+      clearTimeout(debounce);
+      debounce = setTimeout(refresh, REFRESH_DEBOUNCE_MS);
     });
-    const poll = setInterval(() => void refresh(), 5000);
+    const poll = setInterval(refresh, POLL_INTERVAL_MS);
+
     return () => {
       generation++;
-      off();
-      clearTimeout(timer);
+      unsubscribe();
+      clearTimeout(debounce);
       clearInterval(poll);
       void window.bonfire.filesystem.unwatch(session.id);
     };
   });
 </script>
 
-<section class="inspector panel" class:embedded>
-  {#if !embedded}<header>
-    <img src="/icons/diff.svg" alt="" /><button
-      class="plain title"
-      onclick={() => {
-        mode = mode === 'diff' ? 'files' : 'diff';
-        selected = '';
-        content = '';
-        void refresh();
-      }}
-      >{mode === 'diff' ? 'Code Diff' : 'Files'}
-      <span class="muted">⌄</span></button
-    ><span class="badge" title={status.branch}>{status.branch || 'Folder'}</span
-    ><button
-      class="plain ml-auto"
-      aria-label="Refresh files and Git"
-      onclick={refresh}>↻</button
-    >
-  </header>{/if}
-  <div class="inspection">
-    {#if error}<p class="error">{error}</p>{/if}
-    {#if mode === 'diff'}
-      {#if !status.changes.length}<div class="empty">
-          <p>
-            {status.isGit
-              ? 'Your working tree is clean.'
-              : 'This folder is not a Git repository.'}
-          </p>
-          <button
-            onclick={() => {
-              mode = 'files';
-              void refresh();
-            }}>Browse files</button
-          >
-        </div>{/if}
-      {#each status.changes as change}<button
-          class="file-row"
-          onclick={() => preview(change.path)}
-          ><span class="file-mark">±</span><span class="truncate"
-            >{change.path}</span
-          ><span class="change-state">{change.index}{change.worktree}</span
-          ></button
-        >{#if selected === change.path}<div class="code diff">
-            {#each content.split('\n') as line}<div
-                class:added={line.startsWith('+')}
-                class:removed={line.startsWith('-')}
-                class:hunk={line.startsWith('@@')}
-              >
-                {line || ' '}
-              </div>{/each}
-          </div>{/if}{/each}
-    {:else}
-      <div class="flex items-center gap-2 mb-3">
-        <button
-          disabled={!path}
-          onclick={() => folder(path.split('/').slice(0, -1).join('/'))}
-          >↑</button
-        ><span class="muted truncate">/{path}</span>
-      </div>
-      {#each entries as entry}<button
-          class="file-row"
-          onclick={() =>
-            entry.directory
-              ? folder([path, entry.name].filter(Boolean).join('/'))
-              : preview([path, entry.name].filter(Boolean).join('/'))}
-          ><span class="muted">{entry.directory ? '▸' : '·'}</span
-          >{entry.name}</button
-        >{/each}
-      {#if selected}<p class="muted mt-5">{selected}</p>
-        <pre class="code">{content}</pre>{/if}
-    {/if}
-  </div>
-</section>
+<section class="h-full overflow-auto px-4 py-2.5">
+  {#if error}<p class="text-sm text-destructive">{error}</p>{/if}
 
-<style>
-  .inspector {
-    min-width: 300px;
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-  }
-  .inspection {
-    padding: 10px 16px;
-    overflow: auto;
-    flex: 1;
-  }
-  .embedded {
-    height: 100%;
-    min-width: 0;
-    border-radius: 0;
-    background: transparent;
-  }
-  .file-row {
-    width: 100%;
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    border: 0;
-    background: none;
-    text-align: left;
-    padding: 14px 0;
-    font-size: 14px;
-  }
-  .file-mark {
-    color: #ff6317;
-    font-size: 20px;
-  }
-  .change-state {
-    margin-left: auto;
-    color: #76b93c;
-    font-family: monospace;
-  }
-  .code {
-    font:
-      12px/1.7 Menlo,
-      monospace;
-    border: 1px solid #2e3825;
-    border-radius: 8px;
-    padding: 12px;
-    overflow: auto;
-    white-space: pre;
-    margin: 0 0 12px;
-  }
-  .added {
-    color: #99cd75;
-    background: #24311c;
-  }
-  .removed {
-    color: #e9948b;
-    background: #392322;
-  }
-  .hunk {
-    color: #9ea9db;
-  }
-  .empty {
-    padding: 30px 0;
-    color: #999;
-  }
-  .empty button {
-    margin-top: 16px;
-  }
-</style>
+  {#if mode === 'diff'}
+    {#each status.changes as change (change.path)}
+      <button class={FILE_ROW} onclick={() => preview(change.path)}>
+        <span class="text-xl text-brand">±</span>
+        <span class="truncate">{change.path}</span>
+        <span class="ml-auto font-mono text-success"
+          >{change.index}{change.worktree}</span
+        >
+      </button>
+      {#if selectedPath === change.path}
+        <div class={CODE_BLOCK}>
+          {#each content.split('\n') as line}
+            <div class={diffLineClass(line)}>{line || ' '}</div>
+          {/each}
+        </div>
+      {/if}
+    {:else}
+      <div class="py-8 text-sm text-muted-foreground">
+        <p>
+          {status.isGit
+            ? 'Your working tree is clean.'
+            : 'This folder is not a Git repository.'}
+        </p>
+        <Button
+          variant="secondary"
+          class="mt-4"
+          onclick={() => (mode = 'files')}
+        >
+          Browse files
+        </Button>
+      </div>
+    {/each}
+  {:else}
+    <div class="mb-3 flex items-center gap-2">
+      <Button
+        variant="secondary"
+        size="icon"
+        aria-label="Parent folder"
+        disabled={!directory}
+        onclick={() => openDirectory(parentDirectory)}
+      >
+        <ArrowUp />
+      </Button>
+      <span class="truncate text-sm text-muted-foreground">/{directory}</span>
+    </div>
+    {#each entries as entry (entry.name)}
+      {@const path = joinPath(directory, entry.name)}
+      <button
+        class={FILE_ROW}
+        onclick={() => (entry.directory ? openDirectory(path) : preview(path))}
+      >
+        <span class="text-muted-foreground">{entry.directory ? '▸' : '·'}</span>
+        {entry.name}
+      </button>
+    {/each}
+    {#if selectedPath}
+      <p class="mt-5 mb-2 text-sm text-muted-foreground">{selectedPath}</p>
+      <pre class={CODE_BLOCK}>{content}</pre>
+    {/if}
+  {/if}
+</section>

@@ -1,5 +1,4 @@
 <script lang="ts">
-  import Check from '@lucide/svelte/icons/check';
   import ChevronDown from '@lucide/svelte/icons/chevron-down';
   import { Button } from '$lib/components/ui/button';
   import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
@@ -11,112 +10,88 @@
     active,
     onselect,
     onadd,
+    onremove,
   }: {
     projects: Project[];
     active?: Project;
     onselect: (id: string) => void;
     onadd: () => void;
+    onremove: (id: string) => void;
   } = $props();
 
   let favicons = $state<Record<string, string | null>>({});
-  const requested = new Set<string>();
+  const requestedFavicons = new Set<string>();
 
   $effect(() => {
-    for (const project of projects) {
-      if (requested.has(project.id)) continue;
-      requested.add(project.id);
-      void window.bonfire.projects
-        .favicon(project.id)
-        .then((icon) => (favicons[project.id] = icon))
-        .catch(() => (favicons[project.id] = null));
+    for (const { id } of projects) {
+      if (requestedFavicons.has(id)) continue;
+      requestedFavicons.add(id);
+      window.bonfire.projects
+        .favicon(id)
+        .then((icon) => (favicons[id] = icon))
+        .catch(() => (favicons[id] = null));
     }
   });
 </script>
 
+{#snippet favicon(project?: Project)}
+  {@const src = project && favicons[project.id]}
+  <span
+    class="grid size-4 shrink-0 place-items-center overflow-hidden rounded bg-brand text-white"
+    aria-hidden="true"
+  >
+    {#if src}
+      <img class="size-full object-cover" {src} alt="" />
+    {:else}
+      <Icon name="project" class="size-3" />
+    {/if}
+  </span>
+{/snippet}
+
 <DropdownMenu.Root>
   <DropdownMenu.Trigger>
     {#snippet child({ props })}
-      <Button {...props} variant="secondary" class="project-trigger">
-        <span class="favicon" aria-hidden="true">
-          {#if active && favicons[active.id]}
-            <img src={favicons[active.id]} alt="" />
-          {:else}
-            <Icon name="project" />
-          {/if}
-        </span>
-        <span class="project-name">{active?.name || 'Select project'}</span>
-        <ChevronDown class="chevron" />
+      <Button {...props} variant="secondary" class="max-w-60 gap-2 pl-2">
+        {@render favicon(active)}
+        <span class="truncate">{active?.name || 'Select project'}</span>
+        <ChevronDown class="size-3.5 text-muted-foreground" />
       </Button>
     {/snippet}
   </DropdownMenu.Trigger>
-  <DropdownMenu.Content align="start" class="project-menu">
+  <DropdownMenu.Content align="start" class="w-56">
     <DropdownMenu.Label>Projects</DropdownMenu.Label>
-    {#each projects as project}
-      <DropdownMenu.Item onclick={() => onselect(project.id)}>
-        <span class="menu-favicon">
-          {#if favicons[project.id]}
-            <img src={favicons[project.id]} alt="" />
-          {:else}
-            <Icon name="project" />
-          {/if}
-        </span>
-        <span class="menu-label">{project.name}</span>
-        {#if project.id === active?.id}<Check class="check" />{/if}
+    {#each projects as project (project.id)}
+      <DropdownMenu.Item class="gap-2" onclick={() => onselect(project.id)}>
+        {@render favicon(project)}
+        <span class="truncate">{project.name}</span>
+        <DropdownMenu.Root>
+          <DropdownMenu.Trigger>
+            {#snippet child({ props })}
+              <button
+                {...props}
+                type="button"
+                class="-my-0.5 -mr-0.5 ml-auto grid size-6 shrink-0 place-items-center rounded-md text-muted-foreground opacity-0 group-hover/dropdown-menu-item:opacity-100 group-data-highlighted/dropdown-menu-item:opacity-100 hover:bg-muted hover:text-foreground aria-expanded:opacity-100"
+                aria-label={`Actions for ${project.name}`}
+                onclick={(event) => event.stopPropagation()}
+              >
+                <Icon name="dots" class="size-4" />
+              </button>
+            {/snippet}
+          </DropdownMenu.Trigger>
+          <DropdownMenu.Content align="end">
+            <DropdownMenu.Item
+              variant="destructive"
+              onclick={() => onremove(project.id)}
+            >
+              Remove project
+            </DropdownMenu.Item>
+          </DropdownMenu.Content>
+        </DropdownMenu.Root>
       </DropdownMenu.Item>
     {/each}
     <DropdownMenu.Separator />
-    <DropdownMenu.Item onclick={onadd}><Icon name="plus" /> Add project</DropdownMenu.Item>
+    <DropdownMenu.Item class="gap-2" onclick={onadd}>
+      <Icon name="plus" class="size-4" /> Project
+    </DropdownMenu.Item>
   </DropdownMenu.Content>
 </DropdownMenu.Root>
-
-<style>
-  :global(.project-trigger) {
-    max-width: 240px;
-    gap: 8px;
-    padding-left: 8px;
-    background: var(--control);
-    color: var(--foreground);
-  }
-  .favicon,
-  .menu-favicon {
-    display: grid;
-    flex: none;
-    place-items: center;
-    overflow: hidden;
-    width: 20px;
-    height: 20px;
-    border-radius: 5px;
-    background: var(--accent);
-    color: white;
-    font-size: 11px;
-    font-weight: 600;
-  }
-  .favicon img,
-  .menu-favicon img {
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
-  }
-  .favicon :global(svg),
-  .menu-favicon :global(svg) {
-    width: 14px;
-    height: 14px;
-  }
-  .project-name,
-  .menu-label {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  :global(.chevron) {
-    width: 14px;
-    height: 14px;
-    color: var(--foreground-subtle);
-  }
-  :global(.project-menu) {
-    width: 224px;
-  }
-  :global(.check) {
-    margin-left: auto;
-  }
-</style>

@@ -1,24 +1,19 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { Button } from '$lib/components/ui/button';
-  import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
   import Icon from '$lib/components/icon/icon.svelte';
   import ProjectSwitcher from '../project-switcher/project-switcher.svelte';
+  import { cn } from '$lib/utils';
   import type { Project } from '$shared/contracts';
 
-  let isMac = $state(false);
-  let fullscreen = $state(false);
-  onMount(() => {
-    isMac = /mac/i.test(navigator.userAgent);
-    void window.bonfire.app.isFullscreen().then((value) => (fullscreen = value));
-    return window.bonfire.app.onFullscreenChange((value) => (fullscreen = value));
-  });
+  type HeaderAction = { icon: string; label: string; onclick?: () => void };
 
   let {
     projects,
     active,
     onselect,
     onaddProject,
+    onremoveProject,
     onaddPane,
     onprevious,
     onnext,
@@ -28,68 +23,74 @@
     active?: Project;
     onselect: (id: string) => void;
     onaddProject: () => void;
-    onaddPane: (type: 'claude' | 'codex') => void;
+    onremoveProject: (id: string) => void;
+    onaddPane: () => void;
     onprevious: () => void;
     onnext: () => void;
     onhelp: () => void;
   } = $props();
+
+  const isMac = /mac/i.test(navigator.userAgent);
+  let fullscreen = $state(false);
+
+  const paneActions: HeaderAction[] = [
+    { icon: 'plus', label: 'Add new pane', onclick: () => onaddPane() },
+    {
+      icon: 'chevron-left',
+      label: 'Previous pane',
+      onclick: () => onprevious(),
+    },
+    { icon: 'chevron-right', label: 'Next pane', onclick: () => onnext() },
+  ];
+  const utilityActions: HeaderAction[] = [
+    { icon: 'help', label: 'Help', onclick: () => onhelp() },
+    { icon: 'insights', label: 'Insights' },
+    { icon: 'settings', label: 'Settings' },
+  ];
+
+  onMount(() => {
+    window.bonfire.app.isFullscreen().then((value) => (fullscreen = value));
+    return window.bonfire.app.onFullscreenChange(
+      (value) => (fullscreen = value),
+    );
+  });
 </script>
 
-<header class="app-header" class:traffic-lights={isMac && !fullscreen}>
-  <div class="header-group">
-    <ProjectSwitcher {projects} {active} {onselect} onadd={onaddProject} />
-    <span class="divider" aria-hidden="true"></span>
-    <DropdownMenu.Root>
-      <DropdownMenu.Trigger>
-        {#snippet child({ props })}<Button {...props} variant="secondary" size="icon" aria-label="Add new pane"><Icon name="plus" /></Button>{/snippet}
-      </DropdownMenu.Trigger>
-      <DropdownMenu.Content align="start">
-        <DropdownMenu.Item onclick={() => onaddPane('claude')}
-          ><Icon name="claude" /> Claude</DropdownMenu.Item
-        >
-        <DropdownMenu.Item onclick={() => onaddPane('codex')}
-          ><Icon name="codex" /> Codex</DropdownMenu.Item
-        >
-      </DropdownMenu.Content>
-    </DropdownMenu.Root>
-    <Button variant="secondary" size="icon" aria-label="Previous pane" onclick={onprevious}><Icon name="chevron-left" /></Button>
-    <Button variant="secondary" size="icon" aria-label="Next pane" onclick={onnext}><Icon name="chevron-right" /></Button>
+{#snippet actionButtons(actions: HeaderAction[], className?: string)}
+  {#each actions as action (action.label)}
+    <Button
+      variant="secondary"
+      size="icon"
+      class={className}
+      aria-label={action.label}
+      onclick={action.onclick}
+    >
+      <Icon name={action.icon} />
+    </Button>
+  {/each}
+{/snippet}
+
+<header
+  class={cn(
+    'sticky top-0 z-20 flex min-h-13 shrink-0 items-center justify-between bg-background px-4 py-2 app-drag',
+    isMac && !fullscreen && 'pl-22',
+  )}
+>
+  <div class="flex items-center gap-3 app-no-drag">
+    <ProjectSwitcher
+      {projects}
+      {active}
+      {onselect}
+      onadd={onaddProject}
+      onremove={onremoveProject}
+    />
+    <span class="h-8.5 w-px bg-foreground/10" aria-hidden="true"></span>
+    {@render actionButtons(paneActions)}
   </div>
-  <div class="header-group utility-actions">
-    <Button variant="secondary" size="icon" aria-label="Help" onclick={onhelp}><Icon name="help" /></Button>
-    <Button variant="secondary" size="icon" aria-label="Insights"><Icon name="insights" /></Button>
-    <Button variant="secondary" size="icon" aria-label="Settings"><Icon name="settings" /></Button>
+  <div class="flex items-center gap-3 app-no-drag">
+    {@render actionButtons(
+      utilityActions,
+      'text-muted-foreground hover:text-foreground',
+    )}
   </div>
 </header>
-
-<style>
-  .app-header {
-    position: sticky;
-    top: 0;
-    z-index: 20;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    min-height: 52px;
-    padding: 8px 16px;
-    background: var(--background);
-    -webkit-app-region: drag;
-  }
-  .app-header.traffic-lights {
-    padding-left: 88px;
-  }
-  .header-group {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    -webkit-app-region: no-drag;
-  }
-  .divider {
-    align-self: stretch;
-    width: 1px;
-    background: color-mix(in srgb, var(--foreground) 8%, transparent);
-  }
-  .utility-actions :global(button) {
-    color: var(--foreground-subtle);
-  }
-</style>

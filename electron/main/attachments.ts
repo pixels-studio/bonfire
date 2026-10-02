@@ -1,17 +1,24 @@
-import { readFile, stat } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 
-function mimeFor(path: string) {
-  const ext = path.split('.').pop()?.toLowerCase();
-  if (ext === 'png') return 'image/png';
-  if (ext === 'webp') return 'image/webp';
-  if (ext === 'gif') return 'image/gif';
+export type ImageMimeType =
+  'image/png' | 'image/webp' | 'image/gif' | 'image/jpeg';
+
+export function imageMimeType(path: string): ImageMimeType {
+  const extension = path.split('.').pop()?.toLowerCase();
+  if (extension === 'png') return 'image/png';
+  if (extension === 'webp') return 'image/webp';
+  if (extension === 'gif') return 'image/gif';
   return 'image/jpeg';
 }
 
-export async function readAttachment(path: string) {
-  const [data, stats] = await Promise.all([readFile(path), stat(path)]);
+export async function readImage(path: string) {
+  const data = await readFile(path);
+  const mimeType = imageMimeType(path);
+  const base64 = data.toString('base64');
   return {
-    size: stats.size,
-    previewUrl: `data:${mimeFor(path)};base64,${data.toString('base64')}`,
+    size: data.byteLength,
+    mimeType,
+    base64,
+    previewUrl: `data:${mimeType};base64,${base64}`,
   };
 }

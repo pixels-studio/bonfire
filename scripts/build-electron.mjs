@@ -5,7 +5,7 @@ await build({
   platform: 'node',
   format: 'cjs',
   outfile: 'dist/main/index.cjs',
-  external: ['electron', 'node-pty', '@openai/codex-sdk'],
+  external: ['electron', 'node-pty', '@openai/codex-sdk', '@anthropic-ai/claude-agent-sdk'],
   sourcemap: true,
 });
 await build({
