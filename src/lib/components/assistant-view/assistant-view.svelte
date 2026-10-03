@@ -419,7 +419,14 @@
           {fastSupported}
           onmodel={changeModel}
         />
-        <ContextUsage {usage} {contextWindow} />
+        <ContextUsage
+          {usage}
+          {contextWindow}
+          disabled={running || !usage}
+          oncompact={provider === 'claude'
+            ? () => send('/compact', [], []).catch(() => {})
+            : undefined}
+        />
       </Composer>
     </div>
   </div>

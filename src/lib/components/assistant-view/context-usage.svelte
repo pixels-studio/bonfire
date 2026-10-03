@@ -11,8 +11,20 @@
     critical: { stroke: 'stroke-destructive', fill: 'bg-destructive' },
   };
 
-  let { usage, contextWindow }: { usage?: Usage; contextWindow: number } =
-    $props();
+  let {
+    usage,
+    contextWindow,
+    disabled = false,
+    oncompact,
+  }: {
+    usage?: Usage;
+    contextWindow: number;
+    /** Compacting needs an idle pane. */
+    disabled?: boolean;
+    /** Offered only for providers that can compact on request. */
+    oncompact?: () => void;
+  } = $props();
+  let open = $state(false);
 
   const usedTokens = $derived(
     usage
@@ -56,7 +68,7 @@
   }
 </script>
 
-<Popover.Root>
+<Popover.Root bind:open>
   <Popover.Trigger
     class="grid shrink-0 place-items-center p-1"
     aria-label={`${formatTokens(usedTokens)} of ${formatTokens(contextWindow)} tokens used`}
@@ -87,7 +99,22 @@
   <Popover.Content class="w-60 gap-4 p-4" align="end" side="top">
     {#if usage}
       <div class="flex flex-col gap-1.5">
-        <span>Total usage</span>
+        <div class="flex items-center justify-between">
+          <span>Total usage</span>
+          {#if oncompact}
+            <button
+              type="button"
+              class="text-sm text-brand transition-opacity hover:underline disabled:pointer-events-none disabled:opacity-50"
+              {disabled}
+              onclick={() => {
+                open = false;
+                oncompact();
+              }}
+            >
+              Compact
+            </button>
+          {/if}
+        </div>
         <div class="h-1 overflow-hidden rounded-full bg-secondary">
           <div
             class={cn(

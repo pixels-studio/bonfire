@@ -349,6 +349,17 @@
     return untrack(() => pullRequest.watch(id));
   });
 
+  // A pull request is written by an agent in a new pane, which is brought on screen.
+  $effect(() => {
+    pullRequest.onAgentPane = async (paneId) => {
+      await refresh();
+      await tick();
+      paneStrip?.scrollTo({ left: 0, behavior: scrollBehavior() });
+      void focusPane(paneId);
+    };
+    return () => (pullRequest.onAgentPane = undefined);
+  });
+
   /** Goes to the pane `step` places from the active one, wrapping around the ends. */
   function stepPane(step: number) {
     if (!panes.length) return;
@@ -369,14 +380,14 @@
   function togglePullRequest() {
     if (!project || pullRequest.current === undefined) return;
     if (pullRequest.pushable) {
-      void pullRequest.push();
+      void pullRequest.run('push');
       return;
     }
     if (
       pullRequest.current === null ||
       pullRequest.current.state === 'closed'
     ) {
-      void pullRequest.createForMe();
+      void pullRequest.run('createPr');
       return;
     }
     pullRequestOpen = !pullRequestOpen;

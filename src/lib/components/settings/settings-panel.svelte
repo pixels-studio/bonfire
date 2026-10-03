@@ -10,6 +10,7 @@
     CAFFEINATE_BATTERY_FLOOR,
     LONG_TEXT_THRESHOLD,
   } from '$shared/domain';
+  import ActionSettings from './action-settings.svelte';
   import AccentSlider from './accent-slider.svelte';
   import ConnectionSettings from './connection-settings.svelte';
   import GithubSettings from './github-settings.svelte';
@@ -173,8 +174,7 @@
         <Switch
           {...props}
           checked={current.closeOnPush}
-          onCheckedChange={(closeOnPush) =>
-            preferences.update({ closeOnPush })}
+          onCheckedChange={(closeOnPush) => preferences.update({ closeOnPush })}
         />
       {/snippet}
     </Setting>
@@ -230,6 +230,10 @@
         />
       {/snippet}
     </Setting>
+  </SettingsSection>
+
+  <SettingsSection title="Actions" icon="section-agents">
+    <ActionSettings />
   </SettingsSection>
 
   <SettingsSection title="GitHub" icon="github">

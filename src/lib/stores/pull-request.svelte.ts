@@ -1,4 +1,5 @@
 import type {
+  ActionId,
   PullRequest,
   PullRequestDraft,
   PullRequestInput,
@@ -14,19 +15,20 @@ class PullRequestStore {
   /** `undefined` until looked up; `null` when the branch has none. */
   current = $state<PullRequest | null>();
   merging = $state(false);
-  pushing = $state(false);
   /** What the checked-out branch holds, looked up while it has no open pull request. */
   draft = $state<PullRequestDraft>();
   /** On the base branch, where a pull request makes no sense. */
   readonly onBase = $derived(
     !!this.draft && this.draft.branch === this.draft.base,
   );
-  /** On the base branch with work to push. */
+  /** On the base branch, or a branch with an open pull request, with work to push. */
   readonly pushable = $derived(
-    this.onBase && this.draft!.uncommitted + this.draft!.unpushed > 0,
+    !!this.draft &&
+      this.draft.uncommitted + this.draft.unpushed > 0 &&
+      (this.onBase || this.current?.state === 'open'),
   );
-  /** Whether a pull request is being written and opened for the branch. */
-  creating = $state(false);
+  /** The action being handed to an agent, if any. */
+  running = $state<ActionId>();
   private projectId?: string;
   private generation = 0;
 
@@ -55,12 +57,10 @@ class PullRequestStore {
     const token = ++this.generation;
     try {
       const pull = await window.bonfire.github.pullRequest(projectId);
-      const draft =
-        pull?.state === 'open'
-          ? undefined
-          : await window.bonfire.github
-              .pullRequestDraft(projectId)
-              .catch(() => undefined);
+      // Looked up even with an open pull request, to know whether it has work left to push.
+      const draft = await window.bonfire.github
+        .pullRequestDraft(projectId)
+        .catch(() => undefined);
       if (token === this.generation) {
         this.current = pull;
         this.draft = draft;
@@ -81,48 +81,22 @@ class PullRequestStore {
     if (projectId === this.projectId) this.current = pull;
   }
 
-  /** Has the text model write and open a pull request for the branch on screen. */
-  async createForMe() {
-    const projectId = this.projectId;
-    if (!projectId || this.creating) return;
-    this.creating = true;
-    try {
-      const pull =
-        await window.bonfire.github.createPullRequestForMe(projectId);
-      if (projectId === this.projectId) this.current = pull;
-      toast(`Opened pull request #${pull.number}.`, {
-        duration: 10_000,
-        action: {
-          label: 'View on GitHub',
-          run: () =>
-            void window.bonfire.github
-              .openPullRequest(projectId)
-              .catch((cause) =>
-                toast(errorMessage(cause), { variant: 'error' }),
-              ),
-        },
-      });
-    } catch (cause) {
-      toast(errorMessage(cause), { variant: 'error', duration: 0 });
-    } finally {
-      this.creating = false;
-      await this.reload();
-    }
-  }
+  /** Told of the pane an agent was given the pull request in, to bring it on screen. */
+  onAgentPane?: (paneId: string) => void | Promise<void>;
 
-  /** Commits and pushes the base branch's changes, which can't go through a pull request. */
-  async push() {
+  /** Opens a pane with the last-used agent and has it carry out `action`. */
+  async run(action: ActionId) {
     const projectId = this.projectId;
-    if (!projectId || this.pushing) return;
-    this.pushing = true;
+    if (!projectId || this.running) return;
+    this.running = action;
     try {
-      await window.bonfire.github.push(projectId);
-      toast('Pushed to the remote.');
+      const paneId = await window.bonfire.github.runAction(projectId, action);
+      await this.onAgentPane?.(paneId);
     } catch (cause) {
       toast(errorMessage(cause), { variant: 'error', duration: 0 });
     } finally {
-      this.pushing = false;
-      await this.reload();
+      this.running = undefined;
+      if (action === 'push') await this.reload();
     }
   }
 

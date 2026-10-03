@@ -81,3 +81,17 @@ test('notifications cover finishing, failing, and waiting on the user', () => {
     'Codex needs approval: Run npm test',
   );
 });
+
+test('action prompts default, and an empty edit falls back to the default', async () => {
+  const { actionPrompt, DEFAULT_ACTION_PROMPTS } =
+    await import('../shared/domain');
+  const prefs = resolvePreferences({
+    actionPrompts: { push: 'Squash first', fixChecks: '  ' },
+  });
+  assert.equal(actionPrompt(prefs, 'push'), 'Squash first');
+  assert.equal(
+    actionPrompt(prefs, 'fixChecks'),
+    DEFAULT_ACTION_PROMPTS.fixChecks,
+  );
+  assert.equal(prefs.actionPrompts.createPr, DEFAULT_ACTION_PROMPTS.createPr);
+});

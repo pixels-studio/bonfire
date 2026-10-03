@@ -367,6 +367,11 @@ export class ClaudeAssistant extends ChatAssistant {
         // The session id is known up front, so a turn stopped early can still be resumed.
         if (event.subtype === 'init')
           this.rememberThread(pane, event.session_id);
+        else if (event.subtype === 'compact_boundary')
+          this.publish(
+            pane,
+            assistantMessage(randomUUID(), 'notice', 'Context compacted'),
+          );
         break;
       case 'stream_event':
         // Subagent output isn't rendered, so its deltas aren't either.

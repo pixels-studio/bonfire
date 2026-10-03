@@ -55,3 +55,18 @@ export function parsePullRequestText(
       .trim(),
   };
 }
+
+/** The message that has an agent carry out an action, with the user's instructions for it. */
+export function actionAgentPrompt(
+  instructions: string,
+  { branch, base }: Pick<PullRequestContext, 'branch' | 'base'>,
+) {
+  return [
+    'The user likes the current state of the code.',
+    '',
+    `The current branch is ${branch}.`,
+    `The target branch is origin/${base}.`,
+    '',
+    instructions.replaceAll('{branch}', branch).replaceAll('{base}', base),
+  ].join('\n');
+}

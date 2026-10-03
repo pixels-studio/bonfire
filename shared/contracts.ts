@@ -19,7 +19,7 @@ export const reasoningEffort = z.enum([
 export const conversationMessageSchema = z.object({
   id: z.string(),
   role: z.enum(['user', 'assistant']),
-  kind: z.enum(['text', 'thinking', 'tool', 'attachment', 'error']),
+  kind: z.enum(['text', 'thinking', 'tool', 'attachment', 'error', 'notice']),
   text: z.string(),
   status: z.enum(['streaming', 'complete', 'failed']).default('complete'),
   size: z.number().int().nonnegative().optional(),
@@ -52,6 +52,15 @@ export const modelChoice = z.object({
 });
 
 /** Settings the user chooses. Stored sparsely, so unset fields follow `DEFAULT_PREFERENCES`. */
+/** The buttons that hand a job to an agent, each with instructions the user can edit. */
+export const ACTION_IDS = [
+  'createPr',
+  'push',
+  'resolveConflicts',
+  'fixChecks',
+] as const;
+export const actionId = z.enum(ACTION_IDS);
+
 export const preferencesSchema = z.object({
   /** Model for new panes; `null` reuses the last model sent with. */
   defaultModel: modelChoice.nullable(),
@@ -75,6 +84,8 @@ export const preferencesSchema = z.object({
   closeOnPush: z.boolean(),
   /** Keeps the system awake while a turn runs. */
   caffeinate: z.boolean(),
+  /** The instructions each action sends its agent; unset ones use the defaults. */
+  actionPrompts: z.partialRecord(actionId, z.string().max(20_000)),
 });
 
 /**
@@ -265,6 +276,7 @@ export type FollowUpMode = z.infer<typeof followUpMode>;
 export type CodexPersonality = z.infer<typeof codexPersonality>;
 export type ModelChoice = z.infer<typeof modelChoice>;
 export type Preferences = z.infer<typeof preferencesSchema>;
+export type ActionId = z.infer<typeof actionId>;
 /** A message waiting for the running turn to end. */
 export type QueuedPrompt = { id: string; text: string; attachments: number };
 /** The signed-in account of a provider's CLI. */
@@ -501,10 +513,9 @@ export const requests = {
   'github.pullRequest': z.tuple([id]),
   'github.pullRequestDraft': z.tuple([id]),
   'github.createPullRequest': z.tuple([id, pullRequestInput]),
-  'github.createPullRequestForMe': z.tuple([id]),
+  'github.runAction': z.tuple([id, actionId]),
   'github.mergePullRequest': z.tuple([id]),
   'github.openPullRequest': z.tuple([id]),
-  'github.push': z.tuple([id]),
   'projects.chooseFolder': z.tuple([]),
   'projects.create': z.tuple([projectCreateInput]),
   'projects.clone': z.tuple([projectCloneInput]),
@@ -619,15 +630,13 @@ export type API = {
       input: PullRequestInput,
     ): Promise<PullRequest>;
     /**
-     * Has the text model write the title and description, commits what is uncommitted,
-     * pushes, and opens the pull request.
+     * Opens a new pane with the last-used agent and sends it the instructions of `action`
+     * (editable in Settings); resolves with the pane's id once the message is on its way.
      */
-    createPullRequestForMe(projectId: string): Promise<PullRequest>;
+    runAction(projectId: string, action: ActionId): Promise<string>;
     /** Squash-merges the open pull request of the checked-out branch. */
     mergePullRequest(projectId: string): Promise<void>;
     openPullRequest(projectId: string): Promise<void>;
-    /** Commits any uncommitted changes and pushes the checked-out branch, for the base branch where no pull request applies. */
-    push(projectId: string): Promise<void>;
     onSignInEnd(listener: (end: GithubSignInEnd) => void): Unsubscribe;
   };
   projects: {

@@ -1,4 +1,5 @@
 import type {
+  ActionId,
   AssistantProvider,
   Pane,
   Preferences,
@@ -108,6 +109,65 @@ export const LONG_TEXT_THRESHOLD = 5_000;
 /** Below this battery charge, in percent, `caffeinate` lets the system sleep again. */
 export const CAFFEINATE_BATTERY_FLOOR = 10;
 
+export const ACTION_LABELS: Record<ActionId, string> = {
+  createPr: 'Create PR',
+  push: 'Push',
+  resolveConflicts: 'Resolve conflicts',
+  fixChecks: 'Fix checks',
+};
+
+/** What each action tells its agent to do. `{branch}` and `{base}` are filled in when sent. */
+export const DEFAULT_ACTION_PROMPTS: Record<ActionId, string> = {
+  createPr: [
+    'Follow these steps to create a PR:',
+    '',
+    '- If you have any skills related to creating PRs, invoke them now. Instructions there should take precedence over these instructions.',
+    '- Run `git status` to check for uncommitted changes. If there are any, review them with `git diff` and commit them. Follow any instructions the user gave you about writing commit messages.',
+    '- If the branch has no upstream or has unpushed commits, push with `git push -u origin HEAD`. If the branch tracks a remote branch with a different name or on a different remote, push to that upstream instead.',
+    '- Review the full PR diff with `git diff origin/{base}...HEAD`.',
+    '- Use `gh pr create --base {base}` to create a PR onto the target branch. Keep the title under 80 characters. Keep the description under five sentences, unless the user instructed you otherwise. Describe not just changes made in this session but ALL changes in the branch diff.',
+    '',
+    'If any of these steps fail, ask the user for help.',
+  ].join('\n'),
+  push: [
+    'Follow these steps to push the changes:',
+    '',
+    '- Run `git status` to check for uncommitted changes. If there are any, review them with `git diff` and commit them with a clear message. Follow any instructions the user gave you about writing commit messages.',
+    '- Push with `git push`, or `git push -u origin HEAD` if the branch has no upstream.',
+    '- If the push is rejected because the remote has new commits, run `git pull --rebase`, resolve any conflicts, and push again. Never force push.',
+    '',
+    'If any of these steps fail, ask the user for help.',
+  ].join('\n'),
+  resolveConflicts: [
+    'The pull request has merge conflicts with the target branch. Follow these steps to resolve them:',
+    '',
+    '- Run `git status` and commit or stash any uncommitted changes first.',
+    '- Run `git fetch origin`, then `git merge origin/{base}`.',
+    '- For each conflicted file, read both sides and combine them so the intent of both changes is kept. Remove every conflict marker.',
+    "- Run the project's build or tests if it has them, to check the result.",
+    '- Commit the merge and push with `git push`. Never force push.',
+    '',
+    'If any of these steps fail, or a conflict is ambiguous, ask the user for help.',
+  ].join('\n'),
+  fixChecks: [
+    'The pull request has failing checks. Follow these steps to fix them:',
+    '',
+    '- Run `gh pr checks` to see which checks failed.',
+    '- Read the failure logs with `gh run view <run-id> --log-failed`.',
+    '- Find the cause in the code and fix it. Reproduce the failure locally first when you can.',
+    '- Commit the fix and push it with `git push`.',
+    '',
+    'If a failure looks unrelated to this branch, or you cannot fix it, tell the user rather than guessing.',
+  ].join('\n'),
+};
+
+/** The instructions an action sends: the user's edit, or the default when it is empty. */
+export function actionPrompt(preferences: Preferences, action: ActionId) {
+  return (
+    preferences.actionPrompts[action]?.trim() || DEFAULT_ACTION_PROMPTS[action]
+  );
+}
+
 export const DEFAULT_PREFERENCES: Preferences = {
   defaultModel: null,
   approvals: 'auto',
@@ -123,11 +183,19 @@ export const DEFAULT_PREFERENCES: Preferences = {
   archiveOnMerge: false,
   closeOnPush: true,
   caffeinate: true,
+  actionPrompts: DEFAULT_ACTION_PROMPTS,
 };
 
 /** Fills in the fields the user hasn't set. */
 export function resolvePreferences(stored: Partial<Preferences>): Preferences {
-  return { ...DEFAULT_PREFERENCES, ...stored };
+  return {
+    ...DEFAULT_PREFERENCES,
+    ...stored,
+    actionPrompts: {
+      ...DEFAULT_PREFERENCES.actionPrompts,
+      ...stored.actionPrompts,
+    },
+  };
 }
 
 /** What went wrong, without the wrapping Electron adds to errors thrown in main. */

@@ -1,10 +1,10 @@
 <script lang="ts">
   import type { Snippet } from 'svelte';
   import { Button } from '$lib/components/ui/button';
-  import Icon from '$lib/components/icon/icon.svelte';
   import { shortcutText } from '$lib/shortcuts';
   import { pullRequest } from '$lib/stores/pull-request.svelte';
   import { cn, isMac } from '$lib/utils';
+  import { ACTION_LABELS } from '$shared/domain';
 
   let {
     pullRequestOpen = $bindable(false),
@@ -43,8 +43,28 @@
 
   const pullRequestHint = `(${shortcutText('pullRequest', isMac())})`;
   const UTILITY_BUTTON_CLASS = 'text-muted-foreground hover:text-foreground';
-  const PILL_BUTTON_CLASS = 'rounded-full px-3';
+  const PILL_BUTTON_CLASS = 'min-w-36 rounded-full px-3';
+  /** Each action has its own color, so what a button does shows before it is read. */
+  const PUSH_BUTTON_CLASS = 'bg-success text-white hover:bg-success/85';
+  const CONFLICTS_BUTTON_CLASS =
+    'bg-amber-500 text-black hover:bg-amber-500/85';
+  const CHECKS_BUTTON_CLASS =
+    'bg-destructive text-black hover:bg-destructive/85';
+  const MERGE_BUTTON_CLASS = 'bg-brand text-white hover:bg-brand/85';
 </script>
+
+{#snippet pushButton()}
+  <Button
+    size="sm"
+    class={cn(PILL_BUTTON_CLASS, PUSH_BUTTON_CLASS)}
+    {disabled}
+    title="Have an agent commit the changes and push them to the remote"
+    loading={pullRequest.running === 'push'}
+    onclick={() => void pullRequest.run('push')}
+  >
+    {ACTION_LABELS.push}
+  </Button>
+{/snippet}
 
 <header
   class={cn(
@@ -65,48 +85,67 @@
         title={`Pull request ${pullRequestHint}`}
         onclick={togglePullRequest}
       >
-        <Icon name="git" />
         #{pull.number}
       </Button>
-      <Button
-        size="sm"
-        class={PILL_BUTTON_CLASS}
-        title={mergeBlocked || 'Squash and merge the pull request'}
-        disabled={!!mergeBlocked}
-        loading={pullRequest.merging}
-        onclick={() => void pullRequest.merge()}
-      >
-        Merge
-      </Button>
-    {:else if pullRequest.onBase}
       {#if pullRequest.pushable}
+        {@render pushButton()}
+      {:else if pull.mergeable === 'no'}
         <Button
           size="sm"
-          class={PILL_BUTTON_CLASS}
+          class={cn(PILL_BUTTON_CLASS, CONFLICTS_BUTTON_CLASS)}
           {disabled}
-          title="Commit changes and push to the remote"
-          loading={pullRequest.pushing}
-          onclick={() => void pullRequest.push()}
+          title="Have an agent merge the target branch in and resolve the conflicts"
+          loading={pullRequest.running === 'resolveConflicts'}
+          onclick={() => void pullRequest.run('resolveConflicts')}
         >
-          <Icon name="git" />
-          Push
+          {ACTION_LABELS.resolveConflicts}
         </Button>
+      {:else if pull.checks === 'failing'}
+        <Button
+          size="sm"
+          class={cn(PILL_BUTTON_CLASS, CHECKS_BUTTON_CLASS)}
+          {disabled}
+          title="Have an agent fix the failing checks"
+          loading={pullRequest.running === 'fixChecks'}
+          onclick={() => void pullRequest.run('fixChecks')}
+        >
+          {ACTION_LABELS.fixChecks}
+        </Button>
+      {:else}
+        <Button
+          size="sm"
+          class={cn(PILL_BUTTON_CLASS, MERGE_BUTTON_CLASS)}
+          title={mergeBlocked || 'Squash and merge the pull request'}
+          disabled={!!mergeBlocked}
+          loading={pullRequest.merging}
+          onclick={() => void pullRequest.merge()}
+        >
+          Merge
+        </Button>
+      {/if}
+    {:else if pullRequest.onBase}
+      {#if pullRequest.pushable}
+        {@render pushButton()}
       {/if}
     {:else}
       <Button
-        variant={pullRequestOpen ? 'default' : 'secondary'}
+        variant={pullRequestOpen || createsPullRequest
+          ? 'default'
+          : 'secondary'}
         size="sm"
-        class={cn(PILL_BUTTON_CLASS, !pullRequestOpen && UTILITY_BUTTON_CLASS)}
-        aria-pressed={pullRequestOpen}
+        class={cn(
+          PILL_BUTTON_CLASS,
+          !pullRequestOpen && !createsPullRequest && UTILITY_BUTTON_CLASS,
+        )}
+        aria-pressed={createsPullRequest ? undefined : pullRequestOpen}
         disabled={disabled || pull === undefined}
         title={`Create pull request ${pullRequestHint}`}
-        loading={pullRequest.creating}
+        loading={pullRequest.running === 'createPr'}
         onclick={createsPullRequest
-          ? () => void pullRequest.createForMe()
+          ? () => void pullRequest.run('createPr')
           : togglePullRequest}
       >
-        <Icon name={pull?.state === 'merged' ? 'check' : 'git'} />
-        {pull?.state === 'merged' ? 'Merged' : 'Create PR'}
+        {pull?.state === 'merged' ? 'Merged' : ACTION_LABELS.createPr}
       </Button>
     {/if}
   </div>

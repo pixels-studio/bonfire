@@ -34,6 +34,8 @@ import {
   promptText,
   reorderLayout,
   repositoryName,
+  ACTION_LABELS,
+  actionPrompt,
   resolvePreferences,
   withoutMarkers,
   titleFrom,
@@ -52,7 +54,11 @@ import { MergeWatcher } from './merge-watcher';
 import { TurnNotifier, type Notice } from './notifier';
 import { Store } from './persistence';
 import { Terminals } from './terminal';
-import { parsePullRequestText, pullRequestPrompt } from './pull-request-text';
+import {
+  parsePullRequestText,
+  actionAgentPrompt,
+  pullRequestPrompt,
+} from './pull-request-text';
 import { cleanTitle, titlePrompt } from './titles';
 import { TokenUsage } from './token-usage';
 
@@ -571,33 +577,44 @@ export function services(options: ServiceOptions) {
         closeAfterPush(projectId);
         return pull;
       },
-      createPullRequestForMe: async (projectId) => {
-        const cwd = folder(projectId);
+      runAction: async (projectId, action) => {
         const draft = await pullRequestDraft(projectId);
-        if (draft.blocked) throw Error(draft.blocked);
-        const { title, body } = await writePullRequest(cwd, draft);
-        if (draft.uncommitted) await git.commitAll(cwd, title);
-        await git.pushBranch(cwd);
-        const pull = await github.createPullRequest(cwd, {
-          title,
-          body,
-          base: draft.base,
-        });
-        closeAfterPush(projectId);
-        return pull;
-      },
-      push: async (projectId) => {
-        const cwd = folder(projectId);
-        const draft = await pullRequestDraft(projectId);
-        if (!draft.branch) throw Error('Check out a branch to push.');
-        if (!draft.uncommitted && !draft.unpushed)
-          throw Error('There is nothing to push.');
-        if (draft.uncommitted) {
-          const { title } = await writePullRequest(cwd, draft);
-          await git.commitAll(cwd, title);
+        if (action === 'push') {
+          if (!draft.branch) throw Error('Check out a branch to push.');
+          if (!draft.uncommitted && !draft.unpushed)
+            throw Error('There is nothing to push.');
+        } else if (action === 'createPr' && draft.blocked) {
+          throw Error(draft.blocked);
         }
-        await git.pushBranch(cwd);
-        closeAfterPush(projectId);
+        const pane = addPane();
+        store.save();
+        // The turn runs on its own; its progress reaches the pane through events.
+        void send({
+          paneId: pane.id,
+          text: actionAgentPrompt(
+            actionPrompt(store.preferences, action),
+            draft,
+          ),
+          attachmentIds: [],
+          skills: [],
+          model: pane.model,
+          reasoningEffort: pane.reasoningEffort,
+          fastMode: pane.fastMode,
+          approvals: pane.approvals,
+        })
+          .then(async () => {
+            if (action !== 'push') return;
+            // Close panes only if the agent actually got everything pushed.
+            const after = await pullRequestDraft(projectId);
+            if (!after.uncommitted && !after.unpushed)
+              closeAfterPush(projectId);
+          })
+          .catch((cause) =>
+            console.warn(
+              `Could not run ${ACTION_LABELS[action]}: ${errorMessage(cause)}`,
+            ),
+          );
+        return pane.id;
       },
       mergePullRequest: async (projectId) =>
         github.mergePullRequest(folder(projectId)),

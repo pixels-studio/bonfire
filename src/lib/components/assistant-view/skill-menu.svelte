@@ -86,38 +86,31 @@
           role="option"
           aria-selected={index === highlighted}
           class={cn(
-            'flex cursor-default flex-col gap-0.5 rounded-md px-2.5 py-1.5',
+            'flex cursor-default rounded-md px-2.5 py-1.5',
             index === highlighted && 'bg-muted',
           )}
           onmousedown={(event) => event.preventDefault()}
           onmousemove={() => (highlighted = index)}
           onclick={() => onchoose(skill)}
         >
-          <span class="flex min-w-0 items-baseline gap-2 text-sm">
-            <span class="max-w-full shrink-0 truncate font-medium"
-              >/{skill.name}</span
-            >
-            {#if skill.argumentHint}
-              <span class="min-w-0 truncate text-xs text-muted-foreground">
-                {skill.argumentHint}
-              </span>
-            {/if}
-          </span>
-          {#if skill.description}
-            <span class="truncate text-xs text-muted-foreground">
-              {skill.description}
-            </span>
-          {/if}
+          <span class="truncate text-sm font-medium">/{skill.name}</span>
         </li>
       {/each}
     </ul>
+  {:else if loading && !error}
+    <div class="p-1" role="status" aria-label="Loading skills">
+      {#each [60, 45, 70, 50, 55] as width}
+        <div class="px-2.5 py-2">
+          <div
+            class="h-4 animate-pulse rounded bg-muted"
+            style:width={`${width}%`}
+          ></div>
+        </div>
+      {/each}
+    </div>
   {:else}
     <p class="px-3.5 py-2.5 text-sm text-muted-foreground" role="status">
-      {error
-        ? `Couldn't load skills: ${error}`
-        : loading
-          ? 'Loading skills…'
-          : 'No matching skills'}
+      {error ? `Couldn't load skills: ${error}` : 'No matching skills'}
     </p>
   {/if}
 </div>

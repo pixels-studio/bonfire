@@ -57,6 +57,16 @@
     {#if message.text || message.status === 'streaming'}
       <ThinkingView {message} />
     {/if}
+  {:else if message.kind === 'notice'}
+    <div
+      class="flex items-center gap-3 text-xs text-muted-foreground"
+      role="separator"
+      aria-label={message.text}
+    >
+      <span class="h-px grow bg-border"></span>
+      {message.text}
+      <span class="h-px grow bg-border"></span>
+    </div>
   {:else if message.kind === 'tool'}
     <ToolView {message} />
   {/if}
