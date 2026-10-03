@@ -275,6 +275,38 @@ export type GithubStatus =
 export type GithubSignIn = { userCode: string; verificationUrl: string };
 /** How a GitHub sign-in ended: the account gh now uses, and why it failed if it did. */
 export type GithubSignInEnd = { status: GithubStatus; error?: string };
+export type PullRequest = {
+  number: number;
+  url: string;
+  title: string;
+  state: 'open' | 'merged' | 'closed';
+  draft: boolean;
+  /** Whether the branch merges cleanly into its base; unknown while GitHub works it out. */
+  mergeable: 'yes' | 'no' | 'unknown';
+  /** The combined result of the pull request's checks. */
+  checks: 'none' | 'pending' | 'passing' | 'failing';
+};
+/** What a new pull request from a workspace would contain. */
+export type PullRequestDraft = {
+  branch: string;
+  base: string;
+  /** A suggested title and description, from the branch's commits. */
+  title: string;
+  body: string;
+  /** Subjects of the commits the branch has beyond its base, newest first. */
+  commits: string[];
+  /** Files with changes that aren't committed yet. */
+  uncommitted: number;
+  /** Why no pull request can be opened from here, if so. */
+  blocked?: string;
+};
+export const pullRequestInput = z.object({
+  title: z.string().trim().min(1).max(500),
+  body: z.string().max(65_536),
+  /** Commit uncommitted changes first, with the title as the message. */
+  commit: z.boolean(),
+});
+export type PullRequestInput = z.infer<typeof pullRequestInput>;
 export type Question = {
   id: string;
   header: string;
@@ -421,6 +453,11 @@ export const requests = {
   'github.status': z.tuple([]),
   'github.connect': z.tuple([]),
   'github.cancelConnect': z.tuple([]),
+  'github.pullRequest': z.tuple([id]),
+  'github.pullRequestDraft': z.tuple([id]),
+  'github.createPullRequest': z.tuple([id, pullRequestInput]),
+  'github.mergePullRequest': z.tuple([id]),
+  'github.openPullRequest': z.tuple([id]),
   'projects.add': z.tuple([]),
   'projects.remove': z.tuple([id]),
   'projects.favicon': z.tuple([id]),
@@ -524,6 +561,17 @@ export type API = {
      */
     connect(): Promise<GithubSignIn>;
     cancelConnect(): Promise<void>;
+    /** The newest pull request from the workspace's branch, or null if it has none. */
+    pullRequest(sessionId: string): Promise<PullRequest | null>;
+    pullRequestDraft(sessionId: string): Promise<PullRequestDraft>;
+    /** Pushes the branch and opens a pull request against the workspace's base branch. */
+    createPullRequest(
+      sessionId: string,
+      input: PullRequestInput,
+    ): Promise<PullRequest>;
+    /** Squash-merges the workspace's open pull request. */
+    mergePullRequest(sessionId: string): Promise<void>;
+    openPullRequest(sessionId: string): Promise<void>;
     onSignInEnd(listener: (end: GithubSignInEnd) => void): Unsubscribe;
   };
   projects: {

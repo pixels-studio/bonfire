@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, tick } from 'svelte';
+  import { onMount, tick, untrack } from 'svelte';
   import { Button } from '$lib/components/ui/button';
   import * as Card from '$lib/components/ui/card';
   import AppHeader from '$lib/components/app-header/app-header.svelte';
@@ -27,6 +27,7 @@
   import { PaneStatuses, type PaneStatus } from '$lib/pane-status.svelte';
   import { playCompletionSound } from '$lib/sounds';
   import { preferences } from '$lib/stores/preferences.svelte';
+  import { pullRequest } from '$lib/stores/pull-request.svelte';
   import { toast } from '$lib/stores/toast.svelte';
   import { cn, isMac, scrollBehavior } from '$lib/utils';
   import type { HTMLButtonAttributes } from 'svelte/elements';
@@ -93,7 +94,10 @@
     (panel ? 1 : 0) + Math.max(panes.length, 1) + (trailingView ? 1 : 0),
   );
 
-  const canAddPane = $derived(!!session && panes.length < MAX_PANES);
+  /** Conversations belong in worktrees; the project folder only hosts ones it already had. */
+  const canAddPane = $derived(
+    !!session && isWorktree(session) && panes.length < MAX_PANES,
+  );
   /** The model new workspaces start with: the chosen default, else the last used. */
   const startingModel = $derived.by(() => {
     const { defaultModel, providers } = preferences.current;
@@ -140,17 +144,31 @@
     }
   }
 
-  function addProject() {
-    void runAction(() => window.bonfire.projects.add());
+  /** A project starts with a worktree of its own, never in its folder. */
+  function askForWorkspace(projectId: string) {
+    const hasWorktree = workspace.sessions.some(
+      (item) =>
+        item.projectId === projectId && !item.archived && isWorktree(item),
+    );
+    if (!hasWorktree) creatingWorkspace = true;
+  }
+
+  async function addProject() {
+    let added: string | undefined;
+    await runAction(async () => {
+      added = (await window.bonfire.projects.add())?.id;
+    });
+    if (added) askForWorkspace(added);
   }
 
   function removeProject(projectId: string) {
     void runAction(() => window.bonfire.projects.remove(projectId));
   }
 
-  function openProject(projectId: string) {
+  async function openProject(projectId: string) {
     if (projectId === project?.id) return;
-    void runAction(() => window.bonfire.workspaces.openProject(projectId));
+    await runAction(() => window.bonfire.workspaces.openProject(projectId));
+    askForWorkspace(projectId);
   }
 
   function openWorkspace(id: string) {
@@ -192,6 +210,10 @@
     if (busy) return;
     if (!session) {
       addProject();
+      return;
+    }
+    if (!isWorktree(session)) {
+      toast('Create a workspace to start a conversation.');
       return;
     }
     if (!canAddPane) {
@@ -281,6 +303,13 @@
   // A view of a workspace that's no longer on screen would show the wrong folder.
   $effect(() => {
     if (!session) view = undefined;
+  });
+
+  // The header's pull request button follows the workspace on screen.
+  $effect(() => {
+    if (!loaded) return;
+    const id = session?.id;
+    return untrack(() => pullRequest.watch(id));
   });
 
   $effect(() => {
@@ -415,24 +444,34 @@
       class="grid h-full place-content-center justify-items-center text-center text-muted-foreground"
     >
       <Icon name="bot" class="size-7" />
-      <h1 class="mt-6 font-medium text-foreground">Start a conversation</h1>
-      <p class="mb-6 max-w-90 text-pretty">
-        Add a pane to work in {session && isWorktree(session)
-          ? `“${workspaceLabel(session)}”`
-          : 'the project folder'}, or start a new workspace for a separate task.
-      </p>
-      <div class="flex gap-2.5">
-        <Button
-          variant="secondary"
-          disabled={!loaded || busy}
-          onclick={newWorkspace}
-        >
+      {#if session && isWorktree(session)}
+        <h1 class="mt-6 font-medium text-foreground">Start a conversation</h1>
+        <p class="mb-6 max-w-90 text-pretty">
+          Add a pane to work in “{workspaceLabel(session)}”, or start a new
+          workspace for a separate task.
+        </p>
+        <div class="flex gap-2.5">
+          <Button
+            variant="secondary"
+            disabled={!loaded || busy}
+            onclick={newWorkspace}
+          >
+            New workspace
+          </Button>
+          <Button disabled={!loaded || busy} onclick={() => addPane()}>
+            New conversation
+          </Button>
+        </div>
+      {:else}
+        <h1 class="mt-6 font-medium text-foreground">Create a workspace</h1>
+        <p class="mb-6 max-w-90 text-pretty">
+          Each task gets its own workspace: a separate branch and folder, so its
+          changes can become a pull request.
+        </p>
+        <Button disabled={!loaded || busy} onclick={newWorkspace}>
           New workspace
         </Button>
-        <Button disabled={!loaded || busy} onclick={() => addPane()}>
-          New conversation
-        </Button>
-      </div>
+      {/if}
     </Card.Root>
   {/if}
 {/snippet}

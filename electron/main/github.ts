@@ -1,6 +1,10 @@
 import { execFile, spawn, type ChildProcess } from 'node:child_process';
 import { promisify } from 'node:util';
-import type { GithubSignIn, GithubStatus } from '../../shared/contracts';
+import type {
+  GithubSignIn,
+  GithubStatus,
+  PullRequest,
+} from '../../shared/contracts';
 
 const execFileAsync = promisify(execFile);
 
@@ -21,6 +25,76 @@ function gh(args: string[], cwd?: string) {
 
 function isMissing(cause: unknown) {
   return (cause as NodeJS.ErrnoException).code === 'ENOENT';
+}
+
+type CheckRollup = {
+  status?: string;
+  conclusion?: string;
+  state?: string;
+}[];
+
+const FAILED = [
+  'FAILURE',
+  'TIMED_OUT',
+  'CANCELLED',
+  'ACTION_REQUIRED',
+  'STARTUP_FAILURE',
+  'ERROR',
+];
+
+/** Folds each check run and commit status into one answer. */
+function summarizeChecks(rollup: CheckRollup = []): PullRequest['checks'] {
+  if (!rollup.length) return 'none';
+  const results = rollup.map(
+    ({ status, conclusion, state }) => conclusion || state || status || '',
+  );
+  if (results.some((result) => FAILED.includes(result))) return 'failing';
+  const done = ['SUCCESS', 'NEUTRAL', 'SKIPPED'];
+  return results.every((result) => done.includes(result))
+    ? 'passing'
+    : 'pending';
+}
+
+/** The pull request in the JSON of `gh pr view` or `gh pr list`. */
+export function parsePullRequest(json: string): PullRequest {
+  const pull = JSON.parse(json) as {
+    number: number;
+    url: string;
+    title: string;
+    state: string;
+    isDraft: boolean;
+    mergeable: string;
+    statusCheckRollup?: CheckRollup;
+  };
+  return {
+    number: pull.number,
+    url: pull.url,
+    title: pull.title,
+    state:
+      pull.state === 'MERGED'
+        ? 'merged'
+        : pull.state === 'CLOSED'
+          ? 'closed'
+          : 'open',
+    draft: pull.isDraft,
+    mergeable:
+      pull.mergeable === 'MERGEABLE'
+        ? 'yes'
+        : pull.mergeable === 'CONFLICTING'
+          ? 'no'
+          : 'unknown',
+    checks: summarizeChecks(pull.statusCheckRollup),
+  };
+}
+
+const PULL_FIELDS =
+  'number,url,title,state,isDraft,mergeable,statusCheckRollup';
+
+/** gh's own explanation, which says what went wrong better than the command line it ran. */
+function ghError(cause: unknown) {
+  const { stderr } = cause as { stderr?: string };
+  if (isMissing(cause)) return Error('Install the GitHub CLI (gh) first.');
+  return Error(stderr?.trim() || (cause as Error).message);
 }
 
 /** GitHub through the user's own `gh` CLI and its login; Bonfire holds no tokens. */
@@ -139,6 +213,51 @@ export class GitHub {
     );
     const [pull] = JSON.parse(output) as { mergedAt: string }[];
     return pull ? Date.parse(pull.mergedAt) : undefined;
+  }
+
+  /** The newest pull request from the branch checked out in `cwd`, or null if it has none. */
+  async pullRequest(cwd: string): Promise<PullRequest | null> {
+    try {
+      return parsePullRequest(
+        await gh(['pr', 'view', '--json', PULL_FIELDS], cwd),
+      );
+    } catch (cause) {
+      if (
+        /no pull requests found/i.test(
+          (cause as { stderr?: string }).stderr ?? '',
+        )
+      )
+        return null;
+      throw ghError(cause);
+    }
+  }
+
+  /** Opens a pull request from the branch checked out in `cwd`, which must already be pushed. */
+  async createPullRequest(
+    cwd: string,
+    { title, body, base }: { title: string; body: string; base: string },
+  ): Promise<PullRequest> {
+    try {
+      await gh(
+        ['pr', 'create', '--title', title, '--body', body, '--base', base],
+        cwd,
+      );
+    } catch (cause) {
+      throw ghError(cause);
+    }
+    const pull = await this.pullRequest(cwd);
+    if (!pull)
+      throw Error('The pull request was created but could not be read.');
+    return pull;
+  }
+
+  /** Squash-merges the open pull request of the branch checked out in `cwd`. */
+  async mergePullRequest(cwd: string) {
+    try {
+      await gh(['pr', 'merge', '--squash'], cwd);
+    } catch (cause) {
+      throw ghError(cause);
+    }
   }
 
   /** Stops a sign-in still waiting for the user; `onDone` then hears it failed. */

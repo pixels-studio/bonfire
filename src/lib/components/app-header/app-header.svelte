@@ -3,10 +3,12 @@
   import { Button } from '$lib/components/ui/button';
   import Icon from '$lib/components/icon/icon.svelte';
   import {
+    PULL_REQUEST_VIEW,
     WORKSPACE_VIEWS,
     type WorkspaceView,
   } from '$lib/components/workspace/workspace-panel.svelte';
   import type { PaneStatus } from '$lib/pane-status.svelte';
+  import { pullRequest } from '$lib/stores/pull-request.svelte';
   import { cn } from '$lib/utils';
 
   type HeaderAction = {
@@ -79,7 +81,22 @@
       onclick: () => onaddPane(),
     },
   ]);
+  const pull = $derived(pullRequest.current);
+  const prOpen = $derived(view === PULL_REQUEST_VIEW.view);
+  const mergeBlocked = $derived(
+    pull?.state === 'open' &&
+      (pull.draft
+        ? 'Mark the pull request ready for review first'
+        : pull.mergeable === 'no'
+          ? 'The pull request has conflicts'
+          : ''),
+  );
+
+  function togglePullRequest() {
+    view = prOpen ? undefined : PULL_REQUEST_VIEW.view;
+  }
   const UTILITY_BUTTON_CLASS = 'text-muted-foreground hover:text-foreground';
+  const PILL_BUTTON_CLASS = 'rounded-full px-3';
 </script>
 
 {#snippet actionButtons(actions: HeaderAction[], className?: string)}
@@ -157,5 +174,39 @@
         <Icon name={item.icon} />
       </Button>
     {/each}
+    {#if pull?.state === 'open'}
+      <Button
+        variant={prOpen ? 'default' : 'secondary'}
+        size="sm"
+        class={cn(PILL_BUTTON_CLASS, !prOpen && UTILITY_BUTTON_CLASS)}
+        aria-pressed={prOpen}
+        title="Pull request"
+        onclick={togglePullRequest}
+      >
+        <Icon name="git" />
+        #{pull.number}
+      </Button>
+      <Button
+        size="sm"
+        class={PILL_BUTTON_CLASS}
+        title={mergeBlocked || 'Squash and merge the pull request'}
+        disabled={!!mergeBlocked || pullRequest.merging}
+        onclick={() => void pullRequest.merge()}
+      >
+        {pullRequest.merging ? 'Merging…' : 'Merge'}
+      </Button>
+    {:else}
+      <Button
+        variant={prOpen ? 'default' : 'secondary'}
+        size="sm"
+        class={cn(PILL_BUTTON_CLASS, !prOpen && UTILITY_BUTTON_CLASS)}
+        aria-pressed={prOpen}
+        disabled={viewsDisabled || pull === undefined}
+        onclick={togglePullRequest}
+      >
+        <Icon name={pull?.state === 'merged' ? 'check' : 'git'} />
+        {pull?.state === 'merged' ? 'Merged' : 'Create PR'}
+      </Button>
+    {/if}
   </div>
 </header>

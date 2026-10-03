@@ -13,6 +13,7 @@ import {
   type GithubSignInEnd,
   type Pane,
   type PaneType,
+  type PullRequestDraft,
   type Preferences,
   type Project,
   type Session,
@@ -33,6 +34,7 @@ import {
   slugify,
   titleFrom,
   uniqueName,
+  workspaceLabel,
 } from '../../shared/domain';
 import type { AssistantHost } from './assistant';
 import { PendingAttachments } from './attachments';
@@ -110,6 +112,58 @@ export function services(options: ServiceOptions) {
   const assistantFor = (paneId: string) =>
     assistants[providerOf(store.pane(paneId))];
   const worktree = (sessionId: string) => store.session(sessionId).worktreePath;
+  /** The branch a workspace's pull request merges into. */
+  async function pullRequestBase(session: Session) {
+    const base =
+      session.baseBranch || (await git.defaultBranch(session.worktreePath));
+    return (base ?? 'main').replace(/^origin\//, '');
+  }
+
+  /** Commits the branch has beyond its base, newest first. */
+  async function commitsBeyond(cwd: string, base: string) {
+    for (const ref of [`origin/${base}`, base])
+      try {
+        return await git.commitsAhead(cwd, ref);
+      } catch {
+        // The ref isn't known here; try the next.
+      }
+    return [];
+  }
+
+  async function pullRequestDraft(
+    sessionId: string,
+  ): Promise<PullRequestDraft> {
+    const session = store.session(sessionId);
+    const cwd = session.worktreePath;
+    const branch = (await git.currentBranch(cwd)) ?? '';
+    const base = await pullRequestBase(session);
+    const [commits, status] = await Promise.all([
+      branch ? commitsBeyond(cwd, base) : [],
+      git.status(cwd),
+    ]);
+    const uncommitted = status.changes.length;
+    const single = commits.length === 1;
+    const draft: PullRequestDraft = {
+      branch,
+      base,
+      title: single ? commits[0] : workspaceLabel(session),
+      body: single
+        ? await git.lastCommitBody(cwd)
+        : commits
+            .toReversed()
+            .map((subject) => `- ${subject}`)
+            .join('\n'),
+      commits,
+      uncommitted,
+    };
+    if (!branch) draft.blocked = 'Check out a branch to open a pull request.';
+    else if (branch === base)
+      draft.blocked = `This is the ${base} branch. Work on a separate branch to open a pull request.`;
+    else if (!commits.length && !uncommitted)
+      draft.blocked = `This branch has no changes beyond ${base} yet.`;
+    return draft;
+  }
+
   const hasStarted = (pane: Pane) => pane.messages.length > 0;
 
   const projectOf = (session: Session) => store.project(session.projectId);
@@ -294,10 +348,10 @@ export function services(options: ServiceOptions) {
     store.state.lastProjectId = project.id;
   }
 
-  /** The project's most recently opened workspace. */
+  /** The project's most recently opened worktree, or its folder when it has none. */
   async function latestWorkspace(project: Project) {
     const latest = sessionsOf(project)
-      .filter((session) => !session.archived)
+      .filter((session) => !session.archived && isWorktree(session))
       .sort((first, second) => second.lastOpenedAt - first.lastOpenedAt)[0];
     return latest ?? defaultWorkspace(project);
   }
@@ -596,6 +650,22 @@ export function services(options: ServiceOptions) {
         return signIn;
       },
       cancelConnect: async () => github.cancelSignIn(),
+      pullRequest: async (sessionId) => github.pullRequest(worktree(sessionId)),
+      pullRequestDraft: async (sessionId) => pullRequestDraft(sessionId),
+      createPullRequest: async (sessionId, { title, body, commit }) => {
+        const cwd = worktree(sessionId);
+        const draft = await pullRequestDraft(sessionId);
+        if (draft.blocked) throw Error(draft.blocked);
+        if (commit && draft.uncommitted) await git.commitAll(cwd, title);
+        await git.pushBranch(cwd);
+        return github.createPullRequest(cwd, { title, body, base: draft.base });
+      },
+      mergePullRequest: async (sessionId) =>
+        github.mergePullRequest(worktree(sessionId)),
+      openPullRequest: async (sessionId) => {
+        const pull = await github.pullRequest(worktree(sessionId));
+        if (pull) await options.openUrl(pull.url);
+      },
     },
     projects: {
       add: async () => {

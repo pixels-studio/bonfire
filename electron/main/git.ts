@@ -266,3 +266,25 @@ export async function defaultBranch(cwd: string) {
     return undefined;
   }
 }
+
+/** Subjects of the commits on HEAD that `base` doesn't have, newest first. */
+export async function commitsAhead(cwd: string, base: string) {
+  const output = await git(cwd, ['log', '--format=%s', `${base}..HEAD`]);
+  return output.split('\n').filter(Boolean);
+}
+
+/** The first commit message's body beyond its subject, for a pull request description. */
+export async function lastCommitBody(cwd: string) {
+  return (await git(cwd, ['log', '-1', '--format=%b'])).trim();
+}
+
+/** Stages and commits everything, new files included. */
+export async function commitAll(cwd: string, message: string) {
+  await git(cwd, ['add', '--all']);
+  await git(cwd, ['commit', '--message', message]);
+}
+
+/** Pushes the checked-out branch to a branch of the same name on origin and tracks it. */
+export async function pushBranch(cwd: string) {
+  await git(cwd, ['push', '--set-upstream', 'origin', 'HEAD']);
+}

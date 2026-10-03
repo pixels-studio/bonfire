@@ -1,5 +1,5 @@
 <script lang="ts" module>
-  export type WorkspaceView = 'files' | 'terminal' | 'diff';
+  export type WorkspaceView = 'files' | 'terminal' | 'diff' | 'pull-request';
 
   export const WORKSPACE_VIEWS: {
     view: WorkspaceView;
@@ -17,6 +17,14 @@
     { view: 'diff', icon: 'code', label: 'Code diff', title: 'Changes' },
   ];
 
+  /** Opened from the header's pull request button rather than the icon buttons. */
+  export const PULL_REQUEST_VIEW = {
+    view: 'pull-request',
+    icon: 'git',
+    label: 'Pull request',
+    title: 'Pull request',
+  } as const;
+
   /** Each workspace's open shell tabs and the one in front, kept while the panel is closed. */
   const terminals = $state<
     Record<string, { tabs: number[]; active: 'setup' | number }>
@@ -29,6 +37,7 @@
   import Icon from '$lib/components/icon/icon.svelte';
   import Inspector from '../inspector/inspector.svelte';
   import FileViewer from '../file-tree/file-viewer.svelte';
+  import PullRequestPane from '../pull-request/pull-request-pane.svelte';
   import { Button } from '$lib/components/ui/button';
   import PaneMenu from '$lib/components/pane-menu/pane-menu.svelte';
   import type { PaneSize } from '$lib/panes';
@@ -77,7 +86,9 @@
   });
 
   const shells = $derived(terminals[session.id] ?? FIRST);
-  const item = $derived(WORKSPACE_VIEWS.find((item) => item.view === view));
+  const item = $derived(
+    [...WORKSPACE_VIEWS, PULL_REQUEST_VIEW].find((item) => item.view === view),
+  );
 
   // A setup that starts while the panel is open comes to the front; finishing leaves it there.
   $effect(() => {
@@ -160,6 +171,10 @@
           />
         {/key}
       {/await}
+    {:else if view === 'pull-request'}
+      {#key session.id}
+        <PullRequestPane sessionId={session.id} />
+      {/key}
     {:else}
       {#key `${session.id}:${view}`}
         <Inspector
