@@ -123,6 +123,7 @@ export class ClaudeAssistant extends ChatAssistant {
       abortController: controller,
       includePartialMessages: true,
       spawnClaudeCodeProcess: remoteSpawner(machine),
+      pathToClaudeCodeExecutable: claudeExecutable(),
     };
     const { query } = await import('@anthropic-ai/claude-agent-sdk');
     // Interrupting, steering, and permission callbacks all need streaming input. The
@@ -230,6 +231,7 @@ export class ClaudeAssistant extends ChatAssistant {
         thinking: { type: 'disabled' },
         // Generated text isn't a conversation the user would want to resume.
         persistSession: false,
+        pathToClaudeCodeExecutable: claudeExecutable(),
       },
     });
     try {
@@ -271,7 +273,12 @@ export class ClaudeAssistant extends ChatAssistant {
     })();
     const run = query({
       prompt: idle,
-      options: { abortController: controller, tools: [], ...options },
+      options: {
+        abortController: controller,
+        tools: [],
+        pathToClaudeCodeExecutable: claudeExecutable(),
+        ...options,
+      },
     });
     const timeout = setTimeout(() => controller.abort(), SESSION_TIMEOUT_MS);
     try {
@@ -595,8 +602,8 @@ function modelOptions(model: string): Pick<Options, 'model' | 'betas'> {
 }
 
 /**
- * The CLI binary bundled with the SDK, which the SDK itself runs; the installed `claude`
- * otherwise. Both keep credentials in the same place.
+ * The CLI binary bundled with the SDK; the installed `claude` otherwise, as in the packaged
+ * app, which leaves the bundled binary out. Both keep credentials in the same place.
  */
 function claudeExecutable() {
   const require = createRequire(__filename);
