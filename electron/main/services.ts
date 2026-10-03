@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import {
   assistantProvider,
   events,
@@ -13,6 +15,7 @@ import {
   type Preferences,
   type ConnectionCheck,
   type Project,
+  type ProjectCloneInput,
   type ProjectCreateInput,
   type RemoteFolder,
   type SshConnection,
@@ -23,11 +26,13 @@ import {
   MAX_PANES,
   PROVIDER_LABELS,
   TOOL_PANE_TITLES,
+  cloneUrl,
   errorMessage,
   folderName,
   isAssistantPane,
   isDefaultTitle,
   reorderLayout,
+  repositoryName,
   resolvePreferences,
   titleFrom,
 } from '../../shared/domain';
@@ -40,7 +45,7 @@ import { Filesystem } from './filesystem';
 import * as git from './git';
 import { GitHub } from './github';
 import { KeepAwake, type Power } from './keep-awake';
-import { Machines, SshMachine, type Place } from './machines';
+import { Machines, SshMachine, localMachine, type Place } from './machines';
 import { MergeWatcher } from './merge-watcher';
 import { TurnNotifier, type Notice } from './notifier';
 import { Store } from './persistence';
@@ -387,6 +392,38 @@ export function services(options: ServiceOptions) {
     return project;
   }
 
+  /** Folders in the home folder where people tend to keep their code, most likely first. */
+  const CODE_FOLDERS = ['Developer', 'Projects', 'Code', 'code', 'src', 'dev'];
+
+  /** Where clones go by default: the first code folder that exists, else ~/Developer. */
+  async function cloneFolder() {
+    for (const name of CODE_FOLDERS) {
+      const path = join(homedir(), name);
+      if (await localMachine.exists(path)) return path;
+    }
+    return join(homedir(), CODE_FOLDERS[0]);
+  }
+
+  /** Clones a repository into a new folder inside `parent`, then adds it as a project. */
+  async function cloneProject({ url, parent }: ProjectCloneInput) {
+    const resolvedUrl = cloneUrl(url);
+    if (!resolvedUrl) throw Error(`${url} isn't a repository URL.`);
+    const name = repositoryName(resolvedUrl);
+    if (!name || name === '.' || name === '..')
+      throw Error(`Could not name a folder after ${url}.`);
+    const base =
+      parent === '~' || parent.startsWith('~/')
+        ? join(homedir(), parent.slice(1))
+        : parent;
+    const path = join(base, name);
+    if (await localMachine.exists(path))
+      throw Error(
+        `${path} already exists. Choose another folder, or add it as an existing folder.`,
+      );
+    await git.clone(resolvedUrl, path);
+    return createProject({ name, path });
+  }
+
   /** Adds a connection, or updates the one with the input's id. */
   function saveConnection(input: SshConnectionInput) {
     const connection: SshConnection = {
@@ -475,6 +512,7 @@ export function services(options: ServiceOptions) {
         return signIn;
       },
       cancelConnect: async () => github.cancelSignIn(),
+      repositories: async () => github.repositories(),
       pullRequest: async (projectId) => github.pullRequest(folder(projectId)),
       pullRequestDraft: async (projectId) => pullRequestDraft(projectId),
       createPullRequest: async (projectId, { title, body, commit }) => {
@@ -495,6 +533,8 @@ export function services(options: ServiceOptions) {
     projects: {
       chooseFolder: async () => (await options.chooseDirectory()) ?? null,
       create: async (input) => createProject(input),
+      clone: async (input) => cloneProject(input),
+      cloneFolder: async () => cloneFolder(),
       open: async (id) => {
         openProject(store.project(id));
         store.save();

@@ -16,6 +16,7 @@
   import NewBranchDialog from '$lib/components/workspace/new-branch-dialog.svelte';
   import ProjectPicker from '$lib/components/workspace/project-picker.svelte';
   import ShortcutsPane from '$lib/components/shortcuts/shortcuts-pane.svelte';
+  import Onboarding from '$lib/components/onboarding/onboarding.svelte';
   import {
     PANE_SIZES,
     defaultPaneSize,
@@ -34,6 +35,9 @@
   import type { HTMLButtonAttributes } from 'svelte/elements';
   import type {
     AssistantEvent,
+    AssistantProvider,
+    Project,
+    ProviderAccount,
     Pane,
     PaneType,
     PanesClosedEvent,
@@ -69,6 +73,12 @@
   let insightsTab = $state('tokens');
   /** The pane last clicked, focused or navigated to, which the pane shortcuts act on. */
   let currentPaneId = $state<string>();
+  /** Whether setup is on screen instead of the workspace: no agent signed in, or no project. */
+  let onboarding = $state(false);
+  let accounts = $state<Partial<Record<AssistantProvider, ProviderAccount>>>(
+    {},
+  );
+  let accountErrors = $state<Partial<Record<AssistantProvider, string>>>({});
 
   const project = $derived(
     workspace.projects.find(({ id }) => id === workspace.lastProjectId),
@@ -436,7 +446,7 @@
   }
 
   function handleKeydown(event: KeyboardEvent) {
-    if (event.isComposing) return;
+    if (event.isComposing || onboarding) return;
     const id = matchShortcut(event, isMac(), 'global');
     if (!id) return;
     // Elsewhere the shortcuts are Ctrl chords, which a terminal's programs use.
@@ -530,6 +540,50 @@
     };
   });
 
+  const PROVIDERS: AssistantProvider[] = ['claude', 'codex'];
+
+  /** Reads each provider's account; a check that fails is kept as its error. */
+  async function loadAccounts() {
+    await Promise.all(
+      PROVIDERS.map(async (provider) => {
+        try {
+          accounts[provider] = await window.bonfire.providers.account(provider);
+        } catch (cause) {
+          accountErrors[provider] = errorMessage(cause);
+        }
+      }),
+    );
+  }
+
+  /**
+   * Setup is needed without a project, or when no agent is signed in. If no account
+   * could be checked at all, whether one is signed in is unknown, so it isn't asked for.
+   */
+  function needsOnboarding() {
+    if (!workspace.projects.length) return true;
+    const checked = PROVIDERS.filter((provider) => accounts[provider]);
+    return (
+      checked.length > 0 &&
+      !checked.some((provider) => accounts[provider]!.signedIn)
+    );
+  }
+
+  /** Leaves setup for the workspace, starting a conversation with the agent signed in. */
+  async function finishOnboarding(
+    provider: AssistantProvider,
+    created?: Project,
+  ) {
+    try {
+      await refresh();
+    } catch (cause) {
+      showError(cause);
+    }
+    onboarding = false;
+    if (!created || panes.length) return;
+    await tick();
+    await addPane(provider);
+  }
+
   onMount(async () => {
     if (!window.bonfire) {
       showError('Launch Bonfire with npm start or npm run dev.');
@@ -537,7 +591,8 @@
       return;
     }
     try {
-      await refresh();
+      await Promise.all([refresh(), loadAccounts()]);
+      onboarding = needsOnboarding();
       loaded = true;
     } catch (cause) {
       showError(cause);
@@ -585,61 +640,71 @@
   {/if}
 {/snippet}
 
-<div class="flex h-screen">
-  <AppRail
-    {panels}
-    ontogglePanel={togglePanel}
-    {trafficLightInset}
-    onhelp={() => window.bonfire.navigation.help()}
-    onaddPane={addPane}
-    panes={panes.map(({ id }) => ({
-      id,
-      status: statuses.get(id),
-      inView: !!inView[id],
-    }))}
-    {canAddPane}
-    onselectPane={scrollToPane}
-    {panelsInView}
-    onselectPanel={scrollToPanel}
+{#if loading}
+  <div class="flex h-screen flex-col">
+    <div class="h-13 shrink-0 app-drag"></div>
+    <div
+      class="grid flex-1 place-content-center"
+      role="status"
+      aria-label="Loading"
+    >
+      <div
+        class="size-5 animate-spin rounded-full border-2 border-muted-foreground/30 border-t-muted-foreground motion-reduce:animate-pulse"
+      ></div>
+    </div>
+  </div>
+{:else if onboarding}
+  <Onboarding
+    bind:accounts
+    bind:accountErrors
+    hasProjects={workspace.projects.length > 0}
+    onfinish={(provider, created) => void finishOnboarding(provider, created)}
   />
-  <div class="flex min-w-0 flex-1 flex-col">
-    <AppHeader {trafficLightInset} bind:pullRequestOpen disabled={!project}>
-      {#snippet location()}
-        <ProjectPicker
-          projects={workspace.projects}
-          active={project}
-          bind:open={projectMenuOpen}
-          onselect={openProject}
-          onadd={addProject}
-          onremove={removeProject}
-        />
-        {#if project}
-          <BranchPicker
-            projectId={project.id}
-            head={branch.head}
-            locked={agentsWorking}
-            bind:open={branchMenuOpen}
-            onswitch={switchBranch}
-            onnew={newBranch}
+{:else}
+  <div class="flex h-screen">
+    <AppRail
+      {panels}
+      ontogglePanel={togglePanel}
+      {trafficLightInset}
+      onhelp={() => window.bonfire.navigation.help()}
+      onaddPane={addPane}
+      panes={panes.map(({ id }) => ({
+        id,
+        status: statuses.get(id),
+        inView: !!inView[id],
+      }))}
+      {canAddPane}
+      onselectPane={scrollToPane}
+      {panelsInView}
+      onselectPanel={scrollToPanel}
+    />
+    <div class="flex min-w-0 flex-1 flex-col">
+      <AppHeader {trafficLightInset} bind:pullRequestOpen disabled={!project}>
+        {#snippet location()}
+          <ProjectPicker
+            projects={workspace.projects}
+            active={project}
+            bind:open={projectMenuOpen}
+            onselect={openProject}
+            onadd={addProject}
+            onremove={removeProject}
           />
-        {/if}
-      {/snippet}
-    </AppHeader>
+          {#if project}
+            <BranchPicker
+              projectId={project.id}
+              head={branch.head}
+              locked={agentsWorking}
+              bind:open={branchMenuOpen}
+              onswitch={switchBranch}
+              onnew={newBranch}
+            />
+          {/if}
+        {/snippet}
+      </AppHeader>
 
-    <div class="flex min-h-0 flex-1">
-      <main class="flex min-h-0 min-w-0 flex-1 pr-2 pb-2">
-        <div class="min-w-0 flex-1">
-          {#if loading}
-            <div
-              class="grid h-full place-content-center"
-              role="status"
-              aria-label="Loading"
-            >
-              <div
-                class="size-5 animate-spin rounded-full border-2 border-muted-foreground/30 border-t-muted-foreground motion-reduce:animate-pulse"
-              ></div>
-            </div>
-          {:else}
+      <div class="flex min-h-0 flex-1">
+        <main class="flex min-h-0 min-w-0 flex-1 pr-2 pb-2">
+          <div class="min-w-0 flex-1">
             <div
               bind:this={paneStrip}
               onfocusin={trackPane}
@@ -717,12 +782,12 @@
                 </section>
               {/if}
             </div>
-          {/if}
-        </div>
-      </main>
+          </div>
+        </main>
+      </div>
     </div>
   </div>
-</div>
+{/if}
 
 {#if project}
   <NewBranchDialog bind:open={creatingBranch} projectId={project.id} />

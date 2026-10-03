@@ -4,7 +4,10 @@ import type {
   GitHead,
   GitStatus,
 } from '../../shared/contracts';
-import { resolvePlace, type Place } from './machines';
+import { localMachine, resolvePlace, type Place } from './machines';
+
+/** How long a clone may take before it is given up on. */
+const CLONE_TIMEOUT_MS = 15 * 60_000;
 
 /** Runs git in a folder, on whichever machine the folder is. */
 export function git(at: Place, args: string[]) {
@@ -13,6 +16,21 @@ export function git(at: Place, args: string[]) {
     cwd: path,
     env: { GIT_TERMINAL_PROMPT: '0' },
   });
+}
+
+/** Clones `url` into `path` on this computer; git makes any missing parent folders. */
+export async function clone(url: string, path: string) {
+  try {
+    await localMachine.exec('git', ['clone', '--', url, path], {
+      env: { GIT_TERMINAL_PROMPT: '0' },
+      timeout: CLONE_TIMEOUT_MS,
+    });
+  } catch (cause) {
+    const { stderr } = cause as { stderr?: string };
+    // git's last line says why; the lines before it narrate progress.
+    const reason = stderr?.trim().split('\n').pop();
+    throw Error(reason || (cause as Error).message);
+  }
 }
 
 export async function status(cwd: Place): Promise<GitStatus> {
