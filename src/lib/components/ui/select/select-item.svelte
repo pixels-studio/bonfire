@@ -1,6 +1,6 @@
 <script lang="ts">
   import { Select as SelectPrimitive } from 'bits-ui';
-  import CheckIcon from '@lucide/svelte/icons/check';
+  import Icon from '$lib/components/icon/icon.svelte';
   import { cn, type WithoutChild } from '$lib/utils.js';
 
   let {
@@ -30,7 +30,7 @@
       class="pointer-events-none absolute right-2 flex size-4 items-center justify-center"
     >
       {#if selected}
-        <CheckIcon class="pointer-events-none" />
+        <Icon name="check" class="pointer-events-none size-3.5" />
       {/if}
     </span>
     <span class="flex flex-1 gap-2 shrink-0 whitespace-nowrap">

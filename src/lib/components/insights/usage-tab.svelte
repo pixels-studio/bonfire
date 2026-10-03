@@ -1,7 +1,7 @@
 <script lang="ts">
   import Icon from '$lib/components/icon/icon.svelte';
-  import { PROVIDERS } from '$lib/models';
   import { limits } from '$lib/stores/limits.svelte';
+  import { preferences } from '$lib/stores/preferences.svelte';
   import type { AssistantProvider } from '$shared/contracts';
   import { PROVIDER_LABELS } from '$shared/domain';
   import LimitMeter from './limit-meter.svelte';
@@ -15,7 +15,7 @@
 </script>
 
 <div class="divide-y divide-border">
-  {#each PROVIDERS as provider (provider)}
+  {#each preferences.enabledProviders as provider (provider)}
     {@const entry = limits.entries[provider]}
     <section
       class="flex flex-col gap-3 px-4 py-6"

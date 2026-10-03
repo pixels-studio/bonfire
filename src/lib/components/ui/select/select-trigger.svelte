@@ -1,6 +1,6 @@
 <script lang="ts">
   import { Select as SelectPrimitive } from 'bits-ui';
-  import ChevronDownIcon from '@lucide/svelte/icons/chevron-down';
+  import Icon from '$lib/components/icon/icon.svelte';
   import { cn, type WithoutChild } from '$lib/utils.js';
 
   let {
@@ -19,11 +19,14 @@
   data-slot="select-trigger"
   data-size={size}
   class={cn(
-    "border-input data-placeholder:text-muted-foreground dark:bg-input/30 dark:hover:bg-input/50 focus-visible:border-ring focus-visible:ring-ring/50 aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive dark:aria-invalid:border-destructive/50 gap-1.5 rounded-lg border bg-transparent pr-2 pl-2.5 text-sm leading-5 transition-colors select-none focus-visible:ring-3 aria-invalid:ring-3 data-[size=default]:py-1.5 data-[size=sm]:py-1 data-[size=sm]:rounded-[min(var(--radius-md),10px)] *:data-[slot=select-value]:flex *:data-[slot=select-value]:gap-1.5 [&_svg:not([class*='size-'])]:size-4 flex w-fit items-center justify-between whitespace-nowrap outline-none disabled:cursor-not-allowed disabled:opacity-50 *:data-[slot=select-value]:line-clamp-1 *:data-[slot=select-value]:flex *:data-[slot=select-value]:items-center [&_svg]:pointer-events-none [&_svg]:shrink-0",
+    "group/select-trigger border-input data-placeholder:text-muted-foreground dark:bg-input/30 dark:hover:bg-input/50 focus-visible:border-ring focus-visible:ring-ring/50 aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive dark:aria-invalid:border-destructive/50 gap-1.5 rounded-lg border bg-transparent pr-2 pl-2.5 text-sm leading-5 transition-colors select-none focus-visible:ring-3 aria-invalid:ring-3 data-[size=default]:py-1.5 data-[size=sm]:py-1 data-[size=sm]:rounded-[min(var(--radius-md),10px)] *:data-[slot=select-value]:flex *:data-[slot=select-value]:gap-1.5 [&_svg:not([class*='size-'])]:size-4 flex w-fit items-center justify-between whitespace-nowrap outline-none disabled:cursor-not-allowed disabled:opacity-50 *:data-[slot=select-value]:line-clamp-1 *:data-[slot=select-value]:flex *:data-[slot=select-value]:items-center [&_svg]:pointer-events-none [&_svg]:shrink-0",
     className,
   )}
   {...restProps}
 >
   {@render children?.()}
-  <ChevronDownIcon class="text-muted-foreground size-3.5 pointer-events-none" />
+  <Icon
+    name="chevron-down"
+    class="text-muted-foreground size-3.5 pointer-events-none transition-transform duration-200 ease-out group-data-[state=open]/select-trigger:rotate-180 motion-reduce:transition-none"
+  />
 </SelectPrimitive.Trigger>

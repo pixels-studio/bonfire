@@ -6,8 +6,12 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { join } from 'node:path';
-import { stateSchema, type State } from '../../shared/contracts';
-import { emptyState } from '../../shared/domain';
+import {
+  stateSchema,
+  type Preferences,
+  type State,
+} from '../../shared/contracts';
+import { emptyState, resolvePreferences } from '../../shared/domain';
 
 /** How long writes are held back so a burst of changes costs one write. */
 const SAVE_DELAY_MS = 250;
@@ -43,6 +47,11 @@ export class Store {
     const temporaryFile = `${this.file}.tmp`;
     writeFileSync(temporaryFile, JSON.stringify(this.state), { mode: 0o600 });
     renameSync(temporaryFile, this.file);
+  }
+
+  /** The user's preferences, with defaults for anything unset. */
+  get preferences(): Preferences {
+    return resolvePreferences(this.state.preferences);
   }
 
   project(id: string) {

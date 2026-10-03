@@ -3,8 +3,9 @@
   import { Button } from '$lib/components/ui/button';
   import Icon from '$lib/components/icon/icon.svelte';
   import InsightsPopover from '$lib/components/insights/insights-popover.svelte';
+  import SettingsPopover from '$lib/components/settings/settings-popover.svelte';
   import type { PaneStatus } from '$lib/pane-status.svelte';
-  import { cn } from '$lib/utils';
+  import { cn, isMac } from '$lib/utils';
 
   type HeaderAction = {
     icon: string;
@@ -59,7 +60,6 @@
     onhelp: () => void;
   } = $props();
 
-  const isMac = /mac/i.test(navigator.userAgent);
   let fullscreen = $state(false);
 
   const paneActions = $derived<HeaderAction[]>([
@@ -76,7 +76,6 @@
     label: 'Help',
     onclick: () => onhelp(),
   };
-  const settingsAction: HeaderAction = { icon: 'settings', label: 'Settings' };
 
   onMount(() => {
     window.bonfire.app.isFullscreen().then((value) => (fullscreen = value));
@@ -104,7 +103,7 @@
 <header
   class={cn(
     'sticky top-0 z-20 flex min-h-13 shrink-0 items-center justify-between bg-background px-4 py-2 app-drag',
-    isMac && !fullscreen && 'pl-22',
+    isMac() && !fullscreen && 'pl-22',
   )}
 >
   <div class="flex items-center gap-3 app-no-drag">
@@ -140,6 +139,6 @@
   <div class="flex items-center gap-3 app-no-drag">
     {@render actionButtons([helpAction], UTILITY_BUTTON_CLASS)}
     <InsightsPopover class={UTILITY_BUTTON_CLASS} />
-    {@render actionButtons([settingsAction], UTILITY_BUTTON_CLASS)}
+    <SettingsPopover class={UTILITY_BUTTON_CLASS} />
   </div>
 </header>

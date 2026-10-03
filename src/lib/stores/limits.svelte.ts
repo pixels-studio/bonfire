@@ -1,5 +1,5 @@
-import { PROVIDERS } from '$lib/models';
 import type { AssistantProvider, ProviderLimits } from '$shared/contracts';
+import { preferences } from './preferences.svelte';
 
 type Entry = { limits?: ProviderLimits; error?: string; loading: boolean };
 
@@ -10,10 +10,10 @@ class LimitsStore {
     codex: { loading: false },
   });
 
-  /** Re-reads every provider's limits; each one settles on its own. */
+  /** Re-reads the limits of every provider in use; each one settles on its own. */
   refresh() {
     if (!window.bonfire) return;
-    for (const provider of PROVIDERS) {
+    for (const provider of preferences.enabledProviders) {
       const entry = this.entries[provider];
       if (entry.loading) continue;
       entry.loading = true;

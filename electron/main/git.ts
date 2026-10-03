@@ -72,3 +72,25 @@ export function diff(cwd: string, path: string) {
 export async function checkout(cwd: string, branch: string) {
   await git(cwd, ['checkout', branch]);
 }
+
+/** The checked-out branch, or undefined when HEAD is detached or this isn't a repository. */
+export async function currentBranch(cwd: string) {
+  try {
+    const branch = (
+      await git(cwd, ['rev-parse', '--abbrev-ref', 'HEAD'])
+    ).trim();
+    return branch === 'HEAD' ? undefined : branch;
+  } catch {
+    return undefined;
+  }
+}
+
+/** The remote's default branch, such as `main`, when the clone knows it. */
+export async function defaultBranch(cwd: string) {
+  try {
+    const ref = await git(cwd, ['rev-parse', '--abbrev-ref', 'origin/HEAD']);
+    return ref.trim().replace(/^origin\//, '');
+  } catch {
+    return undefined;
+  }
+}

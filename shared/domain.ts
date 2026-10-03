@@ -1,4 +1,4 @@
-import type { AssistantProvider, State } from './contracts';
+import type { AssistantProvider, Preferences, State } from './contracts';
 
 export const DEFAULT_TITLE = 'New Conversation';
 const TITLE_MAX_LENGTH = 42;
@@ -30,7 +30,38 @@ export function emptyState(): State {
     panes: [],
     layout: { paneIds: [] },
     settings: {},
+    preferences: {},
   };
+}
+
+/** The OKLCH hue of the original orange accent, #ea580c. */
+export const DEFAULT_ACCENT_HUE = 41;
+
+/** Pasted text longer than this becomes an attachment when `convertLongText` is on. */
+export const LONG_TEXT_THRESHOLD = 5_000;
+
+/** Below this battery charge, in percent, `caffeinate` lets the system sleep again. */
+export const CAFFEINATE_BATTERY_FLOOR = 10;
+
+export const DEFAULT_PREFERENCES: Preferences = {
+  defaultModel: null,
+  approvals: 'auto',
+  followUp: 'queue',
+  textModel: { provider: 'claude', model: 'haiku' },
+  convertLongText: true,
+  accentHue: DEFAULT_ACCENT_HUE,
+  notifications: true,
+  completionSound: false,
+  providers: { claude: true, codex: true },
+  claudeOutputStyle: 'default',
+  codexPersonality: 'default',
+  archiveOnMerge: false,
+  caffeinate: true,
+};
+
+/** Fills in the fields the user hasn't set. */
+export function resolvePreferences(stored: Partial<Preferences>): Preferences {
+  return { ...DEFAULT_PREFERENCES, ...stored };
 }
 
 export function errorMessage(cause: unknown) {

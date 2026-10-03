@@ -7,14 +7,15 @@
     sans-serif;
   --font-mono: 'SFMono-Regular', Menlo, Consolas, monospace;
 
-  --color-background: #111111;
+  /* Surfaces take on a trace of the accent. */
+  --color-background: color-mix(in oklab, #111111 98%, var(--color-brand));
   --color-foreground: #ffffff;
-  --color-card: #1a1a1a;
+  --color-card: color-mix(in oklab, #1a1a1a 98%, var(--color-brand));
   --color-card-foreground: #ffffff;
-  --color-popover: #252525;
+  --color-popover: color-mix(in oklab, #252525 98%, var(--color-brand));
   --color-popover-foreground: #ffffff;
-  --color-composer: #242424;
-  --color-surface-raised: #303030;
+  --color-composer: color-mix(in oklab, #242424 98%, var(--color-brand));
+  --color-surface-raised: color-mix(in oklab, #303030 98%, var(--color-brand));
   --color-primary: #ffffff;
   --color-primary-foreground: #111111;
   --color-secondary: rgb(255 255 255 / 8%);
@@ -23,7 +24,10 @@
   --color-muted-foreground: rgb(255 255 255 / 60%);
   --color-accent: rgb(255 255 255 / 12%);
   --color-accent-foreground: #ffffff;
-  --color-brand: #ea580c;
+  /* The accent the user picks; the default hue gives the original orange, #ea580c. */
+  --color-brand: oklch(
+    var(--accent-lightness) var(--accent-chroma) var(--accent-hue)
+  );
   --color-success: #48b005;
   --color-warning: #facc15;
   --color-destructive: #ff8c73;
@@ -115,6 +119,10 @@
 @layer base {
   html {
     @apply scheme-dark;
+    --accent-lightness: 0.646;
+    --accent-chroma: 0.194;
+    /* Overridden inline from the user's preferences. */
+    --accent-hue: 41;
   }
 
   body {

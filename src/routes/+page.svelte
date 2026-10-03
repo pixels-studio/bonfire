@@ -8,10 +8,18 @@
   import { PANE_SIZES, defaultPaneSize, type PaneSize } from '$lib/panes';
   import { PaneDrag } from '$lib/pane-drag.svelte';
   import { PaneStatuses } from '$lib/pane-status.svelte';
+  import { playCompletionSound } from '$lib/sounds';
+  import { preferences } from '$lib/stores/preferences.svelte';
   import { toast } from '$lib/stores/toast.svelte';
   import { cn, scrollBehavior } from '$lib/utils';
   import type { HTMLButtonAttributes } from 'svelte/elements';
-  import type { AssistantProvider, Pane, State } from '$shared/contracts';
+  import type {
+    AssistantEvent,
+    AssistantProvider,
+    Pane,
+    PanesClosedEvent,
+    State,
+  } from '$shared/contracts';
   import {
     MAX_PANES,
     emptyState,
@@ -161,9 +169,50 @@
     return () => observer.disconnect();
   });
 
+  function handleAssistantEvent(event: AssistantEvent) {
+    statuses.handle(event);
+    if (
+      event.type === 'status' &&
+      event.status === 'completed' &&
+      preferences.current.completionSound
+    )
+      playCompletionSound();
+  }
+
+  /** Development runs as the unsigned Electron app, which macOS never allows to notify. */
+  function notificationsBlockedMessage(appName: string) {
+    if (appName === 'Electron')
+      return 'macOS doesn’t allow notifications from unsigned development builds. They work in a signed Bonfire build.';
+    return `Notifications are turned off for ${appName}. Allow them in System Settings › Notifications › ${appName}.`;
+  }
+
+  async function handlePanesClosed({ paneIds }: PanesClosedEvent) {
+    const titles = workspace.panes
+      .filter(({ id }) => paneIds.includes(id))
+      .map(({ title }) => `“${title}”`);
+    await refresh();
+    toast(
+      titles.length === 1
+        ? `Closed ${titles[0]}: its pull request was merged.`
+        : `Closed ${titles.length} panes whose pull requests were merged.`,
+    );
+  }
+
   onMount(() => {
     if (!window.bonfire) return;
-    return window.bonfire.assistant.onEvent((event) => statuses.handle(event));
+    const subscriptions = [
+      window.bonfire.assistant.onEvent(handleAssistantEvent),
+      // A clicked notification brings its pane into view.
+      window.bonfire.app.onFocusPane(scrollToPane),
+      window.bonfire.panes.onClosed((event) => void handlePanesClosed(event)),
+      window.bonfire.app.onNotificationsBlocked((appName) =>
+        toast(notificationsBlockedMessage(appName), {
+          variant: 'error',
+          duration: 0,
+        }),
+      ),
+    ];
+    return () => subscriptions.forEach((unsubscribe) => unsubscribe());
   });
 
   onMount(async () => {

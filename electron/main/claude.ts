@@ -1,4 +1,7 @@
+import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+import { createRequire } from 'node:module';
+import { promisify } from 'node:util';
 import type {
   CanUseTool,
   ModelInfo,
@@ -13,6 +16,7 @@ import type {
   ConversationMessage,
   ModelOption,
   Pane,
+  ProviderAccount,
   ProviderLimits,
   Question,
   ReasoningEffort,
@@ -21,11 +25,16 @@ import type {
 import {
   ChatAssistant,
   assistantMessage,
-  type PendingAttachment,
+  attachedText,
+  type Prompt,
   type Turn,
 } from './assistant';
+import { Cached } from './cached';
+import { Channel } from './channel';
 import { claudeLimits } from './limits';
 import { clipOutput, partialToolInput, toolInput } from './tool-text';
+
+const execFileAsync = promisify(execFile);
 
 type ContentBlock = SDKAssistantMessage['message']['content'][number];
 type ToolDetails = Parameters<CanUseTool>[2];
@@ -55,6 +64,7 @@ type StreamState = {
 const EXTENDED_CONTEXT_MODEL = 'sonnet-1m';
 const EXTENDED_CONTEXT_BETA = 'context-1m-2025-08-07';
 const SESSION_TIMEOUT_MS = 20_000;
+const DEFAULT_OUTPUT_STYLE = 'default';
 
 // Newer models omit thinking text unless a summarized display is requested.
 const THINKING: Record<ReasoningEffort, Options['thinking']> = {
@@ -67,20 +77,34 @@ const THINKING: Record<ReasoningEffort, Options['thinking']> = {
 
 export class ClaudeAssistant extends ChatAssistant {
   protected readonly provider = 'claude';
+  private readonly styles = new Cached(
+    () =>
+      // User settings are read so the user's own styles are listed too.
+      this.withIdleSession(
+        async (run) =>
+          (await run.initializationResult()).available_output_styles,
+        { settingSources: ['user'] },
+      ),
+    60_000,
+  );
+
+  /** Output styles Claude offers, built-in and the user's own. */
+  outputStyles(): Promise<string[]> {
+    return this.styles.get();
+  }
 
   protected async run(turn: Turn) {
     const { pane, session, input, attachments, controller } = turn;
-    const extendedContext = input.model === EXTENDED_CONTEXT_MODEL;
+    const { claudeOutputStyle } = this.store.preferences;
     const options: Options = {
       cwd: session.worktreePath,
       resume: pane.threadId || undefined,
-      model: extendedContext
-        ? 'sonnet'
-        : input.model && input.model !== 'default'
-          ? input.model
-          : undefined,
-      betas: extendedContext ? [EXTENDED_CONTEXT_BETA] : undefined,
+      ...modelOptions(input.model),
       thinking: THINKING[input.reasoningEffort],
+      settings:
+        claudeOutputStyle === DEFAULT_OUTPUT_STYLE
+          ? undefined
+          : { outputStyle: claudeOutputStyle },
       // Unattended runs approve in `canUseTool` rather than bypassing permissions, because
       // bypassing would also skip the callback that carries the model's questions to the user.
       permissionMode: 'default',
@@ -90,22 +114,100 @@ export class ClaudeAssistant extends ChatAssistant {
       includePartialMessages: true,
     };
     const { query } = await import('@anthropic-ai/claude-agent-sdk');
-    // Interrupting and permission callbacks both need streaming input.
-    const run = query({
-      prompt: promptStream(input.text, attachments),
-      options,
-    });
+    // Interrupting, steering, and permission callbacks all need streaming input. The
+    // input stays open until every prompt sent has been answered, then the CLI exits.
+    const prompts = new Channel<SDKUserMessage>();
+    const unanswered = new Set<string>();
+    const submit = (prompt: Prompt, priority?: SDKUserMessage['priority']) => {
+      const uuid = randomUUID();
+      unanswered.add(uuid);
+      prompts.push(userMessage(prompt, uuid, priority));
+    };
+    submit({ text: input.text, attachments });
+    // The CLI folds a message sent mid-turn into the turn between tool calls.
+    turn.setSteer(async (prompt) => submit(prompt, 'next'));
+    const run = query({ prompt: prompts, options });
     turn.setInterrupt(async () => {
       await run.interrupt();
     });
     const state: StreamState = { current: '', blocks: new Map() };
-    for await (const event of run) this.handle(turn, event, state);
+    try {
+      for await (const event of run) {
+        this.handle(turn, event, state);
+        if (event.type !== 'result') continue;
+        // A stop also drops steered messages the CLI still holds, which it would otherwise run.
+        if (turn.cancelled) break;
+        // Older CLIs don't say which prompts a result answers; theirs answers them all.
+        for (const uuid of event.user_message_uuids ?? [...unanswered])
+          unanswered.delete(uuid);
+        if (unanswered.size) continue;
+        turn.setSteer(undefined);
+        prompts.close();
+      }
+    } finally {
+      turn.setSteer(undefined);
+      prompts.close();
+    }
   }
 
   protected listModels(): Promise<ModelOption[]> {
     return this.withIdleSession(async (run) =>
-      modelOptions(await run.supportedModels()),
+      modelList(await run.supportedModels()),
     );
+  }
+
+  protected readAccount(): Promise<ProviderAccount> {
+    return this.withIdleSession(async (run) => {
+      const info = await run.accountInfo();
+      const viaApiKey = !!info.apiKeySource && info.apiKeySource !== 'none';
+      return {
+        provider: 'claude',
+        signedIn: !!info.email || viaApiKey,
+        email: info.email,
+        plan: info.subscriptionType ?? (viaApiKey ? 'API key' : undefined),
+      };
+    });
+  }
+
+  /** Runs the CLI's own browser sign-in, which saves the new credentials where the SDK reads them. */
+  protected async signIn(signal: AbortSignal) {
+    try {
+      await execFileAsync(claudeExecutable(), ['auth', 'login', '--claudeai'], {
+        signal,
+      });
+    } catch (cause) {
+      if (signal.aborted) throw Error('Sign-in was cancelled.');
+      throw cause;
+    }
+  }
+
+  protected async complete(prompt: string, model: string, signal: AbortSignal) {
+    const { query } = await import('@anthropic-ai/claude-agent-sdk');
+    const controller = new AbortController();
+    signal.addEventListener('abort', () => controller.abort(), { once: true });
+    const run = query({
+      prompt,
+      options: {
+        ...modelOptions(model),
+        abortController: controller,
+        tools: [],
+        settingSources: [],
+        maxTurns: 1,
+        thinking: { type: 'disabled' },
+        // Generated text isn't a conversation the user would want to resume.
+        persistSession: false,
+      },
+    });
+    try {
+      for await (const event of run) {
+        if (event.type !== 'result') continue;
+        if (event.subtype === 'success' && !event.is_error) return event.result;
+        throw Error('Claude could not generate text');
+      }
+    } finally {
+      run.close();
+    }
+    throw Error('Claude returned no text');
   }
 
   protected readLimits(): Promise<ProviderLimits> {
@@ -121,6 +223,7 @@ export class ClaudeAssistant extends ChatAssistant {
   /** Runs `use` against a session that never receives a message, as the handshake alone answers it. */
   private async withIdleSession<Result>(
     use: (run: Query) => Promise<Result>,
+    options: Pick<Options, 'settingSources'> = { settingSources: [] },
   ): Promise<Result> {
     const { query } = await import('@anthropic-ai/claude-agent-sdk');
     const controller = new AbortController();
@@ -131,7 +234,7 @@ export class ClaudeAssistant extends ChatAssistant {
     })();
     const run = query({
       prompt: idle,
-      options: { abortController: controller, tools: [], settingSources: [] },
+      options: { abortController: controller, tools: [], ...options },
     });
     const timeout = setTimeout(() => controller.abort(), SESSION_TIMEOUT_MS);
     try {
@@ -389,32 +492,65 @@ function stopped(): PermissionResult {
   };
 }
 
-async function* promptStream(
-  text: string,
-  attachments: PendingAttachment[],
-): AsyncIterable<SDKUserMessage> {
-  yield {
+function userMessage(
+  { text, attachments }: Prompt,
+  uuid: SDKUserMessage['uuid'],
+  priority?: SDKUserMessage['priority'],
+): SDKUserMessage {
+  return {
     type: 'user',
+    uuid,
     parent_tool_use_id: null,
+    priority,
     message: {
       role: 'user',
       content: [
         { type: 'text', text },
-        ...attachments.map(({ mimeType, base64 }) => ({
-          type: 'image' as const,
-          source: {
-            type: 'base64' as const,
-            media_type: mimeType,
-            data: base64,
-          },
-        })),
+        ...attachments.map((attachment) =>
+          attachment.kind === 'image'
+            ? {
+                type: 'image' as const,
+                source: {
+                  type: 'base64' as const,
+                  media_type: attachment.mimeType,
+                  data: attachment.base64,
+                },
+              }
+            : { type: 'text' as const, text: attachedText(attachment) },
+        ),
       ],
     },
   };
 }
 
+/** The SDK model for a picker value; the 1M-context Sonnet is Sonnet with a beta. */
+function modelOptions(model: string): Pick<Options, 'model' | 'betas'> {
+  if (model === EXTENDED_CONTEXT_MODEL)
+    return { model: 'sonnet', betas: [EXTENDED_CONTEXT_BETA] };
+  return { model: model && model !== 'default' ? model : undefined };
+}
+
+/**
+ * The CLI binary bundled with the SDK, which the SDK itself runs; the installed `claude`
+ * otherwise. Both keep credentials in the same place.
+ */
+function claudeExecutable() {
+  const require = createRequire(__filename);
+  const executable = process.platform === 'win32' ? 'claude.exe' : 'claude';
+  const variants = process.platform === 'linux' ? ['', '-musl'] : [''];
+  for (const variant of variants)
+    try {
+      return require.resolve(
+        `@anthropic-ai/claude-agent-sdk-${process.platform}-${process.arch}${variant}/${executable}`,
+      );
+    } catch {
+      // Not installed for this platform; try the next.
+    }
+  return 'claude';
+}
+
 /** Keeps the model aliases (opus, sonnet, …) and offers the 1M-context Sonnet beside Sonnet. */
-export function modelOptions(models: ModelInfo[]): ModelOption[] {
+export function modelList(models: ModelInfo[]): ModelOption[] {
   const options: ModelOption[] = models
     .filter(({ value }) => value !== 'default' && !value.startsWith('claude-'))
     .map(({ value, displayName }) => ({ value, label: displayName }));
