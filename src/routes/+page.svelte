@@ -361,9 +361,17 @@
   });
 
   // Closing the agent's pane ends the action it was carrying out.
+  // `agentPaneId` is set before the pane list has refreshed, so only a pane seen and then
+  // gone counts as closed; otherwise the action would end the moment it began.
+  let agentPaneSeen = false;
   $effect(() => {
     const id = pullRequest.agentPaneId;
-    if (id && !panes.some((pane) => pane.id === id)) pullRequest.settle(id);
+    if (!id) {
+      agentPaneSeen = false;
+      return;
+    }
+    if (panes.some((pane) => pane.id === id)) agentPaneSeen = true;
+    else if (agentPaneSeen) pullRequest.settle(id);
   });
 
   /** Goes to the pane `step` places from the active one, wrapping around the ends. */
