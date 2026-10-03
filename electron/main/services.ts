@@ -1,13 +1,9 @@
 import { randomUUID } from 'node:crypto';
-import { existsSync } from 'node:fs';
-import { realpath } from 'node:fs/promises';
-import { basename, join } from 'node:path';
 import {
   assistantProvider,
   events,
   type AssistantEvent,
   type AssistantProvider,
-  type ArchiveResult,
   type AssistantSendInput,
   type Backend,
   type GithubSignInEnd,
@@ -15,26 +11,25 @@ import {
   type PaneType,
   type PullRequestDraft,
   type Preferences,
+  type ConnectionCheck,
   type Project,
-  type Session,
-  type SetupStatus,
-  type WorkspaceCreateInput,
+  type ProjectCreateInput,
+  type RemoteFolder,
+  type SshConnection,
+  type SshConnectionInput,
 } from '../../shared/contracts';
 import {
   DEFAULT_TITLE,
   MAX_PANES,
   PROVIDER_LABELS,
+  TOOL_PANE_TITLES,
   errorMessage,
+  folderName,
+  isAssistantPane,
   isDefaultTitle,
-  isWorktree,
-  pickWorkspaceName,
   reorderLayout,
   resolvePreferences,
-  resolveProjectSettings,
-  slugify,
   titleFrom,
-  uniqueName,
-  workspaceLabel,
 } from '../../shared/domain';
 import type { AssistantHost } from './assistant';
 import { PendingAttachments } from './attachments';
@@ -45,24 +40,19 @@ import { Filesystem } from './filesystem';
 import * as git from './git';
 import { GitHub } from './github';
 import { KeepAwake, type Power } from './keep-awake';
+import { Machines, SshMachine, type Place } from './machines';
 import { MergeWatcher } from './merge-watcher';
 import { TurnNotifier, type Notice } from './notifier';
 import { Store } from './persistence';
 import { Terminals } from './terminal';
 import { cleanTitle, titlePrompt } from './titles';
 import { TokenUsage } from './token-usage';
-import {
-  copyIgnoredFiles,
-  filesToCopyPatterns,
-  freePort,
-  runScript,
-  workspaceEnvironment,
-  worktreePath,
-} from './worktrees';
 
 export type ServiceOptions = AssistantHost & {
   dataDirectory: string;
   chooseDirectory: () => Promise<string | undefined>;
+  /** Asks for a private key file for an SSH connection. */
+  chooseIdentity: () => Promise<string | undefined>;
   send: (channel: string, data: unknown) => void;
   openHelp: () => Promise<void>;
   isFullscreen: () => boolean;
@@ -78,15 +68,16 @@ export function services(options: ServiceOptions) {
   const tokenUsage = new TokenUsage();
   const github = new GitHub();
   const attachments = new PendingAttachments();
-  const worktreesRoot = join(options.dataDirectory, 'worktrees');
-  /** Each project's remote default branch, such as `main`, once looked up. */
-  const defaultBranches = new Map<string, string | undefined>();
-  /** Setup scripts that ran since the app started, by workspace. */
-  const setupStatuses = new Map<string, SetupStatus>();
+  const machines = new Machines(() => store.state.connections);
+  const machineOf = (project: Project) => machines.get(project.connectionId);
+  /** The project folder, on its machine. */
+  const placeOf = (project: Project) =>
+    machines.place(project.connectionId, project.path);
+  const folder = (projectId: string) => placeOf(store.project(projectId));
   const terminals = new Terminals(
     store,
     (event) => options.send(events.terminalData, event),
-    (sessionId) => environmentFor(store.session(sessionId)),
+    (projectId) => machineOf(store.project(projectId)),
   );
   const notifier = new TurnNotifier(store, options.notify);
   const keepAwake = new KeepAwake(
@@ -102,25 +93,26 @@ export function services(options: ServiceOptions) {
     chooseImage: options.chooseImage,
     openUrl: options.openUrl,
     attachments,
+    machineOf,
   };
   const assistants = {
     claude: new ClaudeAssistant(store, emitAssistantEvent, host),
     codex: new CodexAssistant(store, emitAssistantEvent, host),
   };
-  const providerOf = (pane: Pane): AssistantProvider =>
-    pane.type === 'claude' ? 'claude' : 'codex';
+  const providerOf = (pane: Pane): AssistantProvider => {
+    if (!isAssistantPane(pane)) throw Error('This pane has no assistant');
+    return pane.type;
+  };
   const assistantFor = (paneId: string) =>
     assistants[providerOf(store.pane(paneId))];
-  const worktree = (sessionId: string) => store.session(sessionId).worktreePath;
-  /** The branch a workspace's pull request merges into. */
-  async function pullRequestBase(session: Session) {
-    const base =
-      session.baseBranch || (await git.defaultBranch(session.worktreePath));
-    return (base ?? 'main').replace(/^origin\//, '');
+
+  /** The branch pull requests merge into: the remote's default branch. */
+  async function pullRequestBase(cwd: Place) {
+    return (await git.defaultBranch(cwd)) ?? 'main';
   }
 
   /** Commits the branch has beyond its base, newest first. */
-  async function commitsBeyond(cwd: string, base: string) {
+  async function commitsBeyond(cwd: Place, base: string) {
     for (const ref of [`origin/${base}`, base])
       try {
         return await git.commitsAhead(cwd, ref);
@@ -130,13 +122,18 @@ export function services(options: ServiceOptions) {
     return [];
   }
 
+  /** A title from a branch name: `team/fix-dropdown-height` becomes "Fix dropdown height". */
+  function branchTitle(branch: string) {
+    const words = (branch.split('/').pop() ?? '').replace(/[-_]+/g, ' ').trim();
+    return words.charAt(0).toUpperCase() + words.slice(1);
+  }
+
   async function pullRequestDraft(
-    sessionId: string,
+    projectId: string,
   ): Promise<PullRequestDraft> {
-    const session = store.session(sessionId);
-    const cwd = session.worktreePath;
+    const cwd = folder(projectId);
     const branch = (await git.currentBranch(cwd)) ?? '';
-    const base = await pullRequestBase(session);
+    const base = await pullRequestBase(cwd);
     const [commits, status] = await Promise.all([
       branch ? commitsBeyond(cwd, base) : [],
       git.status(cwd),
@@ -146,7 +143,7 @@ export function services(options: ServiceOptions) {
     const draft: PullRequestDraft = {
       branch,
       base,
-      title: single ? commits[0] : workspaceLabel(session),
+      title: single ? commits[0] : branchTitle(branch),
       body: single
         ? await git.lastCommitBody(cwd)
         : commits
@@ -158,7 +155,7 @@ export function services(options: ServiceOptions) {
     };
     if (!branch) draft.blocked = 'Check out a branch to open a pull request.';
     else if (branch === base)
-      draft.blocked = `This is the ${base} branch. Work on a separate branch to open a pull request.`;
+      draft.blocked = `This is the ${base} branch. Create a branch from the branch menu to open a pull request.`;
     else if (!commits.length && !uncommitted)
       draft.blocked = `This branch has no changes beyond ${base} yet.`;
     return draft;
@@ -166,55 +163,40 @@ export function services(options: ServiceOptions) {
 
   const hasStarted = (pane: Pane) => pane.messages.length > 0;
 
-  const projectOf = (session: Session) => store.project(session.projectId);
-  const settingsOf = (project: Project) =>
-    resolveProjectSettings(project, store.preferences);
-  const sessionsOf = (project: Project) =>
-    store.state.sessions.filter(({ projectId }) => projectId === project.id);
-  const openPanesOf = (session: Session) =>
+  const openPanesOf = (project: Project) =>
     store.state.panes.filter(
-      (pane) => pane.sessionId === session.id && !pane.archived,
+      (pane) => pane.projectId === project.id && !pane.archived,
     );
 
   const mergeWatcher = new MergeWatcher({
     store,
     github,
     isBusy: (paneId) => assistantFor(paneId).isRunning(paneId),
-    enabled: (pane) =>
-      !!pane.sessionId &&
-      settingsOf(projectOf(store.session(pane.sessionId))).archiveOnMerge,
+    place: folder,
     archive: (paneIds) => {
-      // A merged branch finishes its whole workspace; in the project folder only the pane goes.
-      const closed = new Set<string>();
-      for (const id of paneIds) {
-        const pane = store.pane(id);
-        if (pane.archived || !pane.sessionId) continue;
-        const session = store.session(pane.sessionId);
-        if (isWorktree(session)) {
-          for (const { id: openId } of openPanesOf(session)) closed.add(openId);
-          void archiveWorkspace(session).catch((cause) =>
-            console.warn(
-              `Could not archive a workspace: ${errorMessage(cause)}`,
-            ),
-          );
-        } else {
-          archivePane(pane);
-          closed.add(pane.id);
-        }
-      }
+      const closed = paneIds.filter((id) => !store.pane(id).archived);
+      for (const id of closed) archivePane(store.pane(id));
       store.save();
-      options.send(events.panesClosed, {
-        paneIds: [...closed],
-        reason: 'merged',
-      });
+      options.send(events.panesClosed, { paneIds: closed, reason: 'merged' });
     },
   });
   mergeWatcher.start();
-  void forgetMissingWorktrees();
 
   function requireEnabled(provider: AssistantProvider) {
     if (!store.preferences.providers[provider])
       throw Error(`${PROVIDER_LABELS[provider]} is turned off in Settings.`);
+  }
+
+  /** Branches change the files every agent in the project works on, so none may be mid-turn. */
+  function requireIdle(project: Project) {
+    const busy = openPanesOf(project).some(
+      (pane) =>
+        isAssistantPane(pane) && assistantFor(pane.id).isRunning(pane.id),
+    );
+    if (busy)
+      throw Error(
+        'Wait for the agents in this project to finish, or stop them, before switching branches.',
+      );
   }
 
   /** The provider and model new panes start with: the chosen default, else the last used. */
@@ -231,15 +213,16 @@ export function services(options: ServiceOptions) {
   }
 
   function archivePane(pane: Pane) {
-    // An archived pane has no view left to show or answer its turn.
-    if (pane.type !== 'terminal') assistantFor(pane.id).discard(pane.id);
+    // An archived pane has no view left to show, answer its turn, or type into its shell.
+    if (isAssistantPane(pane)) assistantFor(pane.id).discard(pane.id);
+    terminals.closePane(pane.id);
     pane.archived = true;
   }
 
   /** Notes the branch the conversation is about to work on, to spot its pull request merging. */
   async function recordBranch(pane: Pane) {
-    if (!pane.sessionId) return;
-    const name = await git.currentBranch(worktree(pane.sessionId));
+    if (!pane.projectId) return;
+    const name = await git.currentBranch(folder(pane.projectId));
     if (!name) delete pane.workBranch;
     else if (pane.workBranch?.name !== name)
       pane.workBranch = { name, since: Date.now() };
@@ -259,11 +242,6 @@ export function services(options: ServiceOptions) {
       pane.title = title;
       store.save();
       emitAssistantEvent({ paneId: pane.id, type: 'title', title });
-      const session = pane.sessionId
-        ? store.session(pane.sessionId)
-        : undefined;
-      if (session && isWorktree(session) && !session.title)
-        await nameWorkspace(session, title);
     } catch (cause) {
       // The placeholder is a fine title, so a failure is only worth a log line.
       console.warn(`Could not name a conversation: ${errorMessage(cause)}`);
@@ -295,303 +273,40 @@ export function services(options: ServiceOptions) {
     return store.preferences;
   }
 
-  function environmentFor(session: Session) {
-    const project = projectOf(session);
-    return workspaceEnvironment(
-      session,
-      project,
-      defaultBranches.get(project.id),
-    );
-  }
-
-  async function defaultBranchOf(project: Project) {
-    if (!defaultBranches.has(project.id))
-      defaultBranches.set(project.id, await git.defaultBranch(project.path));
-    return defaultBranches.get(project.id);
-  }
-
-  /** The branch new workspaces start from unless another is picked. */
-  async function defaultBase(project: Project) {
-    const { baseBranch } = settingsOf(project);
-    if (baseBranch) return baseBranch;
-    const remoteDefault = await defaultBranchOf(project);
-    if (remoteDefault) return `origin/${remoteDefault}`;
-    return (await git.currentBranch(project.path)) ?? 'HEAD';
-  }
-
-  /** The workspace on the project folder itself, created on first use. */
-  async function defaultWorkspace(project: Project) {
-    const existing = sessionsOf(project).find(
-      (session) => !isWorktree(session),
-    );
-    if (existing) return existing;
-    const session: Session = {
-      id: randomUUID(),
-      projectId: project.id,
-      title: '',
-      worktreePath: project.path,
-      branch: await git.currentBranch(project.path),
-      createdAt: Date.now(),
-      lastOpenedAt: Date.now(),
-      archived: false,
-    };
-    store.state.sessions.push(session);
-    return session;
-  }
-
-  /** Puts the workspace on screen. */
-  function openWorkspace(session: Session) {
-    if (session.archived) throw Error('Restore the workspace first.');
-    const project = projectOf(session);
-    project.lastOpenedAt = session.lastOpenedAt = Date.now();
-    store.state.currentSessionId = session.id;
+  /** Puts the project on screen. */
+  function openProject(project: Project) {
+    project.lastOpenedAt = Date.now();
     store.state.lastProjectId = project.id;
   }
 
-  /** The project's most recently opened worktree, or its folder when it has none. */
-  async function latestWorkspace(project: Project) {
-    const latest = sessionsOf(project)
-      .filter((session) => !session.archived && isWorktree(session))
-      .sort((first, second) => second.lastOpenedAt - first.lastOpenedAt)[0];
-    return latest ?? defaultWorkspace(project);
+  /** Opens the most recently opened project, or shows none when there are none. */
+  function openLatestProject() {
+    const latest = store.state.projects.toSorted(
+      (first, second) => second.lastOpenedAt - first.lastOpenedAt,
+    )[0];
+    if (latest) return openProject(latest);
+    delete store.state.lastProjectId;
   }
 
-  /** Opens another workspace when the one on screen goes away. */
-  async function leaveWorkspace(session: Session) {
-    if (store.state.currentSessionId !== session.id) return;
-    const project = store.state.projects.find(
-      ({ id }) => id === session.projectId,
-    );
-    if (project) return openWorkspace(await latestWorkspace(project));
-    const next = store.state.sessions
-      .filter((other) => !other.archived && other.id !== session.id)
-      .sort((first, second) => second.lastOpenedAt - first.lastOpenedAt)[0];
-    if (next) openWorkspace(next);
-    else delete store.state.currentSessionId;
-  }
-
-  function setSetupStatus(sessionId: string, status: SetupStatus) {
-    setupStatuses.set(sessionId, status);
-    options.send(events.workspaceSetup, { sessionId, status });
-  }
-
-  /** Copies ignored files such as `.env` into a new workspace. */
-  async function copyFiles(session: Session, project: Project) {
-    try {
-      await copyIgnoredFiles(
-        project,
-        session.worktreePath,
-        await filesToCopyPatterns(project),
-      );
-    } catch (cause) {
-      console.warn(`Could not copy files: ${errorMessage(cause)}`);
-    }
-  }
-
-  /** Runs the project's setup script in the workspace; its output shows in the workspace terminal. */
-  function runSetup(session: Session, project: Project) {
-    const script = settingsOf(project).setupScript.trim();
-    if (!script) return;
-    setSetupStatus(session.id, 'running');
-    terminals
-      .runSetup(session.id, script)
-      .then((exitCode) =>
-        setSetupStatus(session.id, exitCode === 0 ? 'succeeded' : 'failed'),
-      )
-      .catch(() => setSetupStatus(session.id, 'failed'));
-  }
-
-  async function createWorkspace(input: WorkspaceCreateInput) {
-    const project = store.project(input.projectId);
-    requireEnabled(input.provider);
-    const { branchPrefix } = settingsOf(project);
-    // Offline or without a remote, the workspace starts from what the clone already has.
-    await git.fetch(project.path).catch(() => {});
-    const branches = new Set(await git.branches(project.path));
-    const sessions = sessionsOf(project);
-    const name = pickWorkspaceName(
-      (candidate) =>
-        sessions.some((session) => session.name === candidate) ||
-        branches.has(`${branchPrefix}${candidate}`) ||
-        existsSync(worktreePath(worktreesRoot, project, candidate)),
-    );
-    const branch = `${branchPrefix}${name}`;
-    const path = worktreePath(worktreesRoot, project, name);
-    await git.addWorktree(project.path, path, branch, input.base);
-    const session: Session = {
-      id: randomUUID(),
-      projectId: project.id,
-      title: '',
-      name,
-      branch,
-      baseBranch: input.base,
-      worktreePath: path,
-      port: freePort(store.state.sessions),
-      createdAt: Date.now(),
-      lastOpenedAt: Date.now(),
-      archived: false,
-    };
-    const previous = store.state.currentSessionId;
-    store.state.sessions.push(session);
-    let pane: Pane;
-    try {
-      openWorkspace(session);
-      pane = await addPane(input.provider, input.model);
-      pane.reasoningEffort = input.reasoningEffort;
-    } catch (cause) {
-      store.state.sessions = store.state.sessions.filter(
-        ({ id }) => id !== session.id,
-      );
-      store.state.currentSessionId = previous;
-      await git.removeWorktree(project.path, path).catch(() => {});
-      await git.deleteBranch(project.path, branch).catch(() => {});
-      throw cause;
-    }
-    store.save();
-    await copyFiles(session, project);
-    runSetup(session, project);
-    if (!input.text) {
-      attachments.discard(input.draftId);
-      return session;
-    }
-    attachments.transfer(input.draftId, pane.id);
-    // The pane shows how the turn goes; only a turn that never started needs reporting here.
-    send({
-      paneId: pane.id,
-      text: input.text,
-      attachmentIds: input.attachmentIds,
-      model: input.model,
-      reasoningEffort: input.reasoningEffort,
-      approvals: store.preferences.approvals,
-    }).catch((cause) =>
-      console.warn(`Could not start the first turn: ${errorMessage(cause)}`),
-    );
-    return session;
-  }
-
-  /**
-   * Names the workspace after its first conversation, and its branch too while the branch
-   * still has its placeholder name and hasn't been pushed.
-   */
-  async function nameWorkspace(session: Session, title: string) {
-    session.title = title;
-    store.save();
-    options.send(events.workspacesChanged, undefined);
-    const project = projectOf(session);
-    const placeholder = `${settingsOf(project).branchPrefix}${session.name}`;
-    const slug = slugify(title);
-    const from = session.branch;
-    if (!slug || from !== placeholder) return;
-    try {
-      if (
-        (await git.currentBranch(session.worktreePath)) !== from ||
-        (await git.hasUpstream(session.worktreePath, from))
-      )
-        return;
-      const branches = new Set(await git.branches(project.path));
-      const to = uniqueName(
-        `${settingsOf(project).branchPrefix}${slug}`,
-        (name) => branches.has(name),
-      );
-      await git.renameBranch(session.worktreePath, from, to);
-      session.branch = to;
-      for (const pane of store.state.panes)
-        if (pane.sessionId === session.id && pane.workBranch?.name === from)
-          pane.workBranch.name = to;
-      store.save();
-      options.send(events.workspacesChanged, undefined);
-    } catch (cause) {
-      console.warn(`Could not rename a branch: ${errorMessage(cause)}`);
-    }
-  }
-
-  /**
-   * Archives the workspace and its panes, runs the archive script, and removes its folder.
-   * A folder with uncommitted changes is kept, along with its branch.
-   */
-  async function archiveWorkspace(session: Session): Promise<ArchiveResult> {
-    if (!isWorktree(session))
-      throw Error('The project folder can’t be archived.');
-    if (session.archived) return { keptFolder: false };
-    const project = projectOf(session);
-    const settings = settingsOf(project);
-    const panes = openPanesOf(session);
-    session.archivedPaneIds = panes.map(({ id }) => id);
-    for (const pane of panes) archivePane(pane);
-    session.archived = true;
-    await leaveWorkspace(session);
-    store.save();
-    terminals.closeSession(session.id);
-    setupStatuses.delete(session.id);
-    await files.unwatch(session.id);
-
-    const result: ArchiveResult = { keptFolder: false };
-    if (settings.archiveScript.trim() && existsSync(session.worktreePath))
-      await runScript(
-        settings.archiveScript,
-        session.worktreePath,
-        environmentFor(session),
-      ).catch((cause) => (result.scriptError = errorMessage(cause)));
-    try {
-      await git.removeWorktree(project.path, session.worktreePath);
-    } catch {
-      result.keptFolder = existsSync(session.worktreePath);
-    }
-    if (!result.keptFolder && settings.deleteBranchOnArchive && session.branch)
-      await git.deleteBranch(project.path, session.branch).catch(() => {});
-    return result;
-  }
-
-  async function restoreWorkspace(session: Session) {
-    if (!session.archived) return openWorkspace(session);
-    const project = projectOf(session);
-    if (!existsSync(session.worktreePath)) {
-      const { branch } = session;
-      if (!branch || !(await git.branchExists(project.path, branch)))
-        throw Error(
-          `The branch ${branch ?? ''} no longer exists, so the workspace can’t be restored.`,
-        );
-      await git.pruneWorktrees(project.path).catch(() => {});
-      await git.checkoutWorktree(project.path, session.worktreePath, branch);
-    }
-    session.archived = false;
-    const others = store.state.sessions.filter((other) => other !== session);
-    if (others.some((other) => !other.archived && other.port === session.port))
-      session.port = freePort(others);
-    for (const id of session.archivedPaneIds ?? []) {
-      const pane = store.state.panes.find((candidate) => candidate.id === id);
-      if (pane) pane.archived = false;
-    }
-    delete session.archivedPaneIds;
-    openWorkspace(session);
-  }
-
-  /** Drops git's records of worktrees whose folders were deleted outside the app. */
-  async function forgetMissingWorktrees() {
-    for (const project of store.state.projects)
-      await git.pruneWorktrees(project.path).catch(() => {});
-  }
-
-  /** Adds a pane to the open workspace, at the front, with the last-used provider and model. */
-  async function addPane(type?: PaneType, model?: string) {
-    const session = store.state.currentSessionId
-      ? store.session(store.state.currentSessionId)
+  /** Adds a pane to the project on screen, at the front; agents start with the last-used provider and model. */
+  function addPane(type?: PaneType) {
+    const project = store.state.lastProjectId
+      ? store.project(store.state.lastProjectId)
       : undefined;
-    if (!session) throw Error('Add a project first.');
-    const open = openPanesOf(session).filter(
-      (pane) => pane.type !== 'terminal',
-    );
-    if (type !== 'terminal' && open.length >= MAX_PANES)
-      throw new Error(`A workspace can have up to ${MAX_PANES} panes open.`);
+    if (!project) throw Error('Add a project first.');
+    if (openPanesOf(project).length >= MAX_PANES)
+      throw new Error(`A project can have up to ${MAX_PANES} panes open.`);
     const starting = startingModel();
     const paneType = type ?? starting.provider;
+    const agent = paneType === 'claude' || paneType === 'codex';
+    if (agent) requireEnabled(paneType);
     const pane: Pane = {
       id: randomUUID(),
-      sessionId: session.id,
+      projectId: project.id,
       type: paneType,
-      title: paneType === 'terminal' ? 'Terminal' : DEFAULT_TITLE,
+      title: agent ? DEFAULT_TITLE : TOOL_PANE_TITLES[paneType],
       messages: [],
-      model: model ?? modelFor(paneType, starting),
+      model: agent ? modelFor(paneType, starting) : '',
       reasoningEffort: 'medium',
       approvals: store.preferences.approvals,
       archived: false,
@@ -602,29 +317,138 @@ export function services(options: ServiceOptions) {
   }
 
   function modelFor(
-    type: PaneType,
+    provider: AssistantProvider,
     starting: ReturnType<typeof startingModel>,
   ) {
-    if (type === 'terminal') return '';
-    if (type === starting.provider) return starting.model;
-    return store.state.settings.lastModels?.[type] ?? '';
+    if (provider === starting.provider) return starting.model;
+    return store.state.settings.lastModels?.[provider] ?? '';
+  }
+
+  async function removeProject(project: Project) {
+    for (const pane of openPanesOf(project)) archivePane(pane);
+    terminals.closeProject(project.id);
+    await files.unwatch(project.id);
+    const { state } = store;
+    state.panes = state.panes.filter((pane) => pane.projectId !== project.id);
+    const paneIds = new Set(state.panes.map((pane) => pane.id));
+    state.layout.paneIds = state.layout.paneIds.filter((paneId) =>
+      paneIds.has(paneId),
+    );
+    state.projects = state.projects.filter((item) => item !== project);
+    if (state.lastProjectId === project.id) openLatestProject();
+    store.save();
+  }
+
+  /** Creates a branch from `base` and switches to it; a remote base is fetched first. */
+  async function createBranch(project: Project, name: string, base: string) {
+    requireIdle(project);
+    const cwd = placeOf(project);
+    // Offline or without a remote, the branch starts from what the clone already has.
+    if (base.startsWith('origin/')) await git.fetch(cwd).catch(() => {});
+    await git.createBranch(cwd, name, base);
+  }
+
+  /** Adds a folder as a project, or finds the project it already is, and opens it. */
+  async function createProject({
+    name,
+    path,
+    connectionId,
+  }: ProjectCreateInput) {
+    const machine = machines.get(connectionId);
+    const home = await machine.home();
+    const expanded =
+      path === '~' || path.startsWith('~/')
+        ? machine.path.join(home, path.slice(1))
+        : path;
+    let resolved: string;
+    try {
+      resolved = await machine.realpath(expanded);
+      await machine.readdir(resolved);
+    } catch (cause) {
+      throw Error(`Could not open ${path}: ${errorMessage(cause)}`);
+    }
+    let project = store.state.projects.find(
+      (item) => item.path === resolved && item.connectionId === connectionId,
+    );
+    if (!project) {
+      project = {
+        id: randomUUID(),
+        name: name.trim() || folderName(resolved),
+        path: resolved,
+        connectionId,
+        createdAt: Date.now(),
+        lastOpenedAt: Date.now(),
+      };
+      store.state.projects.push(project);
+    }
+    openProject(project);
+    store.save();
+    return project;
+  }
+
+  /** Adds a connection, or updates the one with the input's id. */
+  function saveConnection(input: SshConnectionInput) {
+    const connection: SshConnection = {
+      ...input,
+      id: input.id ?? randomUUID(),
+      port: input.port || undefined,
+      identityFile:
+        input.auth === 'identity' ? input.identityFile || undefined : undefined,
+    };
+    const { connections } = store.state;
+    const index = connections.findIndex(({ id }) => id === connection.id);
+    if (index === -1) connections.push(connection);
+    else connections[index] = connection;
+    store.save();
+    return connection;
+  }
+
+  function removeConnection(id: string) {
+    const users = store.state.projects.filter(
+      (project) => project.connectionId === id,
+    );
+    if (users.length)
+      throw Error(
+        `Remove the projects on this connection first: ${users.map(({ name }) => name).join(', ')}.`,
+      );
+    store.state.connections = store.state.connections.filter(
+      (connection) => connection.id !== id,
+    );
+    store.save();
+  }
+
+  async function checkConnection(
+    input: SshConnectionInput,
+  ): Promise<ConnectionCheck> {
+    const machine = new SshMachine({ ...input, id: input.id ?? randomUUID() });
+    try {
+      return { ok: true, home: await machine.home() };
+    } catch (cause) {
+      return { ok: false, error: errorMessage(cause) };
+    }
+  }
+
+  /** The folders in `path` on the connection's machine, hidden ones left out. */
+  async function browse(
+    connectionId: string,
+    path?: string,
+  ): Promise<RemoteFolder> {
+    const machine = machines.get(connectionId);
+    const folder = await machine.realpath(path || (await machine.home()));
+    const items = await machine.readdir(folder);
+    const parent = machine.path.dirname(folder);
+    return {
+      path: folder,
+      parent: parent === folder ? undefined : parent,
+      folders: items
+        .filter((item) => item.directory && !item.name.startsWith('.'))
+        .map((item) => item.name)
+        .sort((first, second) => first.localeCompare(second)),
+    };
   }
 
   const api: Backend = {
-    state: {
-      get: async () => {
-        // Branches change under the app, as agents and terminals check others out.
-        await Promise.all(
-          store.state.sessions
-            .filter((session) => !session.archived)
-            .map(async (session) => {
-              const branch = await git.currentBranch(session.worktreePath);
-              if (branch) session.branch = branch;
-            }),
-        );
-        return store.state;
-      },
-    },
+    state: { get: async () => store.state },
     preferences: {
       get: async () => store.preferences,
       update: async (patch) => updatePreferences(patch),
@@ -650,130 +474,44 @@ export function services(options: ServiceOptions) {
         return signIn;
       },
       cancelConnect: async () => github.cancelSignIn(),
-      pullRequest: async (sessionId) => github.pullRequest(worktree(sessionId)),
-      pullRequestDraft: async (sessionId) => pullRequestDraft(sessionId),
-      createPullRequest: async (sessionId, { title, body, commit }) => {
-        const cwd = worktree(sessionId);
-        const draft = await pullRequestDraft(sessionId);
+      pullRequest: async (projectId) => github.pullRequest(folder(projectId)),
+      pullRequestDraft: async (projectId) => pullRequestDraft(projectId),
+      createPullRequest: async (projectId, { title, body, commit }) => {
+        const cwd = folder(projectId);
+        const draft = await pullRequestDraft(projectId);
         if (draft.blocked) throw Error(draft.blocked);
         if (commit && draft.uncommitted) await git.commitAll(cwd, title);
         await git.pushBranch(cwd);
         return github.createPullRequest(cwd, { title, body, base: draft.base });
       },
-      mergePullRequest: async (sessionId) =>
-        github.mergePullRequest(worktree(sessionId)),
-      openPullRequest: async (sessionId) => {
-        const pull = await github.pullRequest(worktree(sessionId));
+      mergePullRequest: async (projectId) =>
+        github.mergePullRequest(folder(projectId)),
+      openPullRequest: async (projectId) => {
+        const pull = await github.pullRequest(folder(projectId));
         if (pull) await options.openUrl(pull.url);
       },
     },
     projects: {
-      add: async () => {
-        const selected = await options.chooseDirectory();
-        if (!selected) return null;
-        const path = await realpath(selected);
-        let project = store.state.projects.find((item) => item.path === path);
-        if (!project) {
-          project = {
-            id: randomUUID(),
-            name: basename(path),
-            path,
-            createdAt: Date.now(),
-            lastOpenedAt: Date.now(),
-            settings: {},
-          };
-          store.state.projects.push(project);
-        }
-        openWorkspace(await latestWorkspace(project));
-        store.save();
-        return project;
-      },
-      remove: async (id) => {
-        const project = store.project(id);
-        const sessions = sessionsOf(project);
-        const sessionIds = new Set(sessions.map((session) => session.id));
-        for (const session of sessions) {
-          for (const pane of openPanesOf(session)) archivePane(pane);
-          terminals.closeSession(session.id);
-          setupStatuses.delete(session.id);
-          await files.unwatch(session.id);
-          // Clean worktrees go; one with uncommitted work stays on disk.
-          if (isWorktree(session) && !session.archived)
-            await git
-              .removeWorktree(project.path, session.worktreePath)
-              .catch(() => {});
-        }
-        const { state } = store;
-        const leaving = state.sessions.find(
-          ({ id: sessionId }) => sessionId === state.currentSessionId,
-        );
-        state.panes = state.panes.filter(
-          (pane) => !pane.sessionId || !sessionIds.has(pane.sessionId),
-        );
-        const paneIds = new Set(state.panes.map((pane) => pane.id));
-        state.layout.paneIds = state.layout.paneIds.filter((paneId) =>
-          paneIds.has(paneId),
-        );
-        state.sessions = state.sessions.filter(
-          (session) => !sessionIds.has(session.id),
-        );
-        state.projects = state.projects.filter((item) => item.id !== id);
-        if (state.lastProjectId === id) delete state.lastProjectId;
-        if (leaving && sessionIds.has(leaving.id))
-          await leaveWorkspace(leaving);
-        store.save();
-      },
-      favicon: async (id) => favicon(store.project(id).path),
-      updateSettings: async (id, patch) => {
-        const project = store.project(id);
-        project.settings = { ...project.settings, ...patch };
-        store.save();
-        void mergeWatcher.check();
-        return project;
-      },
-      defaultBase: async (id) => defaultBase(store.project(id)),
-    },
-    workspaces: {
-      create: async (input) => createWorkspace(input),
+      chooseFolder: async () => (await options.chooseDirectory()) ?? null,
+      create: async (input) => createProject(input),
       open: async (id) => {
-        openWorkspace(store.session(id));
+        openProject(store.project(id));
         store.save();
       },
-      openProject: async (projectId) => {
-        openWorkspace(await latestWorkspace(store.project(projectId)));
-        store.save();
-      },
-      archive: async (id) => {
-        const result = await archiveWorkspace(store.session(id));
-        store.save();
-        return result;
-      },
-      restore: async (id) => {
-        await restoreWorkspace(store.session(id));
-        store.save();
-      },
-      pickAttachment: async (draftId) => {
-        const file = await options.chooseImage();
-        return file ? attachments.addImage(draftId, file) : null;
-      },
-      attachText: async (draftId, text) => attachments.addText(draftId, text),
-      discardDraft: async (draftId) => attachments.discard(draftId),
-      setupStatus: async () => Object.fromEntries(setupStatuses),
+      remove: async (id) => removeProject(store.project(id)),
+      favicon: async (id) => favicon(folder(id)),
+    },
+    connections: {
+      list: async () => store.state.connections,
+      save: async (input) => saveConnection(input),
+      remove: async (id) => removeConnection(id),
+      check: async (input) => checkConnection(input),
+      chooseIdentity: async () => (await options.chooseIdentity()) ?? null,
+      browse: async (id, path) => browse(id, path),
     },
     panes: {
-      add: async (type, model) => {
-        const pane = await addPane(type, model);
-        store.save();
-        return pane;
-      },
-      retype: async (id, type, model) => {
-        const pane = store.pane(id);
-        if (hasStarted(pane))
-          throw Error(
-            'Cannot change provider after the conversation has started',
-          );
-        pane.type = type;
-        pane.model = model;
+      add: async (type) => {
+        const pane = addPane(type);
         store.save();
         return pane;
       },
@@ -811,14 +549,14 @@ export function services(options: ServiceOptions) {
       write: async (id, data) => terminals.write(id, data),
       resize: async (id, cols, rows) => terminals.resize(id, cols, rows),
       snapshot: async (id) => terminals.snapshot(id),
-      close: async (sessionId, tab) => terminals.closeTab(sessionId, tab),
     },
     git: {
-      status: async (sessionId) => git.status(worktree(sessionId)),
-      branches: async (projectId) =>
-        git.branches(store.project(projectId).path),
-      diff: async (sessionId, path) => {
-        const root = worktree(sessionId);
+      status: async (projectId) => git.status(folder(projectId)),
+      head: async (projectId) => git.head(folder(projectId)),
+      localBranches: async (projectId) => git.localBranches(folder(projectId)),
+      branches: async (projectId) => git.branches(folder(projectId)),
+      diff: async (projectId, path) => {
+        const root = folder(projectId);
         if (path.includes('\0') || path.split(/[\\/]/).includes('..'))
           throw Error('Invalid path');
         const change = (await git.status(root)).changes.find(
@@ -828,20 +566,31 @@ export function services(options: ServiceOptions) {
         if (change.index === '?') return git.diffUntracked(root, path);
         return git.diff(root, path);
       },
+      checkout: async (projectId, branch) => {
+        const project = store.project(projectId);
+        requireIdle(project);
+        await git.switchBranch(placeOf(project), branch);
+      },
+      createBranch: async (projectId, name, base) =>
+        createBranch(store.project(projectId), name, base),
+      pull: async (projectId) => {
+        const project = store.project(projectId);
+        requireIdle(project);
+        await git.pull(placeOf(project));
+      },
     },
     filesystem: {
-      list: async (sessionId, path) => files.list(worktree(sessionId), path),
-      readFile: async (sessionId, path) =>
-        files.read(worktree(sessionId), path),
-      search: async (sessionId, query) =>
-        files.search(worktree(sessionId), query),
-      watch: async (sessionId) =>
-        files.watch(sessionId, worktree(sessionId), (event) =>
+      list: async (projectId, path) => files.list(folder(projectId), path),
+      readFile: async (projectId, path) => files.read(folder(projectId), path),
+      search: async (projectId, query) =>
+        files.search(folder(projectId), query),
+      watch: async (projectId) =>
+        files.watch(projectId, folder(projectId), (event) =>
           options.send(events.fileChange, event),
         ),
-      unwatch: async (sessionId) => {
-        store.session(sessionId);
-        await files.unwatch(sessionId);
+      unwatch: async (projectId) => {
+        store.project(projectId);
+        await files.unwatch(projectId);
       },
     },
   };

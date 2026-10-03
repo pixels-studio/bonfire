@@ -11,13 +11,13 @@
     LONG_TEXT_THRESHOLD,
   } from '$shared/domain';
   import AccentSlider from './accent-slider.svelte';
+  import ConnectionSettings from './connection-settings.svelte';
   import GithubSettings from './github-settings.svelte';
   import ModelChoiceSelect from './model-choice-select.svelte';
   import OptionSelect from './option-select.svelte';
   import ProviderSetting from './provider-setting.svelte';
   import Setting from './setting.svelte';
   import SettingsSection from './settings-section.svelte';
-  import WorktreeSettings from './worktree-settings.svelte';
 
   const FOLLOW_UPS: { value: FollowUpMode; label: string }[] = [
     { value: 'queue', label: 'Queue' },
@@ -180,10 +180,6 @@
     </Setting>
   </SettingsSection>
 
-  <SettingsSection title="Worktrees" icon="git">
-    <WorktreeSettings />
-  </SettingsSection>
-
   <SettingsSection title="Providers" icon="section-providers">
     <ProviderSetting provider="claude" />
     <ProviderSetting provider="codex" />
@@ -225,4 +221,6 @@
   <SettingsSection title="GitHub" icon="github">
     <GithubSettings />
   </SettingsSection>
+
+  <ConnectionSettings />
 </div>

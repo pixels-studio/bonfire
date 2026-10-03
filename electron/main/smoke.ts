@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { mkdir, mkdtemp, readFile, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { BrowserWindow } from 'electron';
@@ -9,6 +9,7 @@ import { Store } from './persistence';
 import type { services } from './services';
 
 const PROJECT_NAME = 'Smoke repository';
+/** Two shells and a pane per provider. */
 const EXPECTED_PANE_COUNT = 4;
 
 function sleep(milliseconds: number) {
@@ -60,15 +61,102 @@ async function saveScreenshot(mainWindow: BrowserWindow) {
   }
 }
 
+/**
+ * Runs a project on an SSH connection end to end. The `ssh` is a stand-in that runs the
+ * remote side on this computer, with a home folder of its own.
+ */
+async function verifyRemote(backend: ReturnType<typeof services>) {
+  const { api } = backend;
+  const home = await realpath(await mkdtemp(join(tmpdir(), 'bonfire-remote-')));
+  process.env.BONFIRE_SSH = join(process.cwd(), 'test/fixtures/fake-ssh.sh');
+  process.env.BONFIRE_FAKE_SSH_HOME = home;
+  const repository = join(home, 'remote-repo');
+  await mkdir(repository);
+  await git(repository, ['init', '-b', 'main']);
+  await git(repository, ['config', 'user.email', 'test@bonfire.local']);
+  await git(repository, ['config', 'user.name', 'Bonfire Test']);
+  await writeFile(join(repository, 'hello.txt'), 'remote\n');
+  await writeFile(join(home, 'secret.txt'), 'nope\n');
+  await git(repository, ['add', '.']);
+  await git(repository, ['commit', '-m', 'Initial']);
+
+  const entered = {
+    name: 'Build box',
+    host: 'dev@box',
+    auth: 'default' as const,
+  };
+  assert.deepEqual(await api.connections.check(entered), { ok: true, home });
+  const connection = await api.connections.save(entered);
+  const listing = await api.connections.browse(connection.id);
+  assert.equal(listing.path, home);
+  assert.deepEqual(listing.folders, ['remote-repo']);
+
+  const project = await api.projects.create({
+    name: 'Remote repository',
+    path: '~/remote-repo',
+    connectionId: connection.id,
+  });
+  assert.equal(project.path, repository);
+  await assert.rejects(() => api.connections.remove(connection.id));
+
+  assert.equal(
+    await api.filesystem.readFile(project.id, 'hello.txt'),
+    'remote\n',
+  );
+  assert.deepEqual(await api.filesystem.search(project.id, 'hello'), [
+    'hello.txt',
+  ]);
+  await assert.rejects(() =>
+    api.filesystem.readFile(project.id, '../secret.txt'),
+  );
+
+  const shellPane = await api.panes.add('terminal');
+  const terminalId = await api.terminal.create({
+    projectId: project.id,
+    paneId: shellPane.id,
+    type: 'shell',
+  });
+  await api.terminal.write(
+    terminalId,
+    "printf 'changed\\n' > hello.txt; printf 'BONFIRE_REMOTE_PTY_OK %s\\n' \"$(pwd)\"\r",
+  );
+  await sleep(1500);
+  assert(
+    (await api.terminal.snapshot(terminalId)).data.includes(
+      `BONFIRE_REMOTE_PTY_OK ${repository}`,
+    ),
+  );
+  const status = await api.git.status(project.id);
+  assert.equal(status.branch, 'main');
+  assert(status.changes.some((change) => change.path === 'hello.txt'));
+  assert.match(await api.git.diff(project.id, 'hello.txt'), /\+changed/);
+
+  // A new branch takes the uncommitted change along.
+  await api.git.createBranch(project.id, 'remote-feature', 'main');
+  assert.deepEqual(await api.git.head(project.id), {
+    isGit: true,
+    branch: 'remote-feature',
+  });
+  assert.deepEqual(
+    (await api.git.localBranches(project.id)).map(({ name }) => name).sort(),
+    ['main', 'remote-feature'],
+  );
+  assert.match(await api.git.diff(project.id, 'hello.txt'), /\+changed/);
+  await api.projects.remove(project.id);
+  await api.connections.remove(connection.id);
+  assert.deepEqual(await api.connections.list(), []);
+  console.log('BONFIRE_REMOTE_OK: SSH project, files, git, branches, terminal');
+}
+
 async function verifyRestart(
   mainWindow: BrowserWindow,
   backend: ReturnType<typeof services>,
 ) {
   await sleep(1800);
-  assert.equal(backend.store.state.sessions.length, 1);
+  assert.equal(backend.store.state.projects.length, 1);
   assert.equal(backend.store.state.panes.length, EXPECTED_PANE_COUNT);
   assert.match(await pageText(mainWindow), new RegExp(PROJECT_NAME));
-  console.log('BONFIRE_RESTART_OK: project, session, and pane layout restored');
+  console.log('BONFIRE_RESTART_OK: project and pane layout restored');
 }
 
 export async function smoke(
@@ -86,18 +174,17 @@ export async function smoke(
     path: repository,
     createdAt: Date.now(),
     lastOpenedAt: Date.now(),
-    settings: {},
   };
   backend.store.state.projects.push(project);
   backend.store.save();
 
-  await api.workspaces.openProject(project.id);
-  const session = backend.store.session(backend.store.state.currentSessionId!);
-  assert.equal(session.worktreePath, repository);
-  assert.equal(
-    await readFile(join(session.worktreePath, 'hello.txt'), 'utf8'),
-    'original\n',
-  );
+  // Panes work in the project folder itself.
+  await api.projects.open(project.id);
+  assert.equal(backend.store.state.lastProjectId, project.id);
+  assert.deepEqual(await api.git.head(project.id), {
+    isGit: true,
+    branch: 'main',
+  });
 
   await reloadAndWait(mainWindow, 1000);
   assert.equal(
@@ -113,7 +200,7 @@ export async function smoke(
 
   const firstShellPane = await api.panes.add('terminal');
   const firstTerminalId = await api.terminal.create({
-    sessionId: session.id,
+    projectId: project.id,
     paneId: firstShellPane.id,
     type: 'shell',
   });
@@ -126,16 +213,16 @@ export async function smoke(
   const firstSnapshot = await api.terminal.snapshot(firstTerminalId);
   assert.match(firstSnapshot.data, /BONFIRE_PTY_OK/);
   assert.equal(
-    await api.filesystem.readFile(session.id, 'hello.txt'),
+    await api.filesystem.readFile(project.id, 'hello.txt'),
     'shared change\n',
   );
-  const gitStatus = await api.git.status(session.id);
+  const gitStatus = await api.git.status(project.id);
   assert(gitStatus.changes.some((change) => change.path === 'hello.txt'));
-  assert.match(await api.git.diff(session.id, 'hello.txt'), /shared change/);
+  assert.match(await api.git.diff(project.id, 'hello.txt'), /shared change/);
 
   const secondShellPane = await api.panes.add('terminal');
   const secondTerminalId = await api.terminal.create({
-    sessionId: session.id,
+    projectId: project.id,
     paneId: secondShellPane.id,
     type: 'shell',
   });
@@ -145,39 +232,34 @@ export async function smoke(
     undefined,
   );
 
-  const tabTerminalId = await api.terminal.create({
-    sessionId: session.id,
-    type: 'shell',
-  });
-  const secondTabTerminalId = await api.terminal.create({
-    sessionId: session.id,
-    type: 'shell',
-    tab: 1,
-  });
-  assert.notEqual(secondTabTerminalId, tabTerminalId);
+  // A pane's shell is reused while it runs, and ends with the pane.
   assert.equal(
-    await api.terminal.create({ sessionId: session.id, type: 'shell', tab: 1 }),
-    secondTabTerminalId,
+    await api.terminal.create({
+      projectId: project.id,
+      paneId: secondShellPane.id,
+      type: 'shell',
+    }),
+    secondTerminalId,
   );
-  await api.terminal.close(session.id, 1);
-  await assert.rejects(() => api.terminal.snapshot(secondTabTerminalId));
+  await api.panes.archive(secondShellPane.id);
+  await assert.rejects(() => api.terminal.snapshot(secondTerminalId));
   assert.equal(
-    (await api.terminal.snapshot(tabTerminalId)).exitCode,
+    (await api.terminal.snapshot(firstTerminalId)).exitCode,
     undefined,
   );
 
   await assert.rejects(() =>
-    api.filesystem.readFile(session.id, '../outside/secret.txt'),
+    api.filesystem.readFile(project.id, '../outside/secret.txt'),
   );
-  await symlink(outsideDirectory, join(session.worktreePath, 'escape'));
+  await symlink(outsideDirectory, join(repository, 'escape'));
   await assert.rejects(() =>
-    api.filesystem.readFile(session.id, 'escape/secret.txt'),
+    api.filesystem.readFile(project.id, 'escape/secret.txt'),
   );
 
   for (const provider of ['claude', 'codex'] as const) {
     const chatPane = await api.panes.add(provider);
     const cliTerminalId = await api.terminal.create({
-      sessionId: session.id,
+      projectId: project.id,
       paneId: chatPane.id,
       type: provider,
     });
@@ -195,7 +277,7 @@ export async function smoke(
       `${provider} must produce terminal output`,
     );
     const chatShellTerminalId = await api.terminal.create({
-      sessionId: session.id,
+      projectId: project.id,
       paneId: chatPane.id,
       type: 'shell',
     });
@@ -206,11 +288,31 @@ export async function smoke(
     );
   }
 
+  // Switching branches is refused only while an agent works; the shared change comes along.
+  await api.git.createBranch(project.id, 'feature/smoke', 'main');
+  assert.equal((await api.git.head(project.id)).branch, 'feature/smoke');
+  assert.equal(
+    await api.filesystem.readFile(project.id, 'hello.txt'),
+    'shared change\n',
+  );
+  await assert.rejects(
+    () => api.git.createBranch(project.id, 'bad name..', 'main'),
+    /valid branch name/,
+  );
+  await api.git.checkout(project.id, 'main');
+  assert.deepEqual(
+    (await api.git.localBranches(project.id)).map(({ name }) => name).sort(),
+    ['feature/smoke', 'main'],
+  );
+
+  await verifyRemote(backend);
+  await api.projects.open(project.id);
+
   backend.store.flush();
   const restoredStore = new Store(process.env.BONFIRE_USER_DATA!);
-  assert(restoredStore.state.sessions.some(({ id }) => id === session.id));
+  assert.equal(restoredStore.state.lastProjectId, project.id);
   assert.equal(
-    restoredStore.state.panes.filter((pane) => pane.sessionId === session.id)
+    restoredStore.state.panes.filter((pane) => pane.projectId === project.id)
       .length,
     EXPECTED_PANE_COUNT,
   );

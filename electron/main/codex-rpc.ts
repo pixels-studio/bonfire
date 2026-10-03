@@ -3,11 +3,14 @@ import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { createInterface } from 'node:readline';
 import type { RequestId } from './codex-protocol';
+import type { Machine } from './machines';
 
 export type CodexCommand = {
   file: string;
   args: string[];
   env?: NodeJS.ProcessEnv;
+  /** The remote machine to run it on; this computer when unset. */
+  machine?: Machine;
 };
 
 export type RpcHandlers = {
@@ -21,8 +24,12 @@ export type RpcHandlers = {
 const REQUEST_TIMEOUT_MS = 300_000;
 const STDERR_TAIL_CHARS = 2_000;
 
-/** Runs the Codex binary bundled with the app, through the app's own Node. */
-export function codexCommand(): CodexCommand {
+/**
+ * Runs the Codex binary bundled with the app, through the app's own Node. A remote
+ * machine runs the `codex` installed there.
+ */
+export function codexCommand(machine?: Machine): CodexCommand {
+  if (machine?.remote) return { file: 'codex', args: ['app-server'], machine };
   try {
     const resolve = createRequire(__filename).resolve;
     const bin = join(
@@ -80,10 +87,12 @@ export class CodexRpc {
 
   /** Starts the server and completes the protocol handshake. */
   static async start(command: CodexCommand, handlers: RpcHandlers) {
-    const child = spawn(command.file, command.args, {
-      stdio: ['pipe', 'pipe', 'pipe'],
-      env: command.env,
-    });
+    const child = command.machine
+      ? command.machine.spawn(command.file, command.args, {})
+      : spawn(command.file, command.args, {
+          stdio: ['pipe', 'pipe', 'pipe'],
+          env: command.env,
+        });
     const rpc = new CodexRpc(child, handlers);
     try {
       await rpc.request('initialize', {

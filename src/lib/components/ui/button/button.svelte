@@ -24,14 +24,12 @@
       size: {
         default:
           'gap-1.5 px-3 py-1.5 has-data-[icon=inline-end]:pr-2 has-data-[icon=inline-start]:pl-2',
-        xs: "h-6 gap-1 rounded-[min(var(--radius-md),10px)] px-2 text-xs in-data-[slot=button-group]:rounded-lg has-data-[icon=inline-end]:pr-1.5 has-data-[icon=inline-start]:pl-1.5 [&_svg:not([class*='size-'])]:size-3",
-        sm: "h-7 gap-1 rounded-[min(var(--radius-md),12px)] px-2.5 text-[0.8rem] in-data-[slot=button-group]:rounded-lg has-data-[icon=inline-end]:pr-1.5 has-data-[icon=inline-start]:pl-1.5 [&_svg:not([class*='size-'])]:size-3.5",
+        xs: "h-6 gap-1 px-2 text-xs has-data-[icon=inline-end]:pr-1.5 has-data-[icon=inline-start]:pl-1.5 [&_svg:not([class*='size-'])]:size-3",
+        sm: "h-7 gap-1 px-2.5 text-[0.8rem] has-data-[icon=inline-end]:pr-1.5 has-data-[icon=inline-start]:pl-1.5 [&_svg:not([class*='size-'])]:size-3.5",
         lg: 'h-9 gap-1.5 px-2.5 has-data-[icon=inline-end]:pr-2 has-data-[icon=inline-start]:pl-2',
         icon: 'p-1.5',
-        'icon-xs':
-          "size-6 rounded-[min(var(--radius-md),10px)] in-data-[slot=button-group]:rounded-lg [&_svg:not([class*='size-'])]:size-3",
-        'icon-sm':
-          'size-7 rounded-[min(var(--radius-md),12px)] in-data-[slot=button-group]:rounded-lg',
+        'icon-xs': "size-6 [&_svg:not([class*='size-'])]:size-3",
+        'icon-sm': 'size-7',
         'icon-lg': 'size-9',
       },
     },
@@ -48,6 +46,8 @@
     WithElementRef<HTMLAnchorAttributes> & {
       variant?: ButtonVariant;
       size?: ButtonSize;
+      /** Swaps the label for a spinner without changing the button's width. */
+      loading?: boolean;
     };
 </script>
 
@@ -60,10 +60,24 @@
     href = undefined,
     type = 'button',
     disabled,
+    loading = false,
     children,
     ...restProps
   }: ButtonProps = $props();
 </script>
+
+{#snippet content()}
+  {#if loading}
+    <span class="contents invisible">{@render children?.()}</span>
+    <span class="absolute inset-0 grid place-items-center" aria-hidden="true">
+      <span
+        class="size-4 animate-spin rounded-full border-2 border-current/30 border-t-current motion-reduce:animate-pulse"
+      ></span>
+    </span>
+  {:else}
+    {@render children?.()}
+  {/if}
+{/snippet}
 
 {#if href}
   <a
@@ -76,17 +90,22 @@
     tabindex={disabled ? -1 : undefined}
     {...restProps}
   >
-    {@render children?.()}
+    {@render content()}
   </a>
 {:else}
   <button
     bind:this={ref}
     data-slot="button"
-    class={cn(buttonVariants({ variant, size }), className)}
+    class={cn(
+      buttonVariants({ variant, size }),
+      loading && 'relative disabled:opacity-100!',
+      className,
+    )}
     {type}
-    {disabled}
+    disabled={disabled || loading}
+    aria-busy={loading || undefined}
     {...restProps}
   >
-    {@render children?.()}
+    {@render content()}
   </button>
 {/if}

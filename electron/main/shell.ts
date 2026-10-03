@@ -1,6 +1,3 @@
-/** Environment variables scripts and terminals get for their workspace. */
-export type WorkspaceEnvironment = Record<string, string>;
-
 export function isWindows() {
   return process.platform === 'win32';
 }

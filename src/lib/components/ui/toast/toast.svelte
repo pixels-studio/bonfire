@@ -31,6 +31,19 @@
           <Info class="mt-0.5 size-4 shrink-0" />
         {/if}
         <p class="text-sm">{item.text}</p>
+        {#if item.action}
+          {@const { label, run } = item.action}
+          <button
+            type="button"
+            class="-my-0.5 shrink-0 rounded-md px-1.5 py-0.5 text-sm font-medium whitespace-nowrap text-brand outline-none hover:bg-foreground/10 focus-visible:ring-2 focus-visible:ring-ring/60"
+            onclick={() => {
+              dismissToast(item.id);
+              run();
+            }}
+          >
+            {label}
+          </button>
+        {/if}
       </div>
     {/each}
   </div>

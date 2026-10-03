@@ -11,6 +11,7 @@ import type {
   SDKAssistantMessage,
   SDKMessage,
   SDKUserMessage,
+  SpawnOptions,
 } from '@anthropic-ai/claude-agent-sdk';
 import type {
   ConversationMessage,
@@ -32,6 +33,7 @@ import {
 import { Cached } from './cached';
 import { Channel } from './channel';
 import { claudeLimits } from './limits';
+import type { Machine } from './machines';
 import { clipOutput, partialToolInput, toolInput } from './tool-text';
 
 const execFileAsync = promisify(execFile);
@@ -94,10 +96,10 @@ export class ClaudeAssistant extends ChatAssistant {
   }
 
   protected async run(turn: Turn) {
-    const { pane, session, input, attachments, controller } = turn;
+    const { pane, project, machine, input, attachments, controller } = turn;
     const { claudeOutputStyle } = this.store.preferences;
     const options: Options = {
-      cwd: session.worktreePath,
+      cwd: project.path,
       resume: pane.threadId || undefined,
       ...modelOptions(input.model),
       thinking: THINKING[input.reasoningEffort],
@@ -112,6 +114,9 @@ export class ClaudeAssistant extends ChatAssistant {
         this.authorize(turn, tool, toolArguments, details),
       abortController: controller,
       includePartialMessages: true,
+      spawnClaudeCodeProcess: machine.remote
+        ? (spawn) => spawnRemote(machine, spawn)
+        : undefined,
     };
     const { query } = await import('@anthropic-ai/claude-agent-sdk');
     // Interrupting, steering, and permission callbacks all need streaming input. The
@@ -548,6 +553,39 @@ function claudeExecutable() {
     }
   return 'claude';
 }
+
+/**
+ * Runs the `claude` installed on a remote machine with the arguments the SDK chose. Only
+ * the variables the SDK set are passed on; the rest of this computer's environment
+ * doesn't belong there.
+ */
+function spawnRemote(
+  machine: Machine,
+  { args, cwd, env, signal }: SpawnOptions,
+) {
+  // A JavaScript build of the CLI comes as a script argument to node.
+  const cliArgs = /\.m?js$/.test(args[0] ?? '') ? args.slice(1) : args;
+  const added = Object.fromEntries(
+    Object.entries(env).filter(
+      (entry): entry is [string, string] =>
+        entry[1] !== undefined &&
+        entry[1] !== process.env[entry[0]] &&
+        !LOCAL_ONLY_VARIABLES.has(entry[0]),
+    ),
+  );
+  const child = machine.spawn('claude', cliArgs, { cwd, env: added });
+  signal.addEventListener('abort', () => child.kill(), { once: true });
+  return child;
+}
+
+/** Variables that describe this computer and would mislead a remote CLI. */
+const LOCAL_ONLY_VARIABLES = new Set([
+  'PATH',
+  'HOME',
+  'PWD',
+  'SHELL',
+  'TMPDIR',
+]);
 
 /** Keeps the model aliases (opus, sonnet, …) and offers the 1M-context Sonnet beside Sonnet. */
 export function modelList(models: ModelInfo[]): ModelOption[] {

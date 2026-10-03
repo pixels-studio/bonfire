@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { afterEach, test } from 'node:test';
 import type { AssistantEvent } from '../shared/contracts';
 import { CodexAssistant } from '../electron/main/codex';
+import { SshMachine } from '../electron/main/machines';
 import { fakeStore, host, sendInput, sleep } from './helpers';
 
 const FIXTURE = join(process.cwd(), 'test/fixtures/fake-codex.mjs');
@@ -290,4 +291,31 @@ test('text is generated on an ephemeral thread', async () => {
     '"Fix the login flow."',
   );
   assert.equal(pane.messages.length, 0);
+});
+
+test('a workspace on an SSH machine gets a Codex server of its own there', async () => {
+  const { pane, store } = fakeStore('codex');
+  const machine = new SshMachine(
+    { id: crypto.randomUUID(), name: 'Box', host: 'dev@box', auth: 'default' },
+    join(process.cwd(), 'test/fixtures/fake-ssh.sh'),
+  );
+  const started: string[] = [];
+  const assistant = new CodexAssistant(
+    store,
+    () => {},
+    { ...host, machineOf: () => machine },
+    (target) => {
+      started.push(target.id);
+      return {
+        file: process.execPath,
+        args: [FIXTURE],
+        machine: target.remote ? target : undefined,
+      };
+    },
+  );
+  open.push(assistant);
+  await assistant.send(sendInput('hello'));
+  assert.equal(pane.messages.find((item) => item.id === 'a1')?.text, 'Hello!');
+  await assistant.models();
+  assert.deepEqual(started, [machine.id, 'local']);
 });

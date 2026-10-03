@@ -16,7 +16,7 @@ import type { Store } from '../electron/main/persistence';
 export function fakeStore(type: 'claude' | 'codex') {
   const pane: Pane = {
     id: 'pane',
-    sessionId: 'session',
+    projectId: 'project',
     type,
     title: 'Test',
     messages: [],
@@ -25,11 +25,10 @@ export function fakeStore(type: 'claude' | 'codex') {
     approvals: 'auto',
     archived: false,
   };
-  const session = {
-    id: 'session',
-    projectId: 'project',
-    title: 'Test',
-    worktreePath: process.cwd(),
+  const project = {
+    id: 'project',
+    name: 'Test',
+    path: process.cwd(),
     createdAt: 0,
     lastOpenedAt: 0,
   };
@@ -39,7 +38,7 @@ export function fakeStore(type: 'claude' | 'codex') {
     save() {},
     flush() {},
     pane: () => pane,
-    session: () => session,
+    project: () => project,
   } as unknown as Store;
   return { pane, store };
 }

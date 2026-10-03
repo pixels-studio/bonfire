@@ -1,6 +1,7 @@
 import type { Pane } from '../../shared/contracts';
 import * as git from './git';
 import type { GitHub } from './github';
+import type { Place } from './machines';
 import type { Store } from './persistence';
 
 const CHECK_INTERVAL_MS = 60_000;
@@ -10,8 +11,8 @@ export type MergeWatcherOptions = {
   github: Pick<GitHub, 'lastMerge'>;
   /** Whether the pane is mid-turn; those are left alone until they finish. */
   isBusy: (paneId: string) => boolean;
-  /** Whether the pane's project archives on merge; the app-wide preference by default. */
-  enabled?: (pane: Pane) => boolean;
+  /** Where a project's folder is; a path on this computer by default. */
+  place?: (projectId: string) => Place;
   archive: (paneIds: string[]) => void;
 };
 
@@ -59,34 +60,38 @@ export class MergeWatcher {
     const {
       store,
       isBusy,
-      enabled = () => store.preferences.archiveOnMerge,
+      place = (projectId) => store.project(projectId).path,
     } = this.options;
+    if (!store.preferences.archiveOnMerge) return [];
     const groups = new Map<
       string,
-      { cwd: string; branch: string; panes: Pane[] }
+      { projectId: string; cwd: Place; branch: string; panes: Pane[] }
     >();
     for (const pane of store.state.panes) {
       if (
         pane.archived ||
         !pane.workBranch ||
-        !pane.sessionId ||
-        isBusy(pane.id) ||
-        !enabled(pane)
+        !pane.projectId ||
+        isBusy(pane.id)
       )
         continue;
-      const cwd = store.session(pane.sessionId).worktreePath;
       const branch = pane.workBranch.name;
-      const key = `${cwd}\0${branch}`;
-      const group = groups.get(key) ?? { cwd, branch, panes: [] };
+      const key = `${pane.projectId}\0${branch}`;
+      const group = groups.get(key) ?? {
+        projectId: pane.projectId,
+        cwd: place(pane.projectId),
+        branch,
+        panes: [],
+      };
       group.panes.push(pane);
       groups.set(key, group);
     }
     const defaults = new Map<string, string | undefined>();
     const watched = [];
     for (const group of groups.values()) {
-      if (!defaults.has(group.cwd))
-        defaults.set(group.cwd, await git.defaultBranch(group.cwd));
-      if (group.branch !== defaults.get(group.cwd)) watched.push(group);
+      if (!defaults.has(group.projectId))
+        defaults.set(group.projectId, await git.defaultBranch(group.cwd));
+      if (group.branch !== defaults.get(group.projectId)) watched.push(group);
     }
     return watched;
   }

@@ -8,7 +8,7 @@ import type { Store } from '../electron/main/persistence';
 function pane(id: string, branch: string, since: number): Pane {
   return {
     id,
-    sessionId: 'session',
+    projectId: 'project',
     type: 'claude',
     title: id,
     messages: [],
@@ -35,7 +35,7 @@ function watcher({
   const store = {
     state: { panes },
     preferences: { ...DEFAULT_PREFERENCES, archiveOnMerge },
-    session: () => ({ worktreePath: '/nonexistent-repository' }),
+    project: () => ({ path: '/nonexistent-repository' }),
   } as unknown as Store;
   const merges = new MergeWatcher({
     store,

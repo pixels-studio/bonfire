@@ -1,5 +1,12 @@
 export type ToastVariant = 'info' | 'error';
-export type Toast = { id: string; text: string; variant: ToastVariant };
+/** A button on the toast; using it dismisses the toast. */
+export type ToastAction = { label: string; run: () => void };
+export type Toast = {
+  id: string;
+  text: string;
+  variant: ToastVariant;
+  action?: ToastAction;
+};
 
 export const toasts = $state<Toast[]>([]);
 
@@ -13,10 +20,11 @@ export function toast(
   {
     variant = 'info',
     duration = 5000,
-  }: { variant?: ToastVariant; duration?: number } = {},
+    action,
+  }: { variant?: ToastVariant; duration?: number; action?: ToastAction } = {},
 ) {
   const id = crypto.randomUUID();
-  toasts.push({ id, text, variant });
+  toasts.push({ id, text, variant, action });
   if (duration > 0) setTimeout(() => dismissToast(id), duration);
   return id;
 }

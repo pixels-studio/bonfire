@@ -4,7 +4,9 @@
   import ChevronDown from '@lucide/svelte/icons/chevron-down';
   import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
   import Icon from '$lib/components/icon/icon.svelte';
+  import { connections } from '$lib/stores/connections.svelte';
   import type { Project } from '$shared/contracts';
+  import { projectLocation } from '$shared/domain';
 
   let {
     projects,
@@ -12,7 +14,6 @@
     side = 'bottom',
     onselect,
     onadd,
-    onsettings,
     onremove,
   }: {
     projects: Project[];
@@ -21,9 +22,15 @@
     onselect: (id: string) => void;
     onadd: () => void;
     /** Shows per-project actions when given; without it the picker only picks. */
-    onsettings?: (id: string) => void;
     onremove?: (id: string) => void;
   } = $props();
+
+  /** Stable pseudo-random hue per project so each folder keeps its color. */
+  function folderColor(id: string) {
+    let hash = 0;
+    for (const char of id) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
+    return `color: oklch(0.72 0.15 ${hash % 360})`;
+  }
 
   let menuOpen = $state(false);
   let favicons = $state<Record<string, string | null>>({});
@@ -43,16 +50,20 @@
 
 {#snippet favicon(project?: Project)}
   {@const src = project && favicons[project.id]}
-  <span
-    class="grid size-4 shrink-0 place-items-center overflow-hidden rounded bg-brand text-white"
-    aria-hidden="true"
-  >
-    {#if src}
+  {#if src}
+    <span
+      class="grid size-4 shrink-0 place-items-center overflow-hidden rounded"
+      aria-hidden="true"
+    >
       <img class="size-full object-cover" {src} alt="" />
-    {:else}
-      <Icon name="project" class="size-3" />
-    {/if}
-  </span>
+    </span>
+  {:else}
+    <Icon
+      name={project?.connectionId ? 'folder-remote' : 'folder'}
+      class="shrink-0 text-muted-foreground"
+      style={project && folderColor(project.id)}
+    />
+  {/if}
 {/snippet}
 
 <DropdownMenu.Root bind:open={menuOpen}>
@@ -67,48 +78,51 @@
     <ChevronDown class="size-3.5 shrink-0 text-muted-foreground" />
   </DropdownMenu.Trigger>
   <DropdownMenu.Content align="start" {side} class="w-60">
-    <DropdownMenu.Label>Projects</DropdownMenu.Label>
     {#each projects as project (project.id)}
       <DropdownMenu.Item class="gap-2" onclick={() => onselect(project.id)}>
         {@render favicon(project)}
-        <span class="truncate">{project.name}</span>
-        {#if onsettings || onremove}
-          <DropdownMenu.Root>
-            <DropdownMenu.Trigger>
-              {#snippet child({ props })}
-                <button
-                  {...props}
-                  type="button"
-                  class="-my-0.5 -mr-0.5 ml-auto grid size-6 shrink-0 place-items-center rounded-md text-muted-foreground opacity-0 group-hover/dropdown-menu-item:opacity-100 group-data-highlighted/dropdown-menu-item:opacity-100 hover:bg-muted hover:text-foreground aria-expanded:opacity-100"
-                  aria-label={`Actions for ${project.name}`}
-                  onclick={(event) => event.stopPropagation()}
-                >
-                  <Icon name="dots" class="size-4" />
-                </button>
-              {/snippet}
-            </DropdownMenu.Trigger>
-            <DropdownMenu.Content align="end">
-              {#if onsettings}
-                <DropdownMenu.Item
-                  onclick={() => {
-                    menuOpen = false;
-                    onsettings(project.id);
-                  }}
-                >
-                  <Icon name="settings" /> Settings
-                </DropdownMenu.Item>
-              {/if}
-              {#if onremove}
+        <span class="min-w-0 flex-1 truncate">{project.name}</span>
+        <div class="flex min-w-0 shrink-0 items-center gap-3">
+          {#if project.connectionId}
+            <span
+              class="flex max-w-24 min-w-0 shrink items-center gap-1 text-xs text-muted-foreground"
+              title={`On ${projectLocation(project, connections.all)}`}
+            >
+              <Icon name="server" class="size-3 shrink-0" />
+              <span class="truncate">
+                {projectLocation(project, connections.all)}
+              </span>
+            </span>
+          {/if}
+          {#if onremove}
+            <DropdownMenu.Root>
+              <DropdownMenu.Trigger>
+                {#snippet child({ props })}
+                  <button
+                    {...props}
+                    type="button"
+                    class="-my-0.5 -mr-0.5 grid size-6 shrink-0 place-items-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground aria-expanded:bg-muted aria-expanded:text-foreground"
+                    aria-label={`Actions for ${project.name}`}
+                    onclick={(event) => event.stopPropagation()}
+                  >
+                    <Icon name="dots" class="size-4" />
+                  </button>
+                {/snippet}
+              </DropdownMenu.Trigger>
+              <DropdownMenu.Content align="end">
                 <DropdownMenu.Item
                   variant="destructive"
-                  onclick={() => onremove(project.id)}
+                  onclick={() => {
+                    menuOpen = false;
+                    onremove(project.id);
+                  }}
                 >
                   <Icon name="trash" /> Remove
                 </DropdownMenu.Item>
-              {/if}
-            </DropdownMenu.Content>
-          </DropdownMenu.Root>
-        {/if}
+              </DropdownMenu.Content>
+            </DropdownMenu.Root>
+          {/if}
+        </div>
       </DropdownMenu.Item>
     {/each}
     <DropdownMenu.Separator />

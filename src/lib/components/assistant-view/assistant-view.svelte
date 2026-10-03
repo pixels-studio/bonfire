@@ -4,7 +4,7 @@
   import Icon from '$lib/components/icon/icon.svelte';
   import RequestView from '../conversation/request-view.svelte';
   import TurnView from '../conversation/turn-view.svelte';
-  import AssistantHeader from './assistant-header.svelte';
+  import PaneHeader from '$lib/components/pane-header/pane-header.svelte';
   import Composer from './composer.svelte';
   import ContextUsage from './context-usage.svelte';
   import EffortPicker from './effort-picker.svelte';
@@ -20,8 +20,7 @@
     isDefaultTitle,
     titleFrom,
   } from '$shared/domain';
-  import type { PaneSize } from '$lib/panes';
-  import type { HTMLButtonAttributes } from 'svelte/elements';
+  import type { PaneProps } from '$lib/panes';
   import { toast } from '$lib/stores/toast.svelte';
   import type {
     AssistantEvent,
@@ -38,23 +37,16 @@
 
   let {
     pane,
+    provider,
     dragHandle,
     onclose,
     onresize,
-    onswitchprovider,
-    onretype,
-  }: {
+  }: PaneProps & {
     pane: Pane;
-    dragHandle: HTMLButtonAttributes;
-    onclose: () => void;
-    onresize: (size: PaneSize) => void;
-    onswitchprovider: (provider: AssistantProvider, model: string) => void;
-    onretype: (provider: AssistantProvider, model: string) => void;
+    /** The agent the conversation is with; the composer offers its models. */
+    provider: AssistantProvider;
   } = $props();
 
-  const provider = $derived<AssistantProvider>(
-    pane.type === 'claude' ? 'claude' : 'codex',
-  );
   const providerLabel = $derived(PROVIDER_LABELS[provider]);
 
   let messages = $state<ConversationMessage[]>(
@@ -88,6 +80,8 @@
   });
   /** The feed's vertical padding (`pt-6` + `pb-7`), excluded from the latest turn's height. */
   const FEED_PADDING = 52;
+  /** Space kept above a new prompt when it is scrolled to the top (`scroll-mt-6`). */
+  const TURN_MARGIN = 24;
   const contextWindow = $derived(
     usage?.contextWindow ??
       catalog.find(model)?.contextWindow ??
@@ -126,8 +120,12 @@
     if (index === -1) messages.push(message);
     else messages[index] = message;
     // Only a new prompt moves the feed; replies fill the space below it.
+    // Scrolls the feed alone: `scrollIntoView` would also scroll the page, pushing the header off-screen.
     if (index === -1 && message.role === 'user')
-      void tick().then(() => latest?.scrollIntoView({ block: 'start' }));
+      void tick().then(() => {
+        if (feed && latest)
+          feed.scrollTo({ top: latest.offsetTop - TURN_MARGIN });
+      });
   }
 
   /** Adds streamed text to a message in place, so a long reply isn't re-sent whole. */
@@ -257,13 +255,7 @@
   }
 
   function changeModel(next: string) {
-    const target = catalog.find(next);
-    if (!target || next === model) return;
-    if (target.provider !== provider) {
-      if (messages.length) onswitchprovider(target.provider, next);
-      else onretype(target.provider, next);
-      return;
-    }
+    if (next === model) return;
     model = next;
     if (messages.length)
       toast(
@@ -296,7 +288,14 @@
 </script>
 
 <Card.Root class="h-full min-w-0">
-  <AssistantHeader {title} {dragHandle} {onresize} {onclose} />
+  <PaneHeader
+    {title}
+    icon={provider}
+    menuLabel="Conversation options"
+    {dragHandle}
+    {onresize}
+    {onclose}
+  />
 
   <p class="sr-only" role="status">{announcement}</p>
 
@@ -317,7 +316,7 @@
           <!-- The latest turn fills the feed so a new prompt can sit at the top. -->
           <div
             bind:this={latest}
-            class="flex scroll-mt-6 flex-col gap-6"
+            class="flex flex-col gap-6"
             style:min-height={`${Math.max(0, feedHeight - FEED_PADDING)}px`}
           >
             <div bind:this={latestContent} class="flex flex-col gap-6">
@@ -372,7 +371,7 @@
         {running}
         onsend={send}
       >
-        <ModelSelect value={model} onchange={changeModel} />
+        <ModelSelect {provider} value={model} onchange={changeModel} />
         <EffortPicker bind:value={effort} />
         <ContextUsage {usage} {contextWindow} />
       </Composer>
