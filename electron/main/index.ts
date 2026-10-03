@@ -98,8 +98,11 @@ async function createWindow() {
     minHeight: 550,
     backgroundColor: '#111111',
     title: 'Bonfire',
-    // The header draws its own window controls, so every platform looks alike.
-    frame: false,
+    // On macOS the native traffic lights sit over the header; elsewhere the
+    // regular frame is kept so the window keeps its native controls.
+    ...(process.platform === 'darwin'
+      ? { titleBarStyle: 'hidden', trafficLightPosition: { x: 16, y: 20 } }
+      : {}),
     webPreferences: {
       preload: join(__dirname, '../preload/index.cjs'),
       contextIsolation: true,
@@ -184,20 +187,6 @@ app
       openUrl: (url) => shell.openExternal(url),
       copyText: (text) => clipboard.writeText(text),
       isFullscreen: () => mainWindow.isFullScreen(),
-      windowControls: {
-        minimize: () => {
-          // macOS ignores minimize() while fullscreen, so leave fullscreen first.
-          if (!mainWindow.isFullScreen()) return mainWindow.minimize();
-          // Minimizing inside the event itself is ignored, so wait a beat.
-          mainWindow.once('leave-full-screen', () =>
-            setTimeout(() => mainWindow.minimize(), 100),
-          );
-          mainWindow.setFullScreen(false);
-        },
-        toggleFullscreen: () =>
-          mainWindow.setFullScreen(!mainWindow.isFullScreen()),
-        close: () => mainWindow.close(),
-      },
       notify,
       power: {
         start: () => powerSaveBlocker.start('prevent-app-suspension'),

@@ -97,7 +97,9 @@
     term = new Terminal({
       fontSize: 13,
       fontFamily: '"SFMono-Regular", Menlo, monospace',
-      theme: { background: '#1a1a1a', foreground: '#dedede' },
+      // Transparent, so the pane's own (accent-tinted) background shows through.
+      allowTransparency: true,
+      theme: { background: '#00000000', foreground: '#dedede' },
       cursorBlink: true,
       scrollback: 10_000,
     });
@@ -137,3 +139,10 @@
   {/if}
   <div class="min-h-0 flex-1" bind:this={host}></div>
 </div>
+
+<style>
+  /* xterm paints its viewport black; let the pane's background show through instead. */
+  :global(.xterm .xterm-viewport) {
+    background-color: transparent !important;
+  }
+</style>

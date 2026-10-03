@@ -207,7 +207,7 @@
               {...props}
               variant="secondary"
               size="icon"
-              aria-label="Add image"
+              aria-label="Add attachment"
               disabled={!canAttach}
               onclick={pickAttachment}
             >
@@ -215,7 +215,7 @@
             </Button>
           {/snippet}
         </Tooltip.Trigger>
-        <Tooltip.Content>Add image</Tooltip.Content>
+        <Tooltip.Content>Add attachment</Tooltip.Content>
       </Tooltip.Root>
       {#if running}
         <Button

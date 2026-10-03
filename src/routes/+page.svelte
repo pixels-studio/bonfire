@@ -343,9 +343,15 @@
     );
   }
 
+  // The native traffic lights sit in the top-left except in full screen.
+  let fullscreen = $state(false);
+  const trafficLightInset = $derived(isMac() && !fullscreen);
+
   onMount(() => {
     if (!window.bonfire) return;
+    window.bonfire.app.isFullscreen().then((value) => (fullscreen = value));
     const subscriptions = [
+      window.bonfire.app.onFullscreenChange((value) => (fullscreen = value)),
       window.bonfire.assistant.onEvent(handleAssistantEvent),
       // A clicked notification brings its pane into view.
       window.bonfire.app.onFocusPane(scrollToPane),
@@ -432,9 +438,14 @@
 {/snippet}
 
 <div class="flex h-screen">
-  <AppRail bind:panel onhelp={() => window.bonfire.navigation.help()} />
+  <AppRail
+    bind:panel
+    {trafficLightInset}
+    onhelp={() => window.bonfire.navigation.help()}
+  />
   <div class="flex min-w-0 flex-1 flex-col">
     <AppHeader
+      {trafficLightInset}
       onaddPane={() => addPane()}
       panes={panes.map(({ id }) => ({
         id,

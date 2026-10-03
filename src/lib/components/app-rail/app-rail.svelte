@@ -17,10 +17,13 @@
   let {
     panel = $bindable(),
     onhelp,
+    trafficLightInset = false,
   }: {
     /** The panel open ahead of the panes, if any. */
     panel?: AppPanel;
     onhelp: () => void;
+    /** Drops the logo below the native window controls. */
+    trafficLightInset?: boolean;
   } = $props();
 
   const BUTTON_CLASS = 'text-muted-foreground hover:text-foreground';
@@ -31,7 +34,12 @@
   aria-label="App"
 >
   <div class="app-drag grid h-13 w-full place-content-center">
-    <img src="/logo.svg" alt="Bonfire" class="size-6" draggable="false" />
+    <img
+      src="/logo.svg"
+      alt="Bonfire"
+      class={cn('size-6', trafficLightInset && 'translate-y-[55px]')}
+      draggable="false"
+    />
   </div>
   <div class="flex flex-col items-center gap-3">
     <Tooltip.Root>
