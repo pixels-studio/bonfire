@@ -2,9 +2,15 @@ import type {
   AssistantEvent,
   ModelOption,
   Pane,
+  ProviderAccount,
   ProviderLimits,
 } from '../shared/contracts';
-import { ChatAssistant, type Turn } from '../electron/main/assistant';
+import { DEFAULT_PREFERENCES } from '../shared/domain';
+import {
+  ChatAssistant,
+  type AssistantHost,
+  type Turn,
+} from '../electron/main/assistant';
 import type { Store } from '../electron/main/persistence';
 
 export function fakeStore(type: 'claude' | 'codex') {
@@ -16,6 +22,7 @@ export function fakeStore(type: 'claude' | 'codex') {
     messages: [],
     model: '',
     reasoningEffort: 'medium',
+    approvals: 'auto',
     archived: false,
   };
   const session = {
@@ -28,6 +35,7 @@ export function fakeStore(type: 'claude' | 'codex') {
   };
   const store = {
     state: { settings: {} },
+    preferences: { ...DEFAULT_PREFERENCES },
     save() {},
     flush() {},
     pane: () => pane,
@@ -43,8 +51,14 @@ export function sendInput(text = 'hi') {
     attachmentIds: [],
     model: '',
     reasoningEffort: 'medium' as const,
+    approvals: 'auto' as const,
   };
 }
+
+export const host: AssistantHost = {
+  chooseImage: async () => undefined,
+  openUrl: async () => {},
+};
 
 export const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -63,6 +77,13 @@ export class ScriptedAssistant extends ChatAssistant {
   protected async readLimits(): Promise<ProviderLimits> {
     return { provider: 'claude', windows: [] };
   }
+  protected async readAccount(): Promise<ProviderAccount> {
+    return { provider: 'claude', signedIn: true };
+  }
+  protected async signIn() {}
+  protected async complete(prompt: string) {
+    return prompt;
+  }
   // Exposes the protected helpers a provider would use.
   tools = {
     publish: this.publish.bind(this),
@@ -79,7 +100,7 @@ export function scripted(type: 'claude' | 'codex' = 'claude') {
   const assistant = new ScriptedAssistant(
     store,
     (event) => events.push(event),
-    async () => undefined,
+    host,
   );
   return { assistant, pane, events };
 }

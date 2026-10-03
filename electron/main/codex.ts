@@ -1,19 +1,26 @@
+import { tmpdir } from 'node:os';
 import type {
   AssistantEvent,
   ModelOption,
+  ProviderAccount,
   ProviderLimits,
   Question,
 } from '../../shared/contracts';
 import { errorMessage } from '../../shared/domain';
 import {
   ChatAssistant,
-  type ChooseImage,
+  attachedText,
+  type AssistantHost,
+  type PendingAttachment,
+  type Prompt,
   type RequestAnswer,
   type Turn,
 } from './assistant';
 import { displayCommand, messageFromItem, planMessage } from './codex-items';
 import type {
+  CodexAccount,
   CommandApprovalDecision,
+  LoginCompleted,
   ModelEntry,
   RequestId,
   ThreadItem,
@@ -46,6 +53,13 @@ type Run = {
   silence?: NodeJS.Timeout;
 };
 
+/** A one-off completion on an ephemeral thread. */
+type Generation = {
+  text: string;
+  resolve: (text: string) => void;
+  reject: (error: Error) => void;
+};
+
 /**
  * Talks to one long-lived `codex app-server`, which multiplexes conversations as
  * threads. The app server (unlike `codex exec`) streams text deltas, asks the
@@ -55,19 +69,22 @@ export class CodexAssistant extends ChatAssistant {
   protected readonly provider = 'codex';
   private server?: Promise<CodexRpc>;
   private readonly runs = new Map<string, Run>();
+  private readonly generations = new Map<string, Generation>();
+  /** Sign-ins waiting for the browser, keyed by login id. */
+  private readonly logins = new Map<string, (result: LoginCompleted) => void>();
 
   constructor(
     store: Store,
     emit: (event: AssistantEvent) => void,
-    chooseImage: ChooseImage,
+    host: AssistantHost,
     private readonly command: () => CodexCommand = codexCommand,
   ) {
-    super(store, emit, chooseImage);
+    super(store, emit, host);
   }
 
   protected async run(turn: Turn) {
     const { pane, session, input, attachments } = turn;
-    const rpc = await this.connect();
+    const rpc = await this.connection();
     const auto = turn.approvals === 'auto';
     const settings = {
       model: input.model || undefined,
@@ -110,22 +127,24 @@ export class CodexAssistant extends ChatAssistant {
     turn.setInterrupt(() => this.interrupt(run));
     turn.controller.signal.addEventListener('abort', () => this.finish(run));
     this.watch(run);
+    const { codexPersonality } = this.store.preferences;
     try {
       const started = await rpc.request<{ turn: { id: string } }>(
         'turn/start',
         {
           threadId,
-          input: [
-            { type: 'text', text: input.text, text_elements: [] },
-            ...attachments.map(({ path }) => ({ type: 'localImage', path })),
-          ],
+          input: userInput({ text: input.text, attachments }),
           effort: input.reasoningEffort,
           // Without this the model's reasoning isn't summarized, so there is nothing to show.
           summary: 'auto',
+          personality:
+            codexPersonality === 'default' ? undefined : codexPersonality,
         },
       );
       run.turnId ??= started.turn.id;
       if (run.interruptPending) void this.interrupt(run).catch(() => {});
+      else if (!run.finished)
+        turn.setSteer((prompt) => this.steer(run, prompt));
       await finished;
     } finally {
       clearTimeout(run.silence);
@@ -134,7 +153,7 @@ export class CodexAssistant extends ChatAssistant {
   }
 
   protected async listModels(): Promise<ModelOption[]> {
-    const rpc = await this.connect();
+    const rpc = await this.connection();
     const models: ModelOption[] = [];
     let cursor: string | null = null;
     do {
@@ -148,10 +167,103 @@ export class CodexAssistant extends ChatAssistant {
   }
 
   protected async readLimits(): Promise<ProviderLimits> {
-    const rpc = await this.connect();
+    const rpc = await this.connection();
     return codexLimits(
       await rpc.request<CodexRateLimits>('account/rateLimits/read', undefined),
     );
+  }
+
+  protected async readAccount(): Promise<ProviderAccount> {
+    const rpc = await this.connection();
+    const { account } = await rpc.request<{ account: CodexAccount | null }>(
+      'account/read',
+      {},
+    );
+    if (!account) return { provider: 'codex', signedIn: false };
+    if (account.type === 'chatgpt')
+      return {
+        provider: 'codex',
+        signedIn: true,
+        email: account.email ?? undefined,
+        plan: account.planType,
+      };
+    return {
+      provider: 'codex',
+      signedIn: true,
+      plan: account.type === 'apiKey' ? 'API key' : 'Amazon Bedrock',
+    };
+  }
+
+  /** Starts a ChatGPT sign-in, opens it in the browser, and waits for the server to finish it. */
+  protected async signIn(signal: AbortSignal) {
+    const rpc = await this.connection();
+    const { loginId, authUrl } = await rpc.request<{
+      loginId: string;
+      authUrl: string;
+    }>('account/login/start', { type: 'chatgpt' });
+    const completed = new Promise<LoginCompleted>((resolve) =>
+      this.logins.set(loginId, resolve),
+    );
+    const aborted = new Promise<never>((_, reject) =>
+      signal.addEventListener(
+        'abort',
+        () => reject(Error('Sign-in was cancelled.')),
+        { once: true },
+      ),
+    );
+    try {
+      await this.host.openUrl(authUrl);
+      const result = await Promise.race([completed, aborted]);
+      if (!result.success) throw Error(result.error ?? 'Sign-in failed.');
+    } catch (cause) {
+      if (signal.aborted)
+        void rpc.request('account/login/cancel', { loginId }).catch(() => {});
+      throw cause;
+    } finally {
+      this.logins.delete(loginId);
+    }
+  }
+
+  /** Runs the prompt on an ephemeral, read-only thread that isn't saved to the user's history. */
+  protected async complete(prompt: string, model: string, signal: AbortSignal) {
+    const rpc = await this.connection();
+    const { thread } = await rpc.request<{ thread: { id: string } }>(
+      'thread/start',
+      {
+        model,
+        cwd: tmpdir(),
+        ephemeral: true,
+        approvalPolicy: 'never',
+        sandbox: 'read-only',
+      },
+    );
+    try {
+      return await new Promise<string>((resolve, reject) => {
+        this.generations.set(thread.id, { text: '', resolve, reject });
+        const started = rpc.request<{ turn: { id: string } }>('turn/start', {
+          threadId: thread.id,
+          input: userInput({ text: prompt, attachments: [] }),
+        });
+        started.catch(reject);
+        signal.addEventListener(
+          'abort',
+          () => {
+            reject(Error('Codex took too long to generate text'));
+            void started
+              .then(({ turn }) =>
+                rpc.request('turn/interrupt', {
+                  threadId: thread.id,
+                  turnId: turn.id,
+                }),
+              )
+              .catch(() => {});
+          },
+          { once: true },
+        );
+      });
+    } finally {
+      this.generations.delete(thread.id);
+    }
   }
 
   close() {
@@ -162,18 +274,24 @@ export class CodexAssistant extends ChatAssistant {
   }
 
   /** The shared server, started on first use and again if it dies. */
-  private connect(): Promise<CodexRpc> {
+  private connection(): Promise<CodexRpc> {
     if (this.server) return this.server;
     const server: Promise<CodexRpc> = CodexRpc.start(this.command(), {
       onNotification: (method, params) => {
+        if (method === 'account/login/completed')
+          return this.logins.get(params.loginId)?.(params);
         const run = this.runs.get(params?.threadId);
-        if (run) this.notification(run, method, params);
+        if (run) return this.notification(run, method, params);
+        const generation = this.generations.get(params?.threadId);
+        if (generation) generationNotification(generation, method, params);
       },
       onRequest: (id, method, params) =>
         void this.request(id, method, params, server),
       onExit: (error) => {
         if (this.server === server) this.server = undefined;
         for (const run of this.runs.values()) this.fail(run, error);
+        for (const generation of this.generations.values())
+          generation.reject(error);
       },
     });
     // A failed start must not be remembered, or every later turn would fail the same way.
@@ -182,6 +300,14 @@ export class CodexAssistant extends ChatAssistant {
     });
     this.server = server;
     return server;
+  }
+
+  private async steer(run: Run, prompt: Prompt) {
+    await run.rpc.request('turn/steer', {
+      threadId: run.threadId,
+      expectedTurnId: run.turnId,
+      input: userInput(prompt),
+    });
   }
 
   private async interrupt(run: Run) {
@@ -207,12 +333,14 @@ export class CodexAssistant extends ChatAssistant {
   private finish(run: Run) {
     if (run.finished) return;
     run.finished = true;
+    run.turn.setSteer(undefined);
     run.settle.resolve();
   }
 
   private fail(run: Run, error: Error) {
     if (run.finished) return;
     run.finished = true;
+    run.turn.setSteer(undefined);
     run.settle.reject(error);
   }
 
@@ -360,6 +488,37 @@ export class CodexAssistant extends ChatAssistant {
     } catch (cause) {
       rpc.respondError(id, errorMessage(cause));
     }
+  }
+}
+
+function userInput({ text, attachments }: Prompt) {
+  return [
+    { type: 'text', text, text_elements: [] },
+    ...attachments.map((attachment: PendingAttachment) =>
+      attachment.kind === 'image'
+        ? { type: 'localImage', path: attachment.path }
+        : { type: 'text', text: attachedText(attachment), text_elements: [] },
+    ),
+  ];
+}
+
+function generationNotification(
+  generation: Generation,
+  method: string,
+  params: any,
+) {
+  if (method === 'item/completed' && params.item.type === 'agentMessage')
+    generation.text = params.item.text;
+  else if (method === 'turn/completed') {
+    if (params.turn.status === 'completed') generation.resolve(generation.text);
+    else
+      generation.reject(
+        Error(
+          readableError(
+            params.turn.error?.message ?? 'Codex could not generate text',
+          ),
+        ),
+      );
   }
 }
 

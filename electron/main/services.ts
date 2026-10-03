@@ -2,51 +2,178 @@ import { randomUUID } from 'node:crypto';
 import { realpath } from 'node:fs/promises';
 import { basename } from 'node:path';
 import {
+  assistantProvider,
   events,
+  type AssistantEvent,
+  type AssistantProvider,
+  type AssistantSendInput,
   type Backend,
+  type GithubSignInEnd,
   type Pane,
   type PaneType,
+  type Preferences,
   type Project,
   type Session,
 } from '../../shared/contracts';
-import { DEFAULT_TITLE, MAX_PANES, reorderLayout } from '../../shared/domain';
-import type { ChooseImage } from './assistant';
+import {
+  DEFAULT_TITLE,
+  MAX_PANES,
+  PROVIDER_LABELS,
+  errorMessage,
+  isDefaultTitle,
+  reorderLayout,
+  resolvePreferences,
+  titleFrom,
+} from '../../shared/domain';
+import type { AssistantHost } from './assistant';
 import { ClaudeAssistant } from './claude';
 import { CodexAssistant } from './codex';
 import { favicon } from './favicon';
 import { Filesystem } from './filesystem';
 import * as git from './git';
+import { GitHub } from './github';
+import { KeepAwake, type Power } from './keep-awake';
+import { MergeWatcher } from './merge-watcher';
+import { TurnNotifier, type Notice } from './notifier';
 import { Store } from './persistence';
 import { Terminals } from './terminal';
+import { cleanTitle, titlePrompt } from './titles';
 import { TokenUsage } from './token-usage';
 
-export type ServiceOptions = {
+export type ServiceOptions = AssistantHost & {
   dataDirectory: string;
   chooseDirectory: () => Promise<string | undefined>;
-  chooseImage: ChooseImage;
   send: (channel: string, data: unknown) => void;
   openHelp: () => Promise<void>;
   isFullscreen: () => boolean;
+  copyText: (text: string) => void;
+  /** Shows a system notification; the shell decides whether it is worth interrupting for. */
+  notify: (notice: Notice) => void;
+  power: Power;
 };
 
 export function services(options: ServiceOptions) {
   const store = new Store(options.dataDirectory);
   const files = new Filesystem();
   const tokenUsage = new TokenUsage();
+  const github = new GitHub();
   const terminals = new Terminals(store, (event) =>
     options.send(events.terminalData, event),
   );
-  const emitAssistantEvent = (event: unknown) =>
+  const notifier = new TurnNotifier(store, options.notify);
+  const keepAwake = new KeepAwake(
+    () => store.preferences.caffeinate,
+    options.power,
+  );
+  const emitAssistantEvent = (event: AssistantEvent) => {
     options.send(events.assistantEvent, event);
-  const assistants = {
-    claude: new ClaudeAssistant(store, emitAssistantEvent, options.chooseImage),
-    codex: new CodexAssistant(store, emitAssistantEvent, options.chooseImage),
+    notifier.handle(event);
+    keepAwake.handle(event);
   };
-
+  const host: AssistantHost = {
+    chooseImage: options.chooseImage,
+    openUrl: options.openUrl,
+  };
+  const assistants = {
+    claude: new ClaudeAssistant(store, emitAssistantEvent, host),
+    codex: new CodexAssistant(store, emitAssistantEvent, host),
+  };
+  const providerOf = (pane: Pane): AssistantProvider =>
+    pane.type === 'claude' ? 'claude' : 'codex';
   const assistantFor = (paneId: string) =>
-    assistants[store.pane(paneId).type === 'claude' ? 'claude' : 'codex'];
+    assistants[providerOf(store.pane(paneId))];
   const worktree = (sessionId: string) => store.session(sessionId).worktreePath;
   const hasStarted = (pane: Pane) => pane.messages.length > 0;
+
+  const mergeWatcher = new MergeWatcher({
+    store,
+    github,
+    isBusy: (paneId) => assistantFor(paneId).isRunning(paneId),
+    archive: (paneIds) => {
+      for (const id of paneIds) archivePane(store.pane(id));
+      store.save();
+      options.send(events.panesClosed, { paneIds, reason: 'merged' });
+    },
+  });
+  mergeWatcher.start();
+
+  function requireEnabled(provider: AssistantProvider) {
+    if (!store.preferences.providers[provider])
+      throw Error(`${PROVIDER_LABELS[provider]} is turned off in Settings.`);
+  }
+
+  /** The provider and model new panes start with: the chosen default, else the last used. */
+  function startingModel() {
+    const { defaultModel, providers } = store.preferences;
+    if (defaultModel && providers[defaultModel.provider]) return defaultModel;
+    const { lastProvider, lastModels } = store.state.settings;
+    const provider =
+      lastProvider && providers[lastProvider]
+        ? lastProvider
+        : (assistantProvider.options.find((option) => providers[option]) ??
+          'claude');
+    return { provider, model: lastModels?.[provider] ?? '' };
+  }
+
+  function archivePane(pane: Pane) {
+    // An archived pane has no view left to show or answer its turn.
+    if (pane.type !== 'terminal') assistantFor(pane.id).discard(pane.id);
+    pane.archived = true;
+  }
+
+  /** Notes the branch the conversation is about to work on, to spot its pull request merging. */
+  async function recordBranch(pane: Pane) {
+    if (!pane.sessionId) return;
+    const name = await git.currentBranch(worktree(pane.sessionId));
+    if (!name) delete pane.workBranch;
+    else if (pane.workBranch?.name !== name)
+      pane.workBranch = { name, since: Date.now() };
+  }
+
+  /** Replaces the placeholder title taken from the first message with a generated one. */
+  async function nameConversation(pane: Pane, text: string) {
+    const { provider, model } = store.preferences.textModel;
+    if (!store.preferences.providers[provider]) return;
+    const placeholder = titleFrom(text);
+    try {
+      const title = cleanTitle(
+        await assistants[provider].generate(titlePrompt(text), model),
+      );
+      // The send may have failed before starting, or the pane may be gone.
+      if (!title || pane.archived || pane.title !== placeholder) return;
+      pane.title = title;
+      store.save();
+      emitAssistantEvent({ paneId: pane.id, type: 'title', title });
+    } catch (cause) {
+      // The placeholder is a fine title, so a failure is only worth a log line.
+      console.warn(`Could not name a conversation: ${errorMessage(cause)}`);
+    }
+  }
+
+  async function send(input: AssistantSendInput) {
+    const pane = store.pane(input.paneId);
+    const provider = providerOf(pane);
+    const assistant = assistants[provider];
+    if (assistant.isRunning(pane.id)) return assistant.send(input);
+    requireEnabled(provider);
+    const naming = !hasStarted(pane) && isDefaultTitle(pane.title);
+    await recordBranch(pane);
+    const turn = assistant.send(input);
+    if (naming) void nameConversation(pane, input.text);
+    return turn;
+  }
+
+  function updatePreferences(patch: Partial<Preferences>) {
+    const stored = { ...store.state.preferences, ...patch };
+    const { providers } = resolvePreferences(stored);
+    if (!providers.claude && !providers.codex)
+      throw Error('Keep at least one provider turned on.');
+    store.state.preferences = stored;
+    store.save();
+    keepAwake.update();
+    void mergeWatcher.check();
+    return store.preferences;
+  }
 
   async function createSession(project: Project, title: string) {
     const session: Session = {
@@ -86,17 +213,16 @@ export function services(options: ServiceOptions) {
     );
     if (type !== 'terminal' && open.length >= MAX_PANES)
       throw new Error(`You can have up to ${MAX_PANES} panes open.`);
-    const { lastProvider, lastModels } = store.state.settings;
-    const paneType = type ?? lastProvider ?? 'claude';
+    const starting = startingModel();
+    const paneType = type ?? starting.provider;
     const pane: Pane = {
       id: randomUUID(),
       type: paneType,
       title: paneType === 'terminal' ? 'Terminal' : DEFAULT_TITLE,
       messages: [],
-      model:
-        model ??
-        (paneType === 'terminal' ? '' : (lastModels?.[paneType] ?? '')),
+      model: model ?? modelFor(paneType, starting),
       reasoningEffort: 'medium',
+      approvals: store.preferences.approvals,
       archived: false,
     };
     const { lastProjectId } = store.state;
@@ -106,8 +232,43 @@ export function services(options: ServiceOptions) {
     return pane;
   }
 
+  function modelFor(
+    type: PaneType,
+    starting: ReturnType<typeof startingModel>,
+  ) {
+    if (type === 'terminal') return '';
+    if (type === starting.provider) return starting.model;
+    return store.state.settings.lastModels?.[type] ?? '';
+  }
+
   const api: Backend = {
     state: { get: async () => store.state },
+    preferences: {
+      get: async () => store.preferences,
+      update: async (patch) => updatePreferences(patch),
+    },
+    providers: {
+      account: async (provider) => assistants[provider].account(),
+      connect: async (provider) => assistants[provider].connect(),
+      cancelConnect: async (provider) => assistants[provider].cancelConnect(),
+      outputStyles: async () => assistants.claude.outputStyles(),
+    },
+    github: {
+      status: async () => github.status(),
+      connect: async () => {
+        const signIn = await github.signIn(async (error) => {
+          const end: GithubSignInEnd = {
+            status: await github.status(),
+            error: error?.message,
+          };
+          options.send(events.githubSignInEnd, end);
+        });
+        options.copyText(signIn.userCode);
+        await options.openUrl(signIn.verificationUrl);
+        return signIn;
+      },
+      cancelConnect: async () => github.cancelSignIn(),
+    },
     projects: {
       add: async () => {
         const selected = await options.chooseDirectory();
@@ -194,10 +355,7 @@ export function services(options: ServiceOptions) {
         return pane;
       },
       archive: async (id) => {
-        const pane = store.pane(id);
-        // An archived pane has no view left to show or answer its turn.
-        if (pane.type !== 'terminal') assistantFor(id).cancel(id);
-        pane.archived = true;
+        archivePane(store.pane(id));
         store.save();
       },
       reorder: async (ids) => {
@@ -207,13 +365,19 @@ export function services(options: ServiceOptions) {
       },
     },
     assistant: {
-      send: async (input) => assistantFor(input.paneId).send(input),
+      send,
       cancel: async (paneId) => assistantFor(paneId).cancel(paneId),
       respond: async (input) => assistantFor(input.paneId).respond(input),
       snapshot: async (paneId) => assistantFor(paneId).snapshot(paneId),
       models: async (provider) => assistants[provider].models(),
       pickAttachment: async (paneId) =>
         assistantFor(paneId).pickAttachment(paneId),
+      attachText: async (paneId, text) =>
+        assistantFor(paneId).attachText(paneId, text),
+      sendQueued: async (paneId, queuedId) =>
+        assistantFor(paneId).sendQueued(paneId, queuedId),
+      unqueue: async (paneId, queuedId) =>
+        assistantFor(paneId).unqueue(paneId, queuedId),
     },
     tokens: { get: async (range) => tokenUsage.stats(range) },
     limits: { get: async (provider) => assistants[provider].limits() },
@@ -267,6 +431,10 @@ export function services(options: ServiceOptions) {
     api,
     store,
     close: async () => {
+      notifier.close();
+      keepAwake.close();
+      mergeWatcher.close();
+      github.close();
       terminals.close();
       assistants.claude.close();
       assistants.codex.close();

@@ -21,5 +21,9 @@ api.terminal.onData = subscribe(events.terminalData);
 api.assistant.onEvent = subscribe(events.assistantEvent);
 api.filesystem.onChange = subscribe(events.fileChange);
 api.app.onFullscreenChange = subscribe(events.fullscreen);
+api.app.onFocusPane = subscribe(events.focusPane);
+api.app.onNotificationsBlocked = subscribe(events.notificationsBlocked);
+api.panes.onClosed = subscribe(events.panesClosed);
+api.github.onSignInEnd = subscribe(events.githubSignInEnd);
 
 contextBridge.exposeInMainWorld('bonfire', api as unknown as API);

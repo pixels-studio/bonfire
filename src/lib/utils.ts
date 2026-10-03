@@ -22,6 +22,10 @@ export type WithoutChildrenOrChild<T> = WithoutChildren<WithoutChild<T>> & {
   children?: Snippet;
 };
 
+export function isMac() {
+  return /mac/i.test(navigator.userAgent);
+}
+
 export function reducedMotion() {
   return matchMedia('(prefers-reduced-motion: reduce)').matches;
 }

@@ -14,6 +14,8 @@ const ask = (method, params) =>
   });
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const interrupted = new Map();
+/** Turns waiting to be steered, keyed by turn id. */
+const steerable = new Map();
 
 const usage = (threadId, turnId) =>
   notify('thread/tokenUsage/updated', {
@@ -37,7 +39,20 @@ const complete = (threadId, turnId, status = 'completed', error = null) =>
     turn: { id: turnId, items: [], status, error },
   });
 
-async function runTurn(threadId, turnId, text) {
+const agentReply = (threadId, turnId, id, text) => {
+  notify('item/started', {
+    threadId,
+    turnId,
+    item: { id, type: 'agentMessage', text: '' },
+  });
+  notify('item/completed', {
+    threadId,
+    turnId,
+    item: { id, type: 'agentMessage', text },
+  });
+};
+
+async function runTurn(threadId, turnId, text, params) {
   notify('turn/started', {
     threadId,
     turn: { id: turnId, status: 'inProgress' },
@@ -206,6 +221,23 @@ async function runTurn(threadId, turnId, text) {
       }),
     });
     complete(threadId, turnId);
+  } else if (text.startsWith('steerable')) {
+    const steered = new Promise((resolve) => steerable.set(turnId, resolve));
+    agentReply(threadId, turnId, 'w1', 'Waiting to be steered');
+    const steer = await steered;
+    agentReply(threadId, turnId, 'a1', `Steered: ${steer}`);
+    complete(threadId, turnId);
+  } else if (text.startsWith('personality')) {
+    agentReply(
+      threadId,
+      turnId,
+      'a1',
+      `personality:${params.personality ?? 'none set'}`,
+    );
+    complete(threadId, turnId);
+  } else if (text.startsWith('Write a title')) {
+    agentReply(threadId, turnId, 'a1', '"Fix the login flow."');
+    complete(threadId, turnId);
   } else if (text.startsWith('hang')) {
     notify('item/started', {
       threadId,
@@ -287,9 +319,42 @@ createInterface({ input: process.stdin }).on('line', (line) => {
     case 'turn/start': {
       const turnId = `turn-${++counter}`;
       reply({ turn: { id: turnId, status: 'inProgress' } });
-      void runTurn(params.threadId, turnId, params.input[0].text);
+      void runTurn(params.threadId, turnId, params.input[0].text, params);
       return;
     }
+    case 'turn/steer': {
+      const steer = steerable.get(params.expectedTurnId);
+      if (!steer)
+        return write({
+          id,
+          error: { code: -32600, message: 'no active turn' },
+        });
+      steerable.delete(params.expectedTurnId);
+      reply({ turnId: params.expectedTurnId });
+      steer(params.input.map((part) => part.text ?? part.path).join(' | '));
+      return;
+    }
+    case 'account/read':
+      return reply({
+        account: { type: 'chatgpt', email: 'me@example.com', planType: 'plus' },
+        requiresOpenaiAuth: true,
+      });
+    case 'account/login/start':
+      reply({
+        type: 'chatgpt',
+        loginId: 'login-1',
+        authUrl: 'https://auth.example/login',
+      });
+      setTimeout(
+        () =>
+          notify('account/login/completed', {
+            loginId: 'login-1',
+            success: true,
+            error: null,
+          }),
+        20,
+      );
+      return;
     case 'turn/interrupt':
       interrupted.get(params.turnId)?.();
       return reply({});

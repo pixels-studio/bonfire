@@ -1,4 +1,8 @@
-import type { AssistantProvider, ReasoningEffort } from '$shared/contracts';
+import type {
+  ApprovalMode,
+  AssistantProvider,
+  ReasoningEffort,
+} from '$shared/contracts';
 import { PROVIDER_LABELS } from '$shared/domain';
 
 export type Model = {
@@ -62,4 +66,9 @@ export const EFFORT_LEVELS: { value: ReasoningEffort; label: string }[] = [
   { value: 'medium', label: 'Medium' },
   { value: 'high', label: 'High' },
   { value: 'xhigh', label: 'Max' },
+];
+
+export const APPROVAL_MODES: { value: ApprovalMode; label: string }[] = [
+  { value: 'ask', label: 'Ask for approval' },
+  { value: 'auto', label: 'Full access' },
 ];

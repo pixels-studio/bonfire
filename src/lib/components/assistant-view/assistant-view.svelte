@@ -5,6 +5,7 @@
   import RequestView from '../conversation/request-view.svelte';
   import TurnView from '../conversation/turn-view.svelte';
   import Inspector from '../inspector/inspector.svelte';
+  import ApprovalPicker from './approval-picker.svelte';
   import AssistantHeader from './assistant-header.svelte';
   import BranchPicker from './branch-picker.svelte';
   import Composer from './composer.svelte';
@@ -12,6 +13,7 @@
   import EffortPicker from './effort-picker.svelte';
   import ModelSelect from './model-select.svelte';
   import ProjectPicker from './project-picker.svelte';
+  import QueuedPrompts from './queued-prompts.svelte';
   import { DEFAULT_CONTEXT_WINDOWS } from '$lib/models';
   import { catalog } from '$lib/stores/models.svelte';
   import {
@@ -25,13 +27,16 @@
   import type { HTMLButtonAttributes } from 'svelte/elements';
   import { toast } from '$lib/stores/toast.svelte';
   import type {
+    ApprovalMode,
     AssistantEvent,
     AssistantProvider,
     AssistantRequest,
     AssistantRespondInput,
     ConversationMessage,
+    FollowUpMode,
     Pane,
     Project,
+    QueuedPrompt,
     ReasoningEffort,
     Session,
     Usage,
@@ -78,6 +83,7 @@
   let usage = $state<Usage | undefined>(untrack(() => pane.usage));
   let running = $state(false);
   let requests = $state<AssistantRequest[]>([]);
+  let queue = $state<QueuedPrompt[]>([]);
   /** Spoken to screen readers in place of the streaming text, which would be read out token by token. */
   let announcement = $state('');
   let error = $state('');
@@ -87,6 +93,7 @@
     untrack(() => (isDefaultTitle(pane.title) ? DEFAULT_TITLE : pane.title)),
   );
   let effort = $state<ReasoningEffort>(untrack(() => pane.reasoningEffort));
+  let approvals = $state<ApprovalMode>(untrack(() => pane.approvals));
   let model = $state(
     untrack(() => {
       const available = catalog.for(provider);
@@ -171,7 +178,8 @@
           announcement = `${providerLabel} is responding`;
         else if (event.status === 'failed')
           announcement = 'The response failed';
-        else announcement = 'Response complete';
+        else if (event.status === 'completed')
+          announcement = 'Response complete';
         break;
       case 'request':
         if (!requests.some((item) => item.id === event.request.id))
@@ -180,6 +188,12 @@
         break;
       case 'request-resolved':
         requests = requests.filter((item) => item.id !== event.requestId);
+        break;
+      case 'queue':
+        queue = event.queue;
+        break;
+      case 'title':
+        title = event.title;
         break;
     }
   }
@@ -219,22 +233,48 @@
     return () => observer.disconnect();
   });
 
-  async function send(text: string, attachmentIds: string[]) {
+  async function send(
+    text: string,
+    attachmentIds: string[],
+    followUp?: FollowUpMode,
+  ) {
+    const input = {
+      paneId: pane.id,
+      text,
+      attachmentIds,
+      model,
+      reasoningEffort: effort,
+      approvals,
+    };
+    if (followUp) {
+      // Resolves once the message is queued or has joined the running turn.
+      try {
+        await window.bonfire.assistant.send({ ...input, followUp });
+      } catch (cause) {
+        toast(errorMessage(cause), { variant: 'error' });
+        throw cause;
+      }
+      return;
+    }
     error = '';
     running = true;
     following = true;
     if (title === DEFAULT_TITLE) title = titleFrom(text);
     try {
-      await window.bonfire.assistant.send({
-        paneId: pane.id,
-        text,
-        attachmentIds,
-        model,
-        reasoningEffort: effort,
-      });
+      // Resolves when the turn ends; a rejection means it never started.
+      await window.bonfire.assistant.send(input);
     } catch (cause) {
       error = errorMessage(cause);
       running = false;
+      throw cause;
+    }
+  }
+
+  async function runQueued(action: 'sendQueued' | 'unqueue', id: string) {
+    try {
+      await window.bonfire.assistant[action](pane.id, id);
+    } catch (cause) {
+      toast(errorMessage(cause), { variant: 'error' });
     }
   }
 
@@ -266,6 +306,7 @@
         usage = snapshot.usage;
         running = snapshot.running;
         requests = snapshot.requests;
+        queue = snapshot.queue;
         if (grew)
           void tick().then(() =>
             feed?.scrollTo({ top: feed.scrollHeight, behavior: 'instant' }),
@@ -368,6 +409,14 @@
           />
           {#if session}<BranchPicker {session} onswitch={onrefresh} />{/if}
         </div>
+        {#if queue.length}
+          <QueuedPrompts
+            {queue}
+            {running}
+            onsend={(id) => runQueued('sendQueued', id)}
+            onremove={(id) => runQueued('unqueue', id)}
+          />
+        {/if}
         <Composer
           paneId={pane.id}
           label={`Message ${providerLabel}`}
@@ -377,6 +426,7 @@
         >
           <ModelSelect value={model} onchange={changeModel} />
           <EffortPicker bind:value={effort} />
+          <ApprovalPicker bind:value={approvals} />
           <ContextUsage {usage} {contextWindow} />
         </Composer>
       </div>

@@ -78,3 +78,14 @@ export type ModelEntry = {
   displayName: string;
   hidden: boolean;
 };
+
+export type CodexAccount =
+  | { type: 'apiKey' }
+  | { type: 'chatgpt'; email: string | null; planType: string }
+  | { type: 'amazonBedrock' };
+
+export type LoginCompleted = {
+  loginId: string | null;
+  success: boolean;
+  error: string | null;
+};

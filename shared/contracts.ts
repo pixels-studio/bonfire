@@ -31,6 +31,42 @@ export const conversationMessageSchema = z.object({
 });
 
 export const approvalMode = z.enum(['ask', 'auto']);
+/** What a message sent while the agent is running does: wait for the turn to end, or join it. */
+export const followUpMode = z.enum(['queue', 'steer']);
+export const codexPersonality = z.enum([
+  'default',
+  'friendly',
+  'pragmatic',
+  'none',
+]);
+export const modelChoice = z.object({
+  provider: assistantProvider,
+  model: z.string().min(1).max(100),
+});
+
+/** Settings the user chooses. Stored sparsely, so unset fields follow `DEFAULT_PREFERENCES`. */
+export const preferencesSchema = z.object({
+  /** Model for new panes; `null` reuses the last model sent with. */
+  defaultModel: modelChoice.nullable(),
+  /** Whether new panes ask before running tools. */
+  approvals: approvalMode,
+  followUp: followUpMode,
+  /** Model that names conversations. */
+  textModel: modelChoice,
+  /** Pasted text longer than `LONG_TEXT_THRESHOLD` becomes an attachment. */
+  convertLongText: z.boolean(),
+  /** OKLCH hue of the accent color, in degrees. */
+  accentHue: z.number().min(0).max(360),
+  notifications: z.boolean(),
+  completionSound: z.boolean(),
+  providers: z.object({ claude: z.boolean(), codex: z.boolean() }),
+  claudeOutputStyle: z.string().min(1).max(100),
+  codexPersonality,
+  /** Archives a pane once the pull request for its branch is merged, through the `gh` CLI. */
+  archiveOnMerge: z.boolean(),
+  /** Keeps the system awake while a turn runs. */
+  caffeinate: z.boolean(),
+});
 
 /**
  * What currently occupies the context window after the latest model call. The four
@@ -51,7 +87,8 @@ export const attachmentSchema = z.object({
   id,
   name: z.string(),
   size: z.number().int().nonnegative(),
-  previewUrl: z.string(),
+  /** Images only; text attachments have no preview. */
+  previewUrl: z.string().optional(),
 });
 
 export const paneSchema = z.object({
@@ -65,6 +102,10 @@ export const paneSchema = z.object({
   usage: usageSchema.optional(),
   model: z.string().default(''),
   reasoningEffort: reasoningEffort.default('medium'),
+  /** Panes from before permissions were configurable ran unattended. */
+  approvals: approvalMode.default('auto'),
+  /** The branch the conversation last worked on, and since when, to spot its pull request merging. */
+  workBranch: z.object({ name: z.string(), since: z.number() }).optional(),
   archived: z.boolean().default(false),
 });
 
@@ -101,9 +142,12 @@ export const stateSchema = z.object({
       .partial()
       .optional(),
   }),
+  preferences: preferencesSchema.partial().default({}),
 });
 
 const filePath = z.string().max(4096);
+/** The longest text, in characters, that can be attached. */
+export const MAX_TEXT_ATTACHMENT_LENGTH = 1_000_000;
 
 export const assistantSendInput = z.object({
   paneId: id,
@@ -111,6 +155,9 @@ export const assistantSendInput = z.object({
   attachmentIds: z.array(id).max(8).default([]),
   model: z.string().max(100),
   reasoningEffort,
+  approvals: approvalMode,
+  /** How to deliver the message if a turn is already running; without it the send is refused. */
+  followUp: followUpMode.optional(),
 });
 
 export const assistantRespondInput = z.object({
@@ -144,6 +191,25 @@ export type AssistantRespondInput = z.infer<typeof assistantRespondInput>;
 export type ApprovalMode = z.infer<typeof approvalMode>;
 export type TerminalCreateInput = z.infer<typeof terminalCreateInput>;
 export type State = z.infer<typeof stateSchema>;
+export type FollowUpMode = z.infer<typeof followUpMode>;
+export type CodexPersonality = z.infer<typeof codexPersonality>;
+export type ModelChoice = z.infer<typeof modelChoice>;
+export type Preferences = z.infer<typeof preferencesSchema>;
+/** A message waiting for the running turn to end. */
+export type QueuedPrompt = { id: string; text: string; attachments: number };
+/** The signed-in account of a provider's CLI. */
+export type ProviderAccount = {
+  provider: AssistantProvider;
+  signedIn: boolean;
+  email?: string;
+  plan?: string;
+};
+export type GithubStatus =
+  { installed: false } | { installed: true; login?: string };
+/** A GitHub device-flow sign-in waiting for the user to enter the code. */
+export type GithubSignIn = { userCode: string; verificationUrl: string };
+/** How a GitHub sign-in ended: the account gh now uses, and why it failed if it did. */
+export type GithubSignInEnd = { status: GithubStatus; error?: string };
 export type Question = {
   id: string;
   header: string;
@@ -175,15 +241,25 @@ export type AssistantEvent =
       text: string;
     }
   | { paneId: string; type: 'usage'; usage: Usage }
-  | { paneId: string; type: 'status'; status: 'running' | 'idle' | 'failed' }
+  /**
+   * A turn reports `running`, then `completed` or `failed` unless it was stopped, then `idle`.
+   */
+  | {
+      paneId: string;
+      type: 'status';
+      status: 'running' | 'completed' | 'failed' | 'idle';
+    }
   | { paneId: string; type: 'request'; request: AssistantRequest }
-  | { paneId: string; type: 'request-resolved'; requestId: string };
+  | { paneId: string; type: 'request-resolved'; requestId: string }
+  | { paneId: string; type: 'queue'; queue: QueuedPrompt[] }
+  | { paneId: string; type: 'title'; title: string };
 /** The main process's live view of a pane, for a renderer that missed events. */
 export type AssistantSnapshot = {
   running: boolean;
   messages: ConversationMessage[];
   usage?: Usage;
   requests: AssistantRequest[];
+  queue: QueuedPrompt[];
 };
 export type ModelOption = {
   value: string;
@@ -248,10 +324,21 @@ export type TerminalEvent = {
   exitCode?: number;
 };
 export type FileChangeEvent = { sessionId: string; path: string };
+/** Panes the app archived on its own, such as when their pull request merged. */
+export type PanesClosedEvent = { paneIds: string[]; reason: 'merged' };
 
 /** IPC argument schemas, keyed by `group.method`. Every channel is validated in main. */
 export const requests = {
   'state.get': z.tuple([]),
+  'preferences.get': z.tuple([]),
+  'preferences.update': z.tuple([preferencesSchema.partial()]),
+  'providers.account': z.tuple([assistantProvider]),
+  'providers.connect': z.tuple([assistantProvider]),
+  'providers.cancelConnect': z.tuple([assistantProvider]),
+  'providers.outputStyles': z.tuple([]),
+  'github.status': z.tuple([]),
+  'github.connect': z.tuple([]),
+  'github.cancelConnect': z.tuple([]),
   'projects.add': z.tuple([]),
   'projects.remove': z.tuple([id]),
   'projects.favicon': z.tuple([id]),
@@ -265,6 +352,12 @@ export const requests = {
   'panes.reorder': z.tuple([z.array(id).max(100)]),
   'assistant.send': z.tuple([assistantSendInput]),
   'assistant.pickAttachment': z.tuple([id]),
+  'assistant.attachText': z.tuple([
+    id,
+    z.string().min(1).max(MAX_TEXT_ATTACHMENT_LENGTH),
+  ]),
+  'assistant.sendQueued': z.tuple([id, id]),
+  'assistant.unqueue': z.tuple([id, id]),
   'assistant.cancel': z.tuple([id]),
   'assistant.respond': z.tuple([assistantRespondInput]),
   'assistant.snapshot': z.tuple([id]),
@@ -297,12 +390,39 @@ export const events = {
   assistantEvent: 'assistant:event',
   fileChange: 'filesystem:change',
   fullscreen: 'window:fullscreen',
+  focusPane: 'window:focus-pane',
+  notificationsBlocked: 'window:notifications-blocked',
+  panesClosed: 'panes:closed',
+  githubSignInEnd: 'github:sign-in-end',
 } as const;
 
 type Unsubscribe = () => void;
 
 export type API = {
   state: { get(): Promise<State> };
+  preferences: {
+    get(): Promise<Preferences>;
+    /** Saves the given fields and returns the full, resolved preferences. */
+    update(patch: Partial<Preferences>): Promise<Preferences>;
+  };
+  providers: {
+    account(provider: AssistantProvider): Promise<ProviderAccount>;
+    /** Signs in through the browser, replacing the current account; resolves once done. */
+    connect(provider: AssistantProvider): Promise<ProviderAccount>;
+    cancelConnect(provider: AssistantProvider): Promise<void>;
+    /** Output styles Claude offers, built-in and the user's own. */
+    outputStyles(): Promise<string[]>;
+  };
+  github: {
+    status(): Promise<GithubStatus>;
+    /**
+     * Starts a device-flow sign-in; how it ends arrives through `onSignInEnd`. Signing in
+     * as another account adds it to gh and makes it the active one.
+     */
+    connect(): Promise<GithubSignIn>;
+    cancelConnect(): Promise<void>;
+    onSignInEnd(listener: (end: GithubSignInEnd) => void): Unsubscribe;
+  };
   projects: {
     add(): Promise<Project | null>;
     remove(id: string): Promise<void>;
@@ -313,6 +433,7 @@ export type API = {
   };
   panes: {
     add(type?: PaneType, model?: string): Promise<Pane>;
+    onClosed(listener: (event: PanesClosedEvent) => void): Unsubscribe;
     setProject(id: string, projectId: string): Promise<Pane>;
     retype(id: string, type: AssistantProvider, model: string): Promise<Pane>;
     archive(id: string): Promise<void>;
@@ -322,6 +443,10 @@ export type API = {
   assistant: {
     send(input: AssistantSendInput): Promise<void>;
     pickAttachment(paneId: string): Promise<Attachment | null>;
+    attachText(paneId: string, text: string): Promise<Attachment>;
+    /** Sends a queued message now: it steers the running turn, or starts one. */
+    sendQueued(paneId: string, queuedId: string): Promise<void>;
+    unqueue(paneId: string, queuedId: string): Promise<void>;
     cancel(paneId: string): Promise<void>;
     respond(input: AssistantRespondInput): Promise<void>;
     snapshot(paneId: string): Promise<AssistantSnapshot>;
@@ -340,6 +465,10 @@ export type API = {
   app: {
     isFullscreen(): Promise<boolean>;
     onFullscreenChange(listener: (fullscreen: boolean) => void): Unsubscribe;
+    /** A notification for a pane was clicked. */
+    onFocusPane(listener: (paneId: string) => void): Unsubscribe;
+    /** The OS refused a notification; carries the app name to allow in its settings. */
+    onNotificationsBlocked(listener: (appName: string) => void): Unsubscribe;
   };
   terminal: {
     create(input: TerminalCreateInput): Promise<string>;

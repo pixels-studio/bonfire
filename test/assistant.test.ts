@@ -36,6 +36,7 @@ test('streamed text goes out as batched deltas after the first message', async (
     'delta:Hello',
     'delta:!',
     'message:complete:assistant',
+    'status:completed',
     'status:idle',
   ]);
   assert.equal(pane.messages.at(-1)?.text, 'Hello!');

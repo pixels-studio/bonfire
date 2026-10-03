@@ -1,8 +1,11 @@
 import {
   app,
   BrowserWindow,
+  clipboard,
   dialog,
   ipcMain,
+  Notification,
+  powerSaveBlocker,
   protocol,
   net,
   shell,
@@ -11,6 +14,8 @@ import { basename, join, resolve, relative, isAbsolute } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { homedir } from 'node:os';
 import { events, requests } from '../../shared/contracts';
+import { dischargingLevel } from './keep-awake';
+import type { Notice } from './notifier';
 import { services } from './services';
 protocol.registerSchemesAsPrivileged([
   {
@@ -36,6 +41,18 @@ const IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'webp', 'gif'];
 
 let mainWindow: BrowserWindow;
 let backend: ReturnType<typeof services>;
+/** Notifications are held until dismissed, as macOS drops click handlers of collected ones. */
+const shownNotices = new Set<Notification>();
+/** Whether the user has been told the OS is refusing notifications, which is said once. */
+let reportedBlocked = false;
+
+/**
+ * The name the OS lists the app under in its notification settings: the app bundle's,
+ * which during development is Electron's rather than Bonfire's.
+ */
+function bundleName() {
+  return /([^/]+)\.app\//.exec(process.execPath)?.[1] ?? app.getName();
+}
 
 function isTrustedUrl(url: string) {
   const { origin, protocol, hostname } = new URL(url);
@@ -47,6 +64,30 @@ function isTrustedUrl(url: string) {
 function send(channel: string, data: unknown) {
   if (mainWindow && !mainWindow.isDestroyed())
     mainWindow.webContents.send(channel, data);
+}
+
+/** Notifies only while the app is in the background; in front, the pane itself shows it. */
+function notify({ paneId, title, body }: Notice) {
+  if (!Notification.isSupported() || mainWindow.isFocused()) return;
+  const notification = new Notification({ title, body });
+  const release = () => shownNotices.delete(notification);
+  notification.on('click', () => {
+    release();
+    mainWindow.show();
+    mainWindow.focus();
+    send(events.focusPane, paneId);
+  });
+  notification.on('close', release);
+  // macOS refuses silently unless notifications are allowed for the app in System Settings.
+  notification.on('failed', (_event, error) => {
+    release();
+    console.warn(`Notification failed: ${error}`);
+    if (reportedBlocked) return;
+    reportedBlocked = true;
+    send(events.notificationsBlocked, bundleName());
+  });
+  shownNotices.add(notification);
+  notification.show();
 }
 
 async function createWindow() {
@@ -140,7 +181,15 @@ app
       },
       send,
       openHelp: () => shell.openExternal(HELP_URL),
+      openUrl: (url) => shell.openExternal(url),
+      copyText: (text) => clipboard.writeText(text),
       isFullscreen: () => mainWindow.isFullScreen(),
+      notify,
+      power: {
+        start: () => powerSaveBlocker.start('prevent-app-suspension'),
+        stop: (blocker) => powerSaveBlocker.stop(blocker),
+        dischargingLevel,
+      },
     });
     registerIpc();
     await createWindow();

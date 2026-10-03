@@ -11,7 +11,9 @@ import type {
   ConversationMessage,
   ModelOption,
   Pane,
+  ProviderAccount,
   ProviderLimits,
+  QueuedPrompt,
   Session,
   Usage,
 } from '../../shared/contracts';
@@ -22,6 +24,7 @@ import {
   titleFrom,
 } from '../../shared/domain';
 import { readImage, type ImageMimeType } from './attachments';
+import { Cached } from './cached';
 import type { Store } from './persistence';
 import { MAX_TOOL_OUTPUT } from './tool-text';
 
@@ -29,12 +32,23 @@ export type ChooseImage = () => Promise<
   { name: string; path: string } | undefined
 >;
 
-export type PendingAttachment = Attachment & {
-  paneId: string;
-  path: string;
-  mimeType: ImageMimeType;
-  base64: string;
+/** What assistants need from the app shell. */
+export type AssistantHost = {
+  chooseImage: ChooseImage;
+  /** Opens a URL in the user's browser, such as a sign-in page. */
+  openUrl: (url: string) => Promise<void>;
 };
+
+export type PendingAttachment = Attachment & { paneId: string } & (
+    | { kind: 'image'; path: string; mimeType: ImageMimeType; base64: string }
+    | { kind: 'text'; text: string }
+  );
+
+/** A message from the user, as handed to a provider. */
+export type Prompt = { text: string; attachments: PendingAttachment[] };
+
+/** Adds a message to the running turn. */
+export type Steer = (prompt: Prompt) => Promise<void>;
 
 export type Turn = {
   pane: Pane;
@@ -52,6 +66,11 @@ export type Turn = {
    * session stays resumable, and aborts if the provider doesn't wind down.
    */
   setInterrupt(interrupt: () => Promise<void>): void;
+  /**
+   * Registers how to add a message to the turn while it runs, or clears it once the
+   * turn can no longer take one. Without it, messages meant to steer are queued.
+   */
+  setSteer(steer: Steer | undefined): void;
 };
 
 /** What the user decided about a request, or `undefined` if the turn ended first. */
@@ -73,6 +92,11 @@ type MessageStatus = ConversationMessage['status'];
 const FLUSH_DELAY_MS = 24;
 /** How long a graceful interrupt gets before the provider process is killed. */
 const INTERRUPT_GRACE_MS = 5_000;
+/** How long a browser sign-in may take before it is given up. */
+const LOGIN_TIMEOUT_MS = 3 * 60_000;
+/** How long generating a short text, such as a title, may take. */
+const GENERATE_TIMEOUT_MS = 60_000;
+const PASTED_TEXT_NAME = 'Pasted text.txt';
 
 export function assistantMessage(
   id: string,
@@ -83,12 +107,21 @@ export function assistantMessage(
   return { id, role: 'assistant', kind, text, status };
 }
 
+/** Labels pasted text so the model can tell it apart from the message itself. */
+export function attachedText({ name, text }: { name: string; text: string }) {
+  return `<attachment name="${name}">\n${text}\n</attachment>`;
+}
+
 type ActiveTurn = Turn & {
   /** Whether an error for this turn has already been shown. */
   errored: boolean;
   interrupt?: () => Promise<void>;
+  steer?: Steer;
   graceTimer?: NodeJS.Timeout;
 };
+
+/** A follow-up waiting for the running turn to end. */
+type Queued = { id: string; input: AssistantSendInput };
 
 /** What the renderer last received for a streaming message, to work out the next update. */
 type Sent = { text: string; output: string; rest: string };
@@ -96,9 +129,8 @@ type Sent = { text: string; output: string; rest: string };
 /** Shared turn lifecycle for chat providers; subclasses only translate SDK events. */
 export abstract class ChatAssistant {
   protected abstract readonly provider: AssistantProvider;
-  /** Everything runs unattended until there is a setting for it. */
-  approvals: ApprovalMode = 'auto';
   private readonly turns = new Map<string, ActiveTurn>();
+  private readonly queues = new Map<string, Queued[]>();
   private readonly attachments = new Map<string, PendingAttachment>();
   private readonly requests = new Map<
     string,
@@ -115,30 +147,45 @@ export abstract class ChatAssistant {
   >();
   private readonly sent = new Map<string, Sent>();
   private flushTimer?: NodeJS.Timeout;
-  private modelCache?: { at: number; models: ModelOption[] };
-  private modelRequest?: Promise<ModelOption[]>;
-  private limitsCache?: { at: number; limits: ProviderLimits };
-  private limitsRequest?: Promise<ProviderLimits>;
+  private readonly modelList = new Cached(() => this.listModels(), 60_000, {
+    serveStale: true,
+  });
+  private readonly planLimits = new Cached(() => this.readLimits(), 30_000);
+  private readonly signedInAccount = new Cached(
+    () => this.readAccount(),
+    60_000,
+  );
+  private login?: AbortController;
 
   constructor(
-    private readonly store: Store,
+    protected readonly store: Store,
     private readonly emit: (event: AssistantEvent) => void,
-    private readonly chooseImage: ChooseImage,
+    protected readonly host: AssistantHost,
   ) {}
 
   protected abstract run(turn: Turn): Promise<void>;
   protected abstract listModels(): Promise<ModelOption[]>;
   protected abstract readLimits(): Promise<ProviderLimits>;
+  protected abstract readAccount(): Promise<ProviderAccount>;
+  /** Signs in through the browser; rejects if `signal` aborts first. */
+  protected abstract signIn(signal: AbortSignal): Promise<void>;
+  /** One-off completion without tools or conversation history. */
+  protected abstract complete(
+    prompt: string,
+    model: string,
+    signal: AbortSignal,
+  ): Promise<string>;
 
   async pickAttachment(paneId: string): Promise<Attachment | null> {
     this.paneFor(paneId);
-    const file = await this.chooseImage();
+    const file = await this.host.chooseImage();
     if (!file) return null;
     const { size, previewUrl, mimeType, base64 } = await readImage(file.path);
     const attachment = { id: randomUUID(), name: file.name, size, previewUrl };
     this.attachments.set(attachment.id, {
       ...attachment,
       paneId,
+      kind: 'image',
       path: file.path,
       mimeType,
       base64,
@@ -146,92 +193,78 @@ export abstract class ChatAssistant {
     return attachment;
   }
 
-  async send(input: AssistantSendInput) {
-    const pane = this.paneFor(input.paneId);
-    const label = PROVIDER_LABELS[this.provider];
-    if (this.turns.has(pane.id)) throw Error(`${label} is already responding`);
-    if (!pane.sessionId) throw Error('Select a project first');
-    const session = this.store.session(pane.sessionId);
-
-    const attachments = input.attachmentIds.map((id) => {
-      const attachment = this.attachments.get(id);
-      if (attachment?.paneId !== pane.id)
-        throw Error('Attachment is no longer available');
-      return attachment;
-    });
-
-    pane.model = input.model;
-    pane.reasoningEffort = input.reasoningEffort;
-    if (isDefaultTitle(pane.title)) pane.title = titleFrom(input.text);
-    const { settings } = this.store.state;
-    settings.lastProvider = this.provider;
-    settings.lastModels = {
-      ...settings.lastModels,
-      [this.provider]: input.model,
-    };
-
-    for (const { id, name, size, previewUrl } of attachments)
-      this.publish(pane, {
-        id,
-        role: 'user',
-        kind: 'attachment',
-        text: name,
-        status: 'complete',
-        size,
-        previewUrl,
-      });
-    this.publish(pane, {
+  /** Holds pasted text as an attachment, so a long paste doesn't flood the message. */
+  attachText(paneId: string, text: string): Attachment {
+    this.paneFor(paneId);
+    const attachment = {
       id: randomUUID(),
-      role: 'user',
-      kind: 'text',
-      text: input.text,
-      status: 'complete',
-    });
-
-    const turn: ActiveTurn = {
-      pane,
-      session,
-      input,
-      attachments,
-      controller: new AbortController(),
-      approvals: this.approvals,
-      cancelled: false,
-      errored: false,
-      setInterrupt: (interrupt) => (turn.interrupt = interrupt),
+      name: PASTED_TEXT_NAME,
+      size: Buffer.byteLength(text),
     };
-    this.turns.set(pane.id, turn);
-    this.notify({ paneId: pane.id, type: 'status', status: 'running' });
-
-    try {
-      await this.run(turn);
-    } catch (cause) {
-      // A stop isn't a failure, and a failure the provider already showed isn't repeated.
-      if (!turn.cancelled && !turn.controller.signal.aborted && !turn.errored)
-        this.publishError(pane, errorMessage(cause));
-    } finally {
-      clearTimeout(turn.graceTimer);
-      this.denyRequests(pane.id);
-      this.settle(pane, turn.errored);
-      for (const { id } of attachments) this.attachments.delete(id);
-      this.turns.delete(pane.id);
-      this.store.save();
-      if (turn.errored)
-        this.notify({ paneId: pane.id, type: 'status', status: 'failed' });
-      this.notify({ paneId: pane.id, type: 'status', status: 'idle' });
-    }
+    this.attachments.set(attachment.id, {
+      ...attachment,
+      paneId,
+      kind: 'text',
+      text,
+    });
+    return attachment;
   }
 
-  /** Stops the turn: interrupts the provider if it can, otherwise kills it. */
+  /**
+   * Starts a turn and resolves when it ends. While a turn runs, a message marked as a
+   * follow-up steers it or waits in the queue; any other message is refused.
+   */
+  async send(input: AssistantSendInput) {
+    const pane = this.paneFor(input.paneId);
+    const turn = this.turns.get(pane.id);
+    if (!turn) return this.start(pane, input);
+    if (!input.followUp)
+      throw Error(`${PROVIDER_LABELS[this.provider]} is already responding`);
+    // A turn that can't take a message yet, or is winding down, gets it next instead.
+    if (input.followUp === 'steer' && turn.steer && !turn.cancelled)
+      return this.steerTurn(turn, turn.steer, input);
+    this.enqueue(pane, input);
+  }
+
+  /** Sends a queued message now: it steers the running turn, or starts the next one. */
+  async sendQueued(paneId: string, queuedId: string) {
+    const turn = this.turns.get(paneId);
+    if (turn && (!turn.steer || turn.cancelled))
+      throw Error('This response cannot take a message right now.');
+    const input = this.takeQueued(paneId, queuedId);
+    await this.send({ ...input, followUp: 'steer' });
+  }
+
+  unqueue(paneId: string, queuedId: string) {
+    const input = this.takeQueued(paneId, queuedId);
+    for (const id of input.attachmentIds) this.attachments.delete(id);
+  }
+
+  /** Stops the turn: interrupts the provider if it can, otherwise kills it. Queued messages stay. */
   cancel(paneId: string) {
     this.paneFor(paneId);
     const turn = this.turns.get(paneId);
     if (!turn || turn.cancelled) return;
     turn.cancelled = true;
+    turn.steer = undefined;
     this.denyRequests(paneId);
     const kill = () => turn.controller.abort();
     if (!turn.interrupt) return kill();
     turn.graceTimer = setTimeout(kill, INTERRUPT_GRACE_MS);
     turn.interrupt().catch(kill);
+  }
+
+  /** Stops the pane for good, dropping its queue and unsent attachments. */
+  discard(paneId: string) {
+    this.cancel(paneId);
+    this.queues.delete(paneId);
+    for (const [id, attachment] of this.attachments)
+      if (attachment.paneId === paneId) this.attachments.delete(id);
+  }
+
+  /** Whether a turn is running in the pane. */
+  isRunning(paneId: string) {
+    return this.turns.has(paneId);
   }
 
   /** Delivers the user's answer to a pending request; late answers are ignored. */
@@ -255,45 +288,205 @@ export abstract class ChatAssistant {
       requests: [...this.requests.values()]
         .filter((pending) => pending.paneId === paneId)
         .map((pending) => pending.request),
+      queue: this.queueOf(paneId),
     };
   }
 
   /** Models the provider offers. Cached briefly; a failed refresh serves the stale list. */
   models(): Promise<ModelOption[]> {
-    const MODEL_TTL_MS = 60_000;
-    if (this.modelCache && Date.now() - this.modelCache.at < MODEL_TTL_MS)
-      return Promise.resolve(this.modelCache.models);
-    this.modelRequest ??= this.listModels()
-      .then((models) => {
-        this.modelCache = { at: Date.now(), models };
-        return models;
-      })
-      .catch((cause) => {
-        if (this.modelCache) return this.modelCache.models;
-        throw cause;
-      })
-      .finally(() => (this.modelRequest = undefined));
-    return this.modelRequest;
+    return this.modelList.get();
   }
 
   /** Plan limits of the signed-in account. Cached briefly so reopening the popover is cheap. */
   limits(): Promise<ProviderLimits> {
-    const LIMITS_TTL_MS = 30_000;
-    if (this.limitsCache && Date.now() - this.limitsCache.at < LIMITS_TTL_MS)
-      return Promise.resolve(this.limitsCache.limits);
-    this.limitsRequest ??= this.readLimits()
-      .then((limits) => {
-        this.limitsCache = { at: Date.now(), limits };
-        return limits;
-      })
-      .finally(() => (this.limitsRequest = undefined));
-    return this.limitsRequest;
+    return this.planLimits.get();
+  }
+
+  account(): Promise<ProviderAccount> {
+    return this.signedInAccount.get();
+  }
+
+  /** Signs in through the browser, replacing any earlier attempt, and returns the new account. */
+  async connect(): Promise<ProviderAccount> {
+    this.login?.abort();
+    const login = new AbortController();
+    this.login = login;
+    let timedOut = false;
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      login.abort();
+    }, LOGIN_TIMEOUT_MS);
+    try {
+      await this.signIn(login.signal);
+    } catch (cause) {
+      if (timedOut)
+        throw Error(
+          `${PROVIDER_LABELS[this.provider]} sign-in timed out. Try again.`,
+        );
+      throw cause;
+    } finally {
+      clearTimeout(timeout);
+      if (this.login === login) this.login = undefined;
+    }
+    // Everything cached belonged to the previous account.
+    this.signedInAccount.clear();
+    this.planLimits.clear();
+    this.modelList.clear();
+    return this.account();
+  }
+
+  cancelConnect() {
+    this.login?.abort();
+  }
+
+  /** Generates a short text, such as a title, with the given model. */
+  async generate(prompt: string, model: string): Promise<string> {
+    const signal = AbortSignal.timeout(GENERATE_TIMEOUT_MS);
+    return (await this.complete(prompt, model, signal)).trim();
   }
 
   close() {
+    this.login?.abort();
     for (const turn of this.turns.values()) turn.controller.abort();
     for (const id of [...this.requests.keys()]) this.resolveRequest(id);
     this.flush();
+  }
+
+  private async start(pane: Pane, input: AssistantSendInput) {
+    if (!pane.sessionId) throw Error('Select a project first');
+    const session = this.store.session(pane.sessionId);
+    const attachments = this.attachmentsFor(pane, input.attachmentIds);
+
+    pane.model = input.model;
+    pane.reasoningEffort = input.reasoningEffort;
+    pane.approvals = input.approvals;
+    if (isDefaultTitle(pane.title)) pane.title = titleFrom(input.text);
+    const { settings } = this.store.state;
+    settings.lastProvider = this.provider;
+    settings.lastModels = {
+      ...settings.lastModels,
+      [this.provider]: input.model,
+    };
+    this.publishPrompt(pane, { text: input.text, attachments });
+
+    const turn: ActiveTurn = {
+      pane,
+      session,
+      input,
+      attachments,
+      controller: new AbortController(),
+      approvals: input.approvals,
+      cancelled: false,
+      errored: false,
+      setInterrupt: (interrupt) => (turn.interrupt = interrupt),
+      setSteer: (steer) => (turn.steer = steer),
+    };
+    this.turns.set(pane.id, turn);
+    this.notify({ paneId: pane.id, type: 'status', status: 'running' });
+
+    try {
+      await this.run(turn);
+    } catch (cause) {
+      // A stop isn't a failure, and a failure the provider already showed isn't repeated.
+      if (!turn.cancelled && !turn.controller.signal.aborted && !turn.errored)
+        this.publishError(pane, errorMessage(cause));
+    } finally {
+      clearTimeout(turn.graceTimer);
+      this.denyRequests(pane.id);
+      this.settle(pane, turn.errored);
+      for (const { id } of attachments) this.attachments.delete(id);
+      this.turns.delete(pane.id);
+      this.store.save();
+      if (turn.errored)
+        this.notify({ paneId: pane.id, type: 'status', status: 'failed' });
+      else if (!turn.cancelled)
+        this.notify({ paneId: pane.id, type: 'status', status: 'completed' });
+      this.notify({ paneId: pane.id, type: 'status', status: 'idle' });
+      // After a stop or a failure the queue waits, so the user decides what runs next.
+      if (!turn.errored && !turn.cancelled) this.startNext(pane);
+    }
+  }
+
+  private async steerTurn(
+    turn: ActiveTurn,
+    steer: Steer,
+    input: AssistantSendInput,
+  ) {
+    const attachments = this.attachmentsFor(turn.pane, input.attachmentIds);
+    const prompt = { text: input.text, attachments };
+    await steer(prompt);
+    this.publishPrompt(turn.pane, prompt);
+    for (const { id } of attachments) this.attachments.delete(id);
+  }
+
+  private enqueue(pane: Pane, input: AssistantSendInput) {
+    // Checked now, so a bad attachment is reported to the sender rather than lost later.
+    this.attachmentsFor(pane, input.attachmentIds);
+    const queue = this.queues.get(pane.id) ?? [];
+    queue.push({ id: randomUUID(), input });
+    this.queues.set(pane.id, queue);
+    this.notifyQueue(pane.id);
+  }
+
+  private startNext(pane: Pane) {
+    const next = this.queues.get(pane.id)?.shift();
+    if (!next) return;
+    this.notifyQueue(pane.id);
+    // Nobody awaits a queued message, so a failure to start is shown in the pane.
+    this.start(pane, next.input).catch((cause) =>
+      this.publishError(pane, errorMessage(cause)),
+    );
+  }
+
+  private takeQueued(paneId: string, queuedId: string) {
+    this.paneFor(paneId);
+    const queue = this.queues.get(paneId) ?? [];
+    const index = queue.findIndex((item) => item.id === queuedId);
+    if (index === -1) throw Error('That message is no longer queued');
+    const [{ input }] = queue.splice(index, 1);
+    this.notifyQueue(paneId);
+    return input;
+  }
+
+  private queueOf(paneId: string): QueuedPrompt[] {
+    return (this.queues.get(paneId) ?? []).map(({ id, input }) => ({
+      id,
+      text: input.text,
+      attachments: input.attachmentIds.length,
+    }));
+  }
+
+  private notifyQueue(paneId: string) {
+    this.notify({ paneId, type: 'queue', queue: this.queueOf(paneId) });
+  }
+
+  private attachmentsFor(pane: Pane, ids: string[]) {
+    return ids.map((id) => {
+      const attachment = this.attachments.get(id);
+      if (attachment?.paneId !== pane.id)
+        throw Error('Attachment is no longer available');
+      return attachment;
+    });
+  }
+
+  private publishPrompt(pane: Pane, { text, attachments }: Prompt) {
+    for (const { id, name, size, previewUrl } of attachments)
+      this.publish(pane, {
+        id,
+        role: 'user',
+        kind: 'attachment',
+        text: name,
+        status: 'complete',
+        size,
+        previewUrl,
+      });
+    this.publish(pane, {
+      id: randomUUID(),
+      role: 'user',
+      kind: 'text',
+      text,
+      status: 'complete',
+    });
   }
 
   /** Inserts or replaces a message, optionally persisting, and notifies the renderer. */

@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { afterEach, test } from 'node:test';
 import type { AssistantEvent } from '../shared/contracts';
 import { CodexAssistant } from '../electron/main/codex';
-import { fakeStore, sendInput, sleep } from './helpers';
+import { fakeStore, host, sendInput, sleep } from './helpers';
 
 const FIXTURE = join(process.cwd(), 'test/fixtures/fake-codex.mjs');
 const open: CodexAssistant[] = [];
@@ -14,15 +14,17 @@ afterEach(() => {
 function codex(fixture = FIXTURE) {
   const { pane, store } = fakeStore('codex');
   const events: AssistantEvent[] = [];
+  const opened: string[] = [];
   const assistant = new CodexAssistant(
     store,
     (event) => events.push(event),
-    async () => undefined,
+    { ...host, openUrl: async (url) => void opened.push(url) },
     () => ({ file: process.execPath, args: [fixture] }),
   );
   open.push(assistant);
-  assistant.approvals = 'ask'; // the approval flow is what these tests exercise
-  const send = (text: string) => assistant.send(sendInput(text));
+  // The approval flow is what these tests exercise.
+  const send = (text: string) =>
+    assistant.send({ ...sendInput(text), approvals: 'ask' });
   const waitFor = async (match: (event: AssistantEvent) => boolean) => {
     for (let tries = 0; tries < 200; tries++) {
       const found = events.find(match);
@@ -31,7 +33,7 @@ function codex(fixture = FIXTURE) {
     }
     throw new Error('Timed out waiting for an event');
   };
-  return { assistant, pane, events, send, waitFor };
+  return { assistant, pane, store, events, opened, send, waitFor };
 }
 
 test('a turn streams text, reasoning, and usage, and remembers the thread', async () => {
@@ -222,4 +224,70 @@ test('models come from the server and hide hidden ones', async () => {
   assert.deepEqual(await assistant.models(), [
     { value: 'fake-1', label: 'Fake 1' },
   ]);
+});
+
+test('a message sent mid-turn steers it', async () => {
+  const { assistant, pane, events, send, waitFor } = codex();
+  const turn = send('steerable');
+  // The turn's first item arrives after Codex has given the turn an id to steer.
+  await waitFor(
+    (event) => event.type === 'message' && event.message.id === 'w1',
+  );
+  await assistant.send({ ...sendInput('also add tests'), followUp: 'steer' });
+  await turn;
+  assert.equal(
+    pane.messages.find((item) => item.id === 'a1')?.text,
+    'Steered: also add tests',
+  );
+  assert(
+    pane.messages.some(
+      (item) => item.role === 'user' && item.text === 'also add tests',
+    ),
+  );
+  assert(!events.some((event) => event.type === 'queue' && event.queue.length));
+});
+
+test('the chosen personality is sent with the turn', async () => {
+  const { pane, store, send } = codex();
+  store.preferences.codexPersonality = 'friendly';
+  await send('personality');
+  assert.equal(
+    pane.messages.find((item) => item.id === 'a1')?.text,
+    'personality:friendly',
+  );
+});
+
+test('the default personality is left to Codex', async () => {
+  const { pane, send } = codex();
+  await send('personality');
+  assert.equal(
+    pane.messages.find((item) => item.id === 'a1')?.text,
+    'personality:none set',
+  );
+});
+
+test('the signed-in account is read from the server', async () => {
+  const { assistant } = codex();
+  assert.deepEqual(await assistant.account(), {
+    provider: 'codex',
+    signedIn: true,
+    email: 'me@example.com',
+    plan: 'plus',
+  });
+});
+
+test('signing in opens the browser and waits for the server to finish', async () => {
+  const { assistant, opened } = codex();
+  const account = await assistant.connect();
+  assert.deepEqual(opened, ['https://auth.example/login']);
+  assert.equal(account.email, 'me@example.com');
+});
+
+test('text is generated on an ephemeral thread', async () => {
+  const { assistant, pane } = codex();
+  assert.equal(
+    await assistant.generate('Write a title for this', 'fake-1'),
+    '"Fix the login flow."',
+  );
+  assert.equal(pane.messages.length, 0);
 });

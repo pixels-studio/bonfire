@@ -34,7 +34,7 @@
     align="end"
     sideOffset={8}
     collisionPadding={8}
-    class="max-h-[calc(100vh-80px)] w-[400px] gap-0 overflow-hidden p-0"
+    class="max-h-[calc(100vh-80px)] w-100 gap-0 overflow-hidden p-0"
   >
     <div
       class="flex shrink-0 items-center justify-between border-b border-border px-4 py-3"
