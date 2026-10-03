@@ -63,7 +63,7 @@
   <Button
     size="sm"
     class={cn(PILL_BUTTON_CLASS, PUSH_BUTTON_CLASS)}
-    {disabled}
+    disabled={disabled || !!pullRequest.running}
     title="Have an agent commit the changes and push them to the remote"
     loading={pullRequest.running === 'push'}
     onclick={() => void pullRequest.run('push')}
@@ -99,7 +99,7 @@
         <Button
           size="sm"
           class={cn(PILL_BUTTON_CLASS, CONFLICTS_BUTTON_CLASS)}
-          {disabled}
+          disabled={disabled || !!pullRequest.running}
           title="Have an agent merge the target branch in and resolve the conflicts"
           loading={pullRequest.running === 'resolveConflicts'}
           onclick={() => void pullRequest.run('resolveConflicts')}
@@ -110,7 +110,7 @@
         <Button
           size="sm"
           class={cn(PILL_BUTTON_CLASS, CHECKS_BUTTON_CLASS)}
-          {disabled}
+          disabled={disabled || !!pullRequest.running}
           title="Have an agent fix the failing checks"
           loading={pullRequest.running === 'fixChecks'}
           onclick={() => void pullRequest.run('fixChecks')}
@@ -122,7 +122,7 @@
           size="sm"
           class={cn(PILL_BUTTON_CLASS, MERGE_BUTTON_CLASS)}
           title={mergeBlocked || 'Squash and merge the pull request'}
-          disabled={!!mergeBlocked}
+          disabled={!!mergeBlocked || !!pullRequest.running}
           loading={pullRequest.merging}
           onclick={() => void pullRequest.merge()}
         >
@@ -138,6 +138,7 @@
           variant="secondary"
           class={cn(PILL_BUTTON_CLASS, UTILITY_BUTTON_CLASS)}
           title="Everything is pushed; close all panes"
+          disabled={!!pullRequest.running}
           onclick={onclosePanes}
         >
           Close Panes
@@ -165,4 +166,15 @@
       </Button>
     {/if}
   </div>
+  {#if pullRequest.running}
+    <div
+      class="pointer-events-none absolute inset-x-0 bottom-0 h-0.5 overflow-hidden bg-foreground/10"
+      role="progressbar"
+      aria-label="An agent is working on this"
+    >
+      <div
+        class="h-full w-1/3 animate-[header-progress_1.2s_ease-in-out_infinite] rounded-full bg-foreground/60 motion-reduce:animate-none motion-reduce:w-full motion-reduce:opacity-60"
+      ></div>
+    </div>
+  {/if}
 </header>

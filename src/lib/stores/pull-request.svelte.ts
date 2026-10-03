@@ -29,6 +29,8 @@ class PullRequestStore {
   );
   /** The action being handed to an agent, if any. */
   running = $state<ActionId>();
+  /** The pane whose agent is carrying out `running`; the action lasts until its turn ends. */
+  agentPaneId = $state<string>();
   private projectId?: string;
   private generation = 0;
 
@@ -91,13 +93,20 @@ class PullRequestStore {
     this.running = action;
     try {
       const paneId = await window.bonfire.github.runAction(projectId, action);
+      this.agentPaneId = paneId;
       await this.onAgentPane?.(paneId);
     } catch (cause) {
       toast(errorMessage(cause), { variant: 'error', duration: 0 });
-    } finally {
-      this.running = undefined;
-      if (action === 'push') await this.reload();
+      this.settle();
     }
+  }
+
+  /** Ends the running action once its agent's turn is over, or its pane is gone. */
+  settle(paneId?: string) {
+    if (paneId !== undefined && paneId !== this.agentPaneId) return;
+    this.running = undefined;
+    this.agentPaneId = undefined;
+    void this.reload();
   }
 
   async merge() {

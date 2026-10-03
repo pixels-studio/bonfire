@@ -360,6 +360,12 @@
     return () => (pullRequest.onAgentPane = undefined);
   });
 
+  // Closing the agent's pane ends the action it was carrying out.
+  $effect(() => {
+    const id = pullRequest.agentPaneId;
+    if (id && !panes.some((pane) => pane.id === id)) pullRequest.settle(id);
+  });
+
   /** Goes to the pane `step` places from the active one, wrapping around the ends. */
   function stepPane(step: number) {
     if (!panes.length) return;
@@ -523,6 +529,12 @@
 
   function handleAssistantEvent(event: AssistantEvent) {
     statuses.handle(event);
+    // The header's action stays busy until its agent has finished.
+    if (
+      event.type === 'status' &&
+      ['idle', 'completed', 'failed'].includes(event.status)
+    )
+      pullRequest.settle(event.paneId);
     // Agents commit and switch branches too.
     if (event.type === 'status' && event.status === 'idle')
       void branch.reload();
