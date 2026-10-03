@@ -112,6 +112,11 @@
     diff: 'newDiff',
   };
 
+  const AGENT_SHORTCUTS: Record<string, ShortcutId> = {
+    claude: 'newClaude',
+    codex: 'newCodex',
+  };
+
   const BUTTON_CLASS = 'text-muted-foreground hover:text-foreground';
   const DOT_BUTTON_CLASS =
     'grid size-6 place-content-center rounded-full outline-none transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-ring/60';
@@ -174,6 +179,7 @@
             <DropdownMenu.Item onclick={() => onaddPane(provider)}>
               <Icon name={provider} />
               {PROVIDER_LABELS[provider]}
+              <ShortcutKeys id={AGENT_SHORTCUTS[provider]} class="ml-auto" />
             </DropdownMenu.Item>
           {/each}
           <DropdownMenu.Separator />

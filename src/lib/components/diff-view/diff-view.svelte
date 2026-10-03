@@ -1,5 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import GitCommitHorizontal from '@lucide/svelte/icons/git-commit-horizontal';
+  import FolderX from '@lucide/svelte/icons/folder-x';
   import * as Card from '$lib/components/ui/card';
   import FileDiff from '$lib/components/diff/file-diff.svelte';
   import FileIcon from '$lib/components/file-tree/file-icon.svelte';
@@ -73,7 +75,7 @@
     {onresize}
     {onclose}
   />
-  <section class="min-h-0 flex-1 overflow-auto px-4 pt-2 pb-2">
+  <section class="min-h-0 flex-1 overflow-auto px-4 pt-2 pb-2 [&:has(>div:only-child)]:flex [&:has(>div:only-child)]:flex-col">
     {#if error}<p class="text-sm text-destructive">{error}</p>{/if}
     {#each status?.changes ?? [] as change (change.path)}
       {@const slash = change.path.lastIndexOf('/') + 1}
@@ -101,11 +103,20 @@
       {/if}
     {:else}
       {#if status}
-        <p class="py-8 text-sm text-muted-foreground">
-          {status.isGit
-            ? 'Your working tree is clean.'
-            : 'This folder is not a Git repository.'}
-        </p>
+        <div
+          class="flex flex-1 flex-col items-center justify-center gap-3 text-muted-foreground"
+        >
+          {#if status.isGit}
+            <GitCommitHorizontal class="size-8 opacity-60" />
+          {:else}
+            <FolderX class="size-8 opacity-60" />
+          {/if}
+          <p class="text-sm">
+            {status.isGit
+              ? 'Your working tree is clean.'
+              : 'This folder is not a Git repository.'}
+          </p>
+        </div>
       {/if}
     {/each}
   </section>

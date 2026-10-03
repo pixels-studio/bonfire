@@ -336,7 +336,7 @@ export function services(options: ServiceOptions) {
       title: agent ? DEFAULT_TITLE : TOOL_PANE_TITLES[paneType],
       messages: [],
       model: agent ? modelFor(paneType, starting) : '',
-      reasoningEffort: 'medium',
+      reasoningEffort: store.state.settings.lastReasoningEffort ?? 'medium',
       fastMode: false,
       approvals: store.preferences.approvals,
       archived: false,

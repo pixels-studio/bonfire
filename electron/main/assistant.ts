@@ -357,6 +357,7 @@ export abstract class ChatAssistant {
     if (isDefaultTitle(pane.title)) pane.title = titleFrom(input.text);
     const { settings } = this.store.state;
     settings.lastProvider = this.provider;
+    settings.lastReasoningEffort = input.reasoningEffort;
     settings.lastModels = {
       ...settings.lastModels,
       [this.provider]: input.model,

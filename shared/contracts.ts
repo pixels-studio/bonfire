@@ -161,6 +161,8 @@ export const stateSchema = z.object({
       .object({ claude: z.string(), codex: z.string() })
       .partial()
       .optional(),
+    /** The thinking effort of the last message sent, which new panes start with. */
+    lastReasoningEffort: reasoningEffort.optional(),
   }),
   preferences: preferencesSchema.partial().default({}),
 });

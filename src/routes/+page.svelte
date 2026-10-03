@@ -430,6 +430,12 @@
       case 'newConversation':
         void addPane();
         break;
+      case 'newClaude':
+        void addPane('claude');
+        break;
+      case 'newCodex':
+        void addPane('codex');
+        break;
       case 'newTerminal':
         void addPane('terminal');
         break;
@@ -590,21 +596,55 @@
     );
   }
 
-  /** Leaves setup for the workspace, starting a conversation with the agent signed in. */
-  async function finishOnboarding(
-    provider: AssistantProvider,
-    created?: Project,
-  ) {
+  /** Leaves setup for the workspace, where the starting panes open on their own. */
+  async function finishOnboarding() {
     try {
       await refresh();
     } catch (cause) {
       showError(cause);
     }
+    // Setup may have just signed an agent in.
+    await loadAccounts();
     onboarding = false;
-    if (!created || panes.length) return;
-    await tick();
-    await addPane(provider);
   }
+
+  /** The agents that start a project: Claude and Codex when both are connected, else two of the one. */
+  function startingAgents(): AssistantProvider[] {
+    const ready = PROVIDERS.filter(
+      (provider) =>
+        accounts[provider]?.signedIn &&
+        workspace.preferences?.providers?.[provider] !== false,
+    );
+    if (ready.length >= 2) return ['claude', 'codex'];
+    if (ready.length === 1) return [ready[0], ready[0]];
+    return [];
+  }
+
+  /** Whether starting panes are being opened; a failed attempt isn't retried until the project changes. */
+  let seeding = false;
+  let seedFailedFor: string | undefined;
+
+  async function openStartingPanes() {
+    const agents = startingAgents();
+    if (!agents.length || seeding || seedFailedFor === projectId) return;
+    seeding = true;
+    try {
+      // New panes go to the front, so the last one added ends up first.
+      for (const agent of agents.toReversed()) {
+        await runAction(() => window.bonfire.panes.add(agent));
+      }
+      await tick();
+      seedFailedFor = panes.length ? undefined : projectId;
+      paneStrip?.scrollTo({ left: 0, behavior: scrollBehavior() });
+    } finally {
+      seeding = false;
+    }
+  }
+
+  $effect(() => {
+    if (!loaded || onboarding || !projectId || panes.length || busy) return;
+    void openStartingPanes();
+  });
 
   onMount(async () => {
     if (!window.bonfire) {
@@ -686,7 +726,7 @@
     bind:accounts
     bind:accountErrors
     hasProjects={workspace.projects.length > 0}
-    onfinish={(provider, created) => void finishOnboarding(provider, created)}
+    onfinish={() => void finishOnboarding()}
   />
 {:else}
   <div class="flex h-screen">

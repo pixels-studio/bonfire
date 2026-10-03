@@ -104,6 +104,18 @@ export const SHORTCUTS = define({
     scope: 'global',
     chords: [mod('n')],
   },
+  newClaude: {
+    group: 'Panes',
+    label: 'New Claude agent',
+    scope: 'global',
+    chords: [mod('c', { alt: true })],
+  },
+  newCodex: {
+    group: 'Panes',
+    label: 'New Codex agent',
+    scope: 'global',
+    chords: [mod('o', { alt: true })],
+  },
   newTerminal: {
     group: 'Panes',
     label: 'New terminal',
