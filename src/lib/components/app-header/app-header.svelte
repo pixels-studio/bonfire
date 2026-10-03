@@ -48,7 +48,7 @@
   );
 
   const pullRequestHint = `(${shortcutText('pullRequest', isMac())})`;
-  const UTILITY_BUTTON_CLASS = 'text-muted-foreground hover:text-foreground';
+  const UTILITY_BUTTON_CLASS = 'text-foreground';
   const PILL_BUTTON_CLASS = 'min-w-36 rounded-full px-3';
   /** Each action has its own color, so what a button does shows before it is read. */
   const PUSH_BUTTON_CLASS = 'bg-green-700 text-white hover:bg-green-700/85';
