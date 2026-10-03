@@ -1,7 +1,6 @@
 <script lang="ts">
   import { buttonVariants } from '$lib/components/ui/button';
   import { cn } from '$lib/utils';
-  import Check from '@lucide/svelte/icons/check';
   import ChevronDown from '@lucide/svelte/icons/chevron-down';
   import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
   import Icon from '$lib/components/icon/icon.svelte';
@@ -73,7 +72,6 @@
       <DropdownMenu.Item class="gap-2" onclick={() => onselect(project.id)}>
         {@render favicon(project)}
         <span class="truncate">{project.name}</span>
-        {#if project.id === active?.id}<Check class="size-4 shrink-0" />{/if}
         {#if onsettings || onremove}
           <DropdownMenu.Root>
             <DropdownMenu.Trigger>
@@ -97,7 +95,7 @@
                     onsettings(project.id);
                   }}
                 >
-                  <Icon name="settings" /> Project settings
+                  <Icon name="settings" /> Settings
                 </DropdownMenu.Item>
               {/if}
               {#if onremove}
@@ -105,7 +103,7 @@
                   variant="destructive"
                   onclick={() => onremove(project.id)}
                 >
-                  Remove project
+                  <Icon name="trash" /> Remove
                 </DropdownMenu.Item>
               {/if}
             </DropdownMenu.Content>
