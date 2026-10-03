@@ -1,4 +1,6 @@
 import { execFile } from 'node:child_process';
+import { readFile, stat } from 'node:fs/promises';
+import { join } from 'node:path';
 import { promisify } from 'node:util';
 import type { Change, GitStatus } from '../../shared/contracts';
 
@@ -36,11 +38,68 @@ export async function status(cwd: string): Promise<GitStatus> {
       path: record.slice(3),
       index: record[0],
       worktree: record[1],
+      additions: 0,
+      deletions: 0,
     });
     // Renames and copies are followed by their original path; skip it.
     if (/[RC]/.test(record.slice(0, 2))) index++;
   }
+  const counts = await lineCounts(cwd);
+  for (const change of changes) {
+    const count =
+      change.index === '?'
+        ? await untrackedLineCount(cwd, change.path)
+        : counts.get(change.path);
+    change.additions = count?.additions ?? 0;
+    change.deletions = count?.deletions ?? 0;
+  }
   return { isGit: true, branch, changes };
+}
+
+type LineCount = { additions: number; deletions: number };
+
+/** Added and removed lines per tracked path against HEAD (`-` stands for binary files). */
+async function lineCounts(cwd: string) {
+  const counts = new Map<string, LineCount>();
+  const output = await git(cwd, ['diff', 'HEAD', '--numstat', '-z']).catch(
+    () => '',
+  );
+  const records = output.split('\0');
+  for (let index = 0; index < records.length; index++) {
+    const [additions, deletions, path] = records[index].split('\t');
+    if (additions === undefined || deletions === undefined) continue;
+    const count = {
+      additions: Number(additions) || 0,
+      deletions: Number(deletions) || 0,
+    };
+    // Renames and copies have an empty path, followed by the old and the new path.
+    if (path === '') {
+      counts.set(records[index + 2], count);
+      index += 2;
+    } else counts.set(path, count);
+  }
+  return counts;
+}
+
+const COUNT_LIMIT_BYTES = 2 * 1024 * 1024;
+
+/** An untracked file counts as entirely added. */
+async function untrackedLineCount(
+  cwd: string,
+  path: string,
+): Promise<LineCount | undefined> {
+  try {
+    const file = join(cwd, path);
+    if ((await stat(file)).size > COUNT_LIMIT_BYTES) return undefined;
+    const data = await readFile(file);
+    if (data.includes(0)) return undefined;
+    const text = data.toString('utf8');
+    if (!text) return undefined;
+    const lines = text.split('\n').length - (text.endsWith('\n') ? 1 : 0);
+    return { additions: lines, deletions: 0 };
+  } catch {
+    return undefined;
+  }
 }
 
 /** Local branches, then remote-tracking ones such as `origin/main`. */
@@ -68,6 +127,18 @@ export function diff(cwd: string, path: string) {
   return git(cwd, ['diff', 'HEAD', '--', path]).catch(() =>
     git(cwd, ['diff', '--', path]),
   );
+}
+
+/** The diff of an untracked file against nothing, so it reads like any other added file. */
+export async function diffUntracked(cwd: string, path: string) {
+  try {
+    return await git(cwd, ['diff', '--no-index', '--', '/dev/null', path]);
+  } catch (cause) {
+    // `--no-index` exits with 1 when the files differ, which is the usual case here.
+    const { stdout } = cause as { stdout?: string };
+    if (stdout) return stdout;
+    throw cause;
+  }
 }
 
 /** Brings remote-tracking branches up to date, so new workspaces start from the latest commit. */

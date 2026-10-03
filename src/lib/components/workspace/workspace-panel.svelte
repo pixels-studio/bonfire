@@ -28,7 +28,10 @@
   import * as Card from '$lib/components/ui/card';
   import Icon from '$lib/components/icon/icon.svelte';
   import Inspector from '../inspector/inspector.svelte';
+  import FileViewer from '../file-tree/file-viewer.svelte';
   import { Button } from '$lib/components/ui/button';
+  import PaneMenu from '$lib/components/pane-menu/pane-menu.svelte';
+  import type { PaneSize } from '$lib/panes';
   import { cn } from '$lib/utils';
   import {
     MAX_SHELL_TABS,
@@ -40,11 +43,15 @@
     session,
     view,
     setup,
+    onresize,
+    onclose,
   }: {
     session: Session;
     view: WorkspaceView;
     /** How the workspace's setup script went, if one ran. */
     setup?: SetupStatus;
+    onresize: (size: PaneSize) => void;
+    onclose: () => void;
   } = $props();
 
   const FIRST = { tabs: [0], active: 0 } as const;
@@ -61,6 +68,12 @@
   $effect.pre(() => {
     const id = session.id;
     untrack(() => open(id));
+  });
+
+  let openFile = $state('');
+  $effect.pre(() => {
+    void [session.id, view];
+    openFile = '';
   });
 
   const shells = $derived(terminals[session.id] ?? FIRST);
@@ -89,7 +102,7 @@
   }
 </script>
 
-<Card.Root class="h-full min-w-0 gap-0">
+<Card.Root class="relative h-full min-w-0 gap-0">
   <header
     class="flex min-h-13.5 shrink-0 items-center justify-between gap-3 py-3 pr-2 pl-4"
   >
@@ -112,24 +125,28 @@
           {/each}
         </div>
       </div>
-      <Button
-        variant="secondary"
-        size="icon"
-        class="shrink-0 rounded-full"
-        aria-label="New terminal"
-        title={shells.tabs.length >= MAX_SHELL_TABS
-          ? `Up to ${MAX_SHELL_TABS} terminals`
-          : 'New terminal'}
-        disabled={shells.tabs.length >= MAX_SHELL_TABS}
-        onclick={addTab}
-      >
-        <Icon name="plus" />
-      </Button>
+      <div class="flex shrink-0 items-center gap-2">
+        <Button
+          variant="secondary"
+          size="icon"
+          class="shrink-0 rounded-full"
+          aria-label="New terminal"
+          title={shells.tabs.length >= MAX_SHELL_TABS
+            ? `Up to ${MAX_SHELL_TABS} terminals`
+            : 'New terminal'}
+          disabled={shells.tabs.length >= MAX_SHELL_TABS}
+          onclick={addTab}
+        >
+          <Icon name="plus" />
+        </Button>
+        {@render menu()}
+      </div>
     {:else}
       <h2 class="flex items-center gap-2 text-sm font-semibold">
         {#if item}<Icon name={item.icon} class="text-muted-foreground" />{/if}
         {item?.title}
       </h2>
+      {@render menu()}
     {/if}
   </header>
   <div class="relative min-h-0 flex-1">
@@ -145,11 +162,29 @@
       {/await}
     {:else}
       {#key `${session.id}:${view}`}
-        <Inspector {session} initialMode={view} />
+        <Inspector
+          {session}
+          initialMode={view}
+          {openFile}
+          onopenfile={(path) => (openFile = path)}
+        />
       {/key}
     {/if}
   </div>
+  {#if openFile}
+    <FileViewer
+      sessionId={session.id}
+      path={openFile}
+      onclose={() => (openFile = '')}
+      {onresize}
+      onclosepanel={onclose}
+    />
+  {/if}
 </Card.Root>
+
+{#snippet menu()}
+  <PaneMenu label={`${item?.title ?? 'Panel'} options`} {onresize} {onclose} />
+{/snippet}
 
 {#snippet tab(value: 'setup' | number, label: string)}
   <div

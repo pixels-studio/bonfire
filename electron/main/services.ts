@@ -765,8 +765,7 @@ export function services(options: ServiceOptions) {
           (item) => item.path === path,
         );
         if (!change) throw Error('File is not a current change');
-        if (change.index === '?')
-          return `Untracked file\n\n${await files.read(root, path)}`;
+        if (change.index === '?') return git.diffUntracked(root, path);
         return git.diff(root, path);
       },
     },
@@ -774,6 +773,8 @@ export function services(options: ServiceOptions) {
       list: async (sessionId, path) => files.list(worktree(sessionId), path),
       readFile: async (sessionId, path) =>
         files.read(worktree(sessionId), path),
+      search: async (sessionId, query) =>
+        files.search(worktree(sessionId), query),
       watch: async (sessionId) =>
         files.watch(sessionId, worktree(sessionId), (event) =>
           options.send(events.fileChange, event),

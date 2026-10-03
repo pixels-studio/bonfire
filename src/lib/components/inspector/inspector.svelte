@@ -1,55 +1,70 @@
 <script lang="ts">
   import { onMount, untrack } from 'svelte';
-  import ArrowUp from '@lucide/svelte/icons/arrow-up';
+  import Search from '@lucide/svelte/icons/search';
   import { Button } from '$lib/components/ui/button';
+  import { Input } from '$lib/components/ui/input';
+  import DiffView from '$lib/components/diff/diff-view.svelte';
+  import FileIcon from '$lib/components/file-tree/file-icon.svelte';
+  import FileTree from '$lib/components/file-tree/file-tree.svelte';
+  import { cn } from '$lib/utils';
   import { errorMessage } from '$shared/domain';
   import type { Entry, GitStatus, Session } from '$shared/contracts';
 
   type InspectorMode = 'diff' | 'files';
 
   const REFRESH_DEBOUNCE_MS = 180;
+  const SEARCH_DEBOUNCE_MS = 120;
   const POLL_INTERVAL_MS = 5000;
-  const FILE_ROW = 'flex w-full items-center gap-3 py-3.5 text-left text-sm';
-  const CODE_BLOCK =
-    'mb-3 overflow-auto rounded-lg border border-border p-3 font-mono text-xs/relaxed whitespace-pre';
+  const FILE_ROW =
+    'flex w-full items-center gap-3 py-3 text-left font-mono text-sm outline-none';
 
   let {
     session,
     initialMode = 'diff',
-  }: { session: Session; initialMode?: InspectorMode } = $props();
+    openFile = '',
+    onopenfile,
+  }: {
+    session: Session;
+    initialMode?: InspectorMode;
+    /** The file currently shown over the pane, if any. */
+    openFile?: string;
+    onopenfile: (path: string) => void;
+  } = $props();
 
   let mode = $state(untrack(() => initialMode));
   let status = $state<GitStatus>({ isGit: false, branch: '', changes: [] });
-  let entries = $state<Entry[]>([]);
-  let directory = $state('');
+  /** Loaded directory listings by path; the workspace root is `''`. */
+  let entries = $state<Record<string, Entry[]>>({});
+  let expanded = $state<Record<string, boolean>>({});
   let selectedPath = $state('');
   let content = $state('');
   let error = $state('');
   let generation = 0;
-
-  const parentDirectory = $derived(directory.split('/').slice(0, -1).join('/'));
-
-  function joinPath(...segments: string[]) {
-    return segments.filter(Boolean).join('/');
-  }
-
-  function diffLineClass(line: string) {
-    if (line.startsWith('@@')) return 'text-indigo-300';
-    if (line.startsWith('+')) return 'bg-green-950 text-green-300';
-    if (line.startsWith('-')) return 'bg-red-950 text-red-300';
-    return '';
-  }
+  let query = $state('');
+  /** Paths matching `query`; `undefined` until the first search for it returns. */
+  let results = $state<string[]>();
 
   async function refresh() {
     const token = ++generation;
     try {
-      const [nextStatus, nextEntries] = await Promise.all([
+      const directories = [
+        '',
+        ...Object.keys(expanded).filter((path) => expanded[path]),
+      ];
+      const [nextStatus, ...listings] = await Promise.all([
         window.bonfire.git.status(session.id),
-        window.bonfire.filesystem.list(session.id, directory),
+        // A folder deleted while open fails to list; it just drops out of the tree.
+        ...directories.map((path) =>
+          window.bonfire.filesystem.list(session.id, path).catch(() => null),
+        ),
       ]);
       if (token !== generation) return;
       status = nextStatus;
-      entries = nextEntries;
+      entries = Object.fromEntries(
+        directories.flatMap((path, index) =>
+          listings[index] ? [[path, listings[index]]] : [],
+        ),
+      );
       if (selectedPath) await preview(selectedPath);
       error = '';
     } catch (cause) {
@@ -69,12 +84,32 @@
     }
   }
 
-  function openDirectory(path: string) {
-    directory = path;
-    selectedPath = '';
-    content = '';
-    void refresh();
+  function toggleDirectory(path: string) {
+    expanded[path] = !expanded[path];
+    if (expanded[path]) void refresh();
   }
+
+  // Searching waits for a pause in typing; a slower reply never overwrites a newer one.
+  $effect(() => {
+    const text = query.trim();
+    if (!text) {
+      results = undefined;
+      return;
+    }
+    let stale = false;
+    const timer = setTimeout(async () => {
+      try {
+        const found = await window.bonfire.filesystem.search(session.id, text);
+        if (!stale) results = found;
+      } catch (cause) {
+        if (!stale) error = errorMessage(cause);
+      }
+    }, SEARCH_DEBOUNCE_MS);
+    return () => {
+      stale = true;
+      clearTimeout(timer);
+    };
+  });
 
   onMount(() => {
     void refresh();
@@ -100,67 +135,118 @@
   });
 </script>
 
-<section class="h-full overflow-auto px-4 py-2.5">
+<section class="h-full overflow-auto px-3 pb-2">
+  {#if mode === 'files'}
+    <div class="sticky top-0 z-10 -mx-3 bg-card px-3 pt-0.5 pb-4">
+      <div class="relative">
+        <Search
+          class="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground"
+        />
+        <Input
+          type="search"
+          placeholder="Search files"
+          aria-label="Search files"
+          autocomplete="off"
+          spellcheck="false"
+          class="rounded-full pl-8 [&::-webkit-search-cancel-button]:appearance-none"
+          bind:value={query}
+          onkeydown={(event) => {
+            if (event.key === 'Escape') query = '';
+          }}
+        />
+      </div>
+    </div>
+  {:else}
+    <div class="h-2"></div>
+  {/if}
   {#if error}<p class="text-sm text-destructive">{error}</p>{/if}
 
   {#if mode === 'diff'}
-    {#each status.changes as change (change.path)}
-      <button class={FILE_ROW} onclick={() => preview(change.path)}>
-        <span class="text-xl text-brand">±</span>
-        <span class="truncate">{change.path}</span>
-        <span class="ml-auto font-mono text-success"
-          >{change.index}{change.worktree}</span
+    <!-- 12px section padding plus 4px lines content up with the header's 16px. -->
+    <div class="px-1">
+      {#each status.changes as change (change.path)}
+        {@const slash = change.path.lastIndexOf('/') + 1}
+        <button
+          class={FILE_ROW}
+          aria-expanded={selectedPath === change.path}
+          onclick={() =>
+            selectedPath === change.path
+              ? (selectedPath = '')
+              : preview(change.path)}
         >
-      </button>
-      {#if selectedPath === change.path}
-        <div class={CODE_BLOCK}>
-          {#each content.split('\n') as line}
-            <div class={diffLineClass(line)}>{line || ' '}</div>
-          {/each}
+          <FileIcon name={change.path.slice(slash)} class="shrink-0" />
+          <span class="min-w-0 flex-1 truncate">
+            <span class="text-muted-foreground"
+              >{change.path.slice(0, slash)}</span
+            >{change.path.slice(slash)}
+          </span>
+          {#if change.additions}
+            <span class="shrink-0 font-mono text-success"
+              >+{change.additions}</span
+            >
+          {/if}
+          {#if change.deletions}
+            <span class="shrink-0 font-mono text-destructive"
+              >-{change.deletions}</span
+            >
+          {/if}
+        </button>
+        {#if selectedPath === change.path}
+          <DiffView diff={content} path={change.path} />
+        {/if}
+      {:else}
+        <div class="py-8 text-sm text-muted-foreground">
+          <p>
+            {status.isGit
+              ? 'Your working tree is clean.'
+              : 'This folder is not a Git repository.'}
+          </p>
+          <Button
+            variant="secondary"
+            class="mt-4"
+            onclick={() => {
+              selectedPath = '';
+              mode = 'files';
+            }}
+          >
+            Browse files
+          </Button>
         </div>
-      {/if}
-    {:else}
-      <div class="py-8 text-sm text-muted-foreground">
-        <p>
-          {status.isGit
-            ? 'Your working tree is clean.'
-            : 'This folder is not a Git repository.'}
-        </p>
-        <Button
-          variant="secondary"
-          class="mt-4"
-          onclick={() => (mode = 'files')}
-        >
-          Browse files
-        </Button>
-      </div>
-    {/each}
-  {:else}
-    <div class="mb-3 flex items-center gap-2">
-      <Button
-        variant="secondary"
-        size="icon"
-        aria-label="Parent folder"
-        disabled={!directory}
-        onclick={() => openDirectory(parentDirectory)}
-      >
-        <ArrowUp />
-      </Button>
-      <span class="truncate text-sm text-muted-foreground">/{directory}</span>
+      {/each}
     </div>
-    {#each entries as entry (entry.name)}
-      {@const path = joinPath(directory, entry.name)}
-      <button
-        class={FILE_ROW}
-        onclick={() => (entry.directory ? openDirectory(path) : preview(path))}
-      >
-        <span class="text-muted-foreground">{entry.directory ? '▸' : '·'}</span>
-        {entry.name}
-      </button>
-    {/each}
-    {#if selectedPath}
-      <p class="mt-5 mb-2 text-sm text-muted-foreground">{selectedPath}</p>
-      <pre class={CODE_BLOCK}>{content}</pre>
+  {:else}
+    {#if query.trim()}
+      {#each results ?? [] as path (path)}
+        {@const slash = path.lastIndexOf('/') + 1}
+        <button
+          type="button"
+          class={cn(
+            'flex h-7 w-full items-center gap-2.5 rounded-lg px-2 text-left font-mono text-sm transition-colors duration-150 outline-none hover:bg-secondary focus-visible:ring-2 focus-visible:ring-ring/60',
+            openFile === path && 'bg-secondary',
+          )}
+          onclick={() => onopenfile(path)}
+        >
+          <FileIcon name={path.slice(slash)} class="shrink-0" />
+          <span class="min-w-0 flex-1 truncate">
+            {path.slice(slash)}
+            <span class="text-muted-foreground">{path.slice(0, slash)}</span>
+          </span>
+        </button>
+      {:else}
+        {#if results}
+          <p class="px-2 py-4 text-sm text-muted-foreground">
+            No files match “{query.trim()}”.
+          </p>
+        {/if}
+      {/each}
+    {:else}
+      <FileTree
+        {entries}
+        {expanded}
+        selected={openFile}
+        ontoggle={toggleDirectory}
+        onopen={onopenfile}
+      />
     {/if}
   {/if}
 </section>

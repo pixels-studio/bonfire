@@ -374,7 +374,14 @@ export type TokenStats = {
   models: TokenRow[];
   days: TokenRow[];
 };
-export type Change = { path: string; index: string; worktree: string };
+export type Change = {
+  path: string;
+  index: string;
+  worktree: string;
+  /** Lines added and removed against HEAD; zero for binary files. */
+  additions: number;
+  deletions: number;
+};
 export type GitStatus = { isGit: boolean; branch: string; changes: Change[] };
 export type Entry = { name: string; directory: boolean };
 export type TerminalSnapshot = {
@@ -475,6 +482,7 @@ export const requests = {
   'git.diff': z.tuple([id, filePath]),
   'filesystem.list': z.tuple([id, filePath]),
   'filesystem.readFile': z.tuple([id, filePath]),
+  'filesystem.search': z.tuple([id, z.string().max(256)]),
   'filesystem.watch': z.tuple([id]),
   'filesystem.unwatch': z.tuple([id]),
 };
@@ -613,6 +621,8 @@ export type API = {
   filesystem: {
     list(sessionId: string, path: string): Promise<Entry[]>;
     readFile(sessionId: string, path: string): Promise<string>;
+    /** Workspace file paths matching `query`, best match first. */
+    search(sessionId: string, query: string): Promise<string[]>;
     watch(sessionId: string): Promise<void>;
     unwatch(sessionId: string): Promise<void>;
     onChange(listener: (event: FileChangeEvent) => void): Unsubscribe;
