@@ -112,6 +112,60 @@
   );
 }
 
+/* Modals keep their centered origin; they ease in fast and leave faster. */
+@keyframes dialog-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+}
+
+@keyframes dialog-out {
+  to {
+    opacity: 0;
+    transform: scale(0.98);
+  }
+}
+
+@keyframes overlay-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes overlay-out {
+  to {
+    opacity: 0;
+  }
+}
+
+@utility dialog-motion {
+  &[data-state='open'] {
+    animation: dialog-in 200ms cubic-bezier(0.19, 1, 0.22, 1);
+  }
+  &[data-state='closed'] {
+    animation: dialog-out 150ms cubic-bezier(0.19, 1, 0.22, 1) forwards;
+  }
+  /* Reduced motion keeps the fade and drops the scale. */
+  @media (prefers-reduced-motion: reduce) {
+    &[data-state='open'] {
+      animation-name: overlay-in;
+    }
+    &[data-state='closed'] {
+      animation-name: overlay-out;
+    }
+  }
+}
+
+@utility overlay-motion {
+  &[data-state='open'] {
+    animation: overlay-in 200ms ease-out;
+  }
+  &[data-state='closed'] {
+    animation: overlay-out 150ms ease-out forwards;
+  }
+}
+
 @utility scrollbar-none {
   scrollbar-width: none;
 }

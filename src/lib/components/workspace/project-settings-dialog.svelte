@@ -11,7 +11,7 @@
   import type { Project, ProjectSettings } from '$shared/contracts';
   import { DEFAULT_FILES_TO_COPY, errorMessage } from '$shared/domain';
 
-  type Override = 'default' | 'on' | 'off';
+  type Choice = 'on' | 'off';
 
   let {
     open = $bindable(),
@@ -28,23 +28,17 @@
   let archiveScript = $state('');
   let filesToCopy = $state('');
   let branchPrefix = $state('');
-  let archiveOnMerge = $state<Override>('default');
-  let deleteBranchOnArchive = $state<Override>('default');
+  // Undefined until the user picks one, so the project keeps following Settings.
+  let archiveOnMerge = $state<boolean | undefined>();
+  let deleteBranchOnArchive = $state<boolean | undefined>();
   let saving = $state(false);
   let firstField = $state<HTMLInputElement | null>(null);
 
-  const toOverride = (value?: boolean): Override =>
-    value === undefined ? 'default' : value ? 'on' : 'off';
-  const fromOverride = (value: Override) =>
-    value === 'default' ? undefined : value === 'on';
-  const overrideOptions = (fallback: boolean) => [
-    {
-      value: 'default' as const,
-      label: `Default (${fallback ? 'On' : 'Off'})`,
-    },
+  const choiceOptions = [
     { value: 'on' as const, label: 'On' },
     { value: 'off' as const, label: 'Off' },
   ];
+  const toChoice = (value: boolean): Choice => (value ? 'on' : 'off');
 
   // Each time the dialog opens it starts from the saved settings.
   $effect(() => {
@@ -55,8 +49,8 @@
     archiveScript = settings.archiveScript ?? '';
     filesToCopy = settings.filesToCopy ?? '';
     branchPrefix = settings.branchPrefix ?? '';
-    archiveOnMerge = toOverride(settings.archiveOnMerge);
-    deleteBranchOnArchive = toOverride(settings.deleteBranchOnArchive);
+    archiveOnMerge = settings.archiveOnMerge;
+    deleteBranchOnArchive = settings.deleteBranchOnArchive;
   });
 
   async function save(event: SubmitEvent) {
@@ -68,8 +62,8 @@
       archiveScript,
       filesToCopy,
       branchPrefix: branchPrefix.trim() || undefined,
-      archiveOnMerge: fromOverride(archiveOnMerge),
-      deleteBranchOnArchive: fromOverride(deleteBranchOnArchive),
+      archiveOnMerge,
+      deleteBranchOnArchive,
     };
     saving = true;
     try {
@@ -177,9 +171,11 @@
           {#snippet control(props)}
             <OptionSelect
               {...props}
-              options={overrideOptions(preferences.current.archiveOnMerge)}
-              value={archiveOnMerge}
-              onchange={(value) => (archiveOnMerge = value)}
+              options={choiceOptions}
+              value={toChoice(
+                archiveOnMerge ?? preferences.current.archiveOnMerge,
+              )}
+              onchange={(value) => (archiveOnMerge = value === 'on')}
             />
           {/snippet}
         </Setting>
@@ -190,11 +186,12 @@
           {#snippet control(props)}
             <OptionSelect
               {...props}
-              options={overrideOptions(
-                preferences.current.deleteBranchOnArchive,
+              options={choiceOptions}
+              value={toChoice(
+                deleteBranchOnArchive ??
+                  preferences.current.deleteBranchOnArchive,
               )}
-              value={deleteBranchOnArchive}
-              onchange={(value) => (deleteBranchOnArchive = value)}
+              onchange={(value) => (deleteBranchOnArchive = value === 'on')}
             />
           {/snippet}
         </Setting>
@@ -205,11 +202,12 @@
         <Button
           type="button"
           variant="secondary"
+          class="min-w-20"
           onclick={() => (open = false)}
         >
           Cancel
         </Button>
-        <Button type="submit" disabled={saving}>Save</Button>
+        <Button type="submit" class="min-w-20" disabled={saving}>Save</Button>
       </div>
     </form>
   </Dialog.Content>

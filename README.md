@@ -41,7 +41,7 @@ restart after main/preload edits.
    uncommitted changes), and optionally deletes its branch; it can be restored from **Archived**.
    With **Archive on merge** on, a workspace is archived when its branch's pull request merges.
    Branch prefix, archive on merge, and branch deletion are set in Settings › Worktrees and can be
-   overridden per project in **Project settings** (from the project menu), alongside the base
+   overridden per project in **Settings** (from the project menu), alongside the base
    branch and scripts.
 7. Conversations, workspaces, layout, and models persist. Quitting stops running turns and
    terminals.
