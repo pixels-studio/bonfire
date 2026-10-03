@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { buttonVariants } from '$lib/components/ui/button';
+  import { cn } from '$lib/utils';
   import Check from '@lucide/svelte/icons/check';
   import ChevronDown from '@lucide/svelte/icons/chevron-down';
   import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
@@ -8,20 +10,23 @@
   let {
     projects,
     active,
-    locked,
+    side = 'bottom',
     onselect,
     onadd,
+    onsettings,
     onremove,
   }: {
     projects: Project[];
     active?: Project;
-    /** The project can't change once the conversation has started. */
-    locked: boolean;
+    side?: 'top' | 'bottom';
     onselect: (id: string) => void;
     onadd: () => void;
-    onremove: (id: string) => void;
+    /** Shows per-project actions when given; without it the picker only picks. */
+    onsettings?: (id: string) => void;
+    onremove?: (id: string) => void;
   } = $props();
 
+  let menuOpen = $state(false);
   let favicons = $state<Record<string, string | null>>({});
   const requestedFavicons = new Set<string>();
 
@@ -51,29 +56,25 @@
   </span>
 {/snippet}
 
-{#if locked}
-  <span
-    class="flex max-w-[calc(50%-0.75rem)] min-w-0 items-center gap-2 text-sm text-foreground"
+<DropdownMenu.Root bind:open={menuOpen}>
+  <DropdownMenu.Trigger
+    class={cn(
+      buttonVariants({ variant: 'secondary' }),
+      'h-7.5 max-w-56 min-w-0 gap-2 py-0 pr-2.5 pl-2',
+    )}
   >
     {@render favicon(active)}
-    <span class="truncate">{active?.name}</span>
-  </span>
-{:else}
-  <DropdownMenu.Root>
-    <DropdownMenu.Trigger
-      class="flex max-w-[calc(50%-0.75rem)] min-w-0 items-center gap-2 text-sm text-foreground"
-    >
-      {@render favicon(active)}
-      <span class="truncate">{active?.name || 'Select project'}</span>
-      <ChevronDown class="size-3.5 shrink-0 text-muted-foreground" />
-    </DropdownMenu.Trigger>
-    <DropdownMenu.Content align="start" side="top" class="w-56">
-      <DropdownMenu.Label>Projects</DropdownMenu.Label>
-      {#each projects as project (project.id)}
-        <DropdownMenu.Item class="gap-2" onclick={() => onselect(project.id)}>
-          {@render favicon(project)}
-          <span class="truncate">{project.name}</span>
-          {#if project.id === active?.id}<Check class="size-4 shrink-0" />{/if}
+    <span class="truncate">{active?.name || 'Select project'}</span>
+    <ChevronDown class="size-3.5 shrink-0 text-muted-foreground" />
+  </DropdownMenu.Trigger>
+  <DropdownMenu.Content align="start" {side} class="w-60">
+    <DropdownMenu.Label>Projects</DropdownMenu.Label>
+    {#each projects as project (project.id)}
+      <DropdownMenu.Item class="gap-2" onclick={() => onselect(project.id)}>
+        {@render favicon(project)}
+        <span class="truncate">{project.name}</span>
+        {#if project.id === active?.id}<Check class="size-4 shrink-0" />{/if}
+        {#if onsettings || onremove}
           <DropdownMenu.Root>
             <DropdownMenu.Trigger>
               {#snippet child({ props })}
@@ -89,20 +90,32 @@
               {/snippet}
             </DropdownMenu.Trigger>
             <DropdownMenu.Content align="end">
-              <DropdownMenu.Item
-                variant="destructive"
-                onclick={() => onremove(project.id)}
-              >
-                Remove project
-              </DropdownMenu.Item>
+              {#if onsettings}
+                <DropdownMenu.Item
+                  onclick={() => {
+                    menuOpen = false;
+                    onsettings(project.id);
+                  }}
+                >
+                  <Icon name="settings" /> Project settings
+                </DropdownMenu.Item>
+              {/if}
+              {#if onremove}
+                <DropdownMenu.Item
+                  variant="destructive"
+                  onclick={() => onremove(project.id)}
+                >
+                  Remove project
+                </DropdownMenu.Item>
+              {/if}
             </DropdownMenu.Content>
           </DropdownMenu.Root>
-        </DropdownMenu.Item>
-      {/each}
-      <DropdownMenu.Separator />
-      <DropdownMenu.Item class="gap-2" onclick={onadd}>
-        <Icon name="plus" class="size-4" /> New project
+        {/if}
       </DropdownMenu.Item>
-    </DropdownMenu.Content>
-  </DropdownMenu.Root>
-{/if}
+    {/each}
+    <DropdownMenu.Separator />
+    <DropdownMenu.Item class="gap-2" onclick={onadd}>
+      <Icon name="plus" class="size-4" /> Project
+    </DropdownMenu.Item>
+  </DropdownMenu.Content>
+</DropdownMenu.Root>

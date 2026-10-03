@@ -4,18 +4,15 @@
   import Icon from '$lib/components/icon/icon.svelte';
   import RequestView from '../conversation/request-view.svelte';
   import TurnView from '../conversation/turn-view.svelte';
-  import Inspector from '../inspector/inspector.svelte';
-  import ApprovalPicker from './approval-picker.svelte';
   import AssistantHeader from './assistant-header.svelte';
-  import BranchPicker from './branch-picker.svelte';
   import Composer from './composer.svelte';
   import ContextUsage from './context-usage.svelte';
   import EffortPicker from './effort-picker.svelte';
   import ModelSelect from './model-select.svelte';
-  import ProjectPicker from './project-picker.svelte';
   import QueuedPrompts from './queued-prompts.svelte';
   import { DEFAULT_CONTEXT_WINDOWS } from '$lib/models';
   import { catalog } from '$lib/stores/models.svelte';
+  import { preferences } from '$lib/stores/preferences.svelte';
   import {
     DEFAULT_TITLE,
     PROVIDER_LABELS,
@@ -23,11 +20,10 @@
     isDefaultTitle,
     titleFrom,
   } from '$shared/domain';
-  import type { PaneSize, PaneView } from '$lib/panes';
+  import type { PaneSize } from '$lib/panes';
   import type { HTMLButtonAttributes } from 'svelte/elements';
   import { toast } from '$lib/stores/toast.svelte';
   import type {
-    ApprovalMode,
     AssistantEvent,
     AssistantProvider,
     AssistantRequest,
@@ -35,39 +31,23 @@
     ConversationMessage,
     FollowUpMode,
     Pane,
-    Project,
     QueuedPrompt,
     ReasoningEffort,
-    Session,
     Usage,
   } from '$shared/contracts';
 
   let {
     pane,
-    session,
-    projects,
-    project,
-    onselectproject,
-    onaddproject,
-    onremoveproject,
     dragHandle,
-    onarchive,
+    onclose,
     onresize,
-    onrefresh,
     onswitchprovider,
     onretype,
   }: {
     pane: Pane;
-    session?: Session;
-    projects: Project[];
-    project?: Project;
-    onselectproject: (projectId: string) => void;
-    onaddproject: () => void;
-    onremoveproject: (projectId: string) => void;
     dragHandle: HTMLButtonAttributes;
-    onarchive: () => void;
+    onclose: () => void;
     onresize: (size: PaneSize) => void;
-    onrefresh: () => void;
     onswitchprovider: (provider: AssistantProvider, model: string) => void;
     onretype: (provider: AssistantProvider, model: string) => void;
   } = $props();
@@ -87,13 +67,11 @@
   /** Spoken to screen readers in place of the streaming text, which would be read out token by token. */
   let announcement = $state('');
   let error = $state('');
-  let view = $state<PaneView>('chat');
   let feed = $state<HTMLDivElement>();
   let title = $state(
     untrack(() => (isDefaultTitle(pane.title) ? DEFAULT_TITLE : pane.title)),
   );
   let effort = $state<ReasoningEffort>(untrack(() => pane.reasoningEffort));
-  let approvals = $state<ApprovalMode>(untrack(() => pane.approvals));
   let model = $state(
     untrack(() => {
       const available = catalog.for(provider);
@@ -244,7 +222,7 @@
       attachmentIds,
       model,
       reasoningEffort: effort,
-      approvals,
+      approvals: preferences.current.approvals,
     };
     if (followUp) {
       // Resolves once the message is queued or has joined the running turn.
@@ -318,118 +296,86 @@
 </script>
 
 <Card.Root class="h-full min-w-0">
-  <AssistantHeader
-    {title}
-    bind:view
-    toolsDisabled={!session}
-    {dragHandle}
-    {onresize}
-    {onarchive}
-  />
+  <AssistantHeader {title} {dragHandle} {onresize} {onclose} />
 
   <p class="sr-only" role="status">{announcement}</p>
 
   <div class="relative min-h-0 flex-1">
-    {#if view === 'chat'}
+    <div
+      bind:this={feed}
+      bind:clientHeight={feedHeight}
+      class="absolute inset-0 flex flex-col overflow-y-auto px-4 pt-6 pb-7 motion-safe:scroll-smooth"
+      onscroll={trackFollowing}
+    >
       <div
-        bind:this={feed}
-        bind:clientHeight={feedHeight}
-        class="absolute inset-0 flex flex-col overflow-y-auto px-4 pt-6 pb-7 motion-safe:scroll-smooth"
-        onscroll={trackFollowing}
+        class="@container mx-auto flex w-full max-w-3xl flex-1 flex-col gap-6"
       >
-        <div
-          class="@container mx-auto flex w-full max-w-3xl flex-1 flex-col gap-6"
-        >
-          {#each turns.slice(0, -1) as turn (turn[0].id)}
-            <TurnView messages={turn} expanded={!!watched[turn[0].id]} />
-          {/each}
-          {#if messages.length}
-            <!-- The latest turn fills the feed so a new prompt can sit at the top. -->
-            <div
-              bind:this={latest}
-              class="flex scroll-mt-6 flex-col gap-6"
-              style:min-height={`${Math.max(0, feedHeight - FEED_PADDING)}px`}
-            >
-              <div bind:this={latestContent} class="flex flex-col gap-6">
-                <TurnView
-                  messages={lastTurn}
-                  expanded={!!watched[lastTurn[0].id]}
+        {#each turns.slice(0, -1) as turn (turn[0].id)}
+          <TurnView messages={turn} expanded={!!watched[turn[0].id]} />
+        {/each}
+        {#if messages.length}
+          <!-- The latest turn fills the feed so a new prompt can sit at the top. -->
+          <div
+            bind:this={latest}
+            class="flex scroll-mt-6 flex-col gap-6"
+            style:min-height={`${Math.max(0, feedHeight - FEED_PADDING)}px`}
+          >
+            <div bind:this={latestContent} class="flex flex-col gap-6">
+              <TurnView
+                messages={lastTurn}
+                expanded={!!watched[lastTurn[0].id]}
+              />
+              {#if running && !assistantStarted && !requests.length}
+                <p class="w-fit text-sm shimmer-text">Thinking</p>
+              {/if}
+              {#each requests as request (request.id)}
+                <RequestView
+                  {request}
+                  onrespond={(response) => respond(request, response)}
                 />
-                {#if running && !assistantStarted && !requests.length}
-                  <p class="w-fit text-sm shimmer-text">Thinking</p>
-                {/if}
-                {#each requests as request (request.id)}
-                  <RequestView
-                    {request}
-                    onrespond={(response) => respond(request, response)}
-                  />
-                {/each}
-                {#if error}<p class="text-sm text-destructive" role="alert">
-                    {error}
-                  </p>{/if}
-              </div>
-            </div>
-          {:else}
-            <div
-              class="grid flex-1 place-content-center justify-items-center gap-1 text-center text-muted-foreground"
-            >
-              <Icon name={provider} class="size-6" />
-              <p class="max-w-65 text-sm text-pretty">
-                Ask {providerLabel} to explore, explain, or change this project.
-              </p>
+              {/each}
               {#if error}<p class="text-sm text-destructive" role="alert">
                   {error}
                 </p>{/if}
             </div>
-          {/if}
-        </div>
-      </div>
-    {:else if !session}
-      <!-- Tool views need a project; the header disables them until one is chosen. -->
-    {:else if view === 'terminal'}
-      {#await import('../terminal-pane/terminal-pane.svelte') then { default: TerminalPane }}
-        <TerminalPane sessionId={session.id} paneId={pane.id} />
-      {/await}
-    {:else}
-      {#key view}<Inspector {session} initialMode={view} />{/key}
-    {/if}
-  </div>
-
-  {#if view === 'chat'}
-    <div class="shrink-0 px-4 pb-4">
-      <div class="mx-auto max-w-3xl">
-        <div class="flex min-w-0 items-center gap-6 px-0.5 py-3">
-          <ProjectPicker
-            {projects}
-            active={project}
-            locked={messages.length > 0}
-            onselect={onselectproject}
-            onadd={onaddproject}
-            onremove={onremoveproject}
-          />
-          {#if session}<BranchPicker {session} onswitch={onrefresh} />{/if}
-        </div>
-        {#if queue.length}
-          <QueuedPrompts
-            {queue}
-            {running}
-            onsend={(id) => runQueued('sendQueued', id)}
-            onremove={(id) => runQueued('unqueue', id)}
-          />
+          </div>
+        {:else}
+          <div
+            class="grid flex-1 place-content-center justify-items-center gap-1 text-center text-muted-foreground"
+          >
+            <Icon name={provider} class="size-6" />
+            <p class="max-w-65 text-sm text-pretty">
+              Ask {providerLabel} to explore, explain, or change this project.
+            </p>
+            {#if error}<p class="text-sm text-destructive" role="alert">
+                {error}
+              </p>{/if}
+          </div>
         {/if}
-        <Composer
-          paneId={pane.id}
-          label={`Message ${providerLabel}`}
-          {running}
-          disabled={!session}
-          onsend={send}
-        >
-          <ModelSelect value={model} onchange={changeModel} />
-          <EffortPicker bind:value={effort} />
-          <ApprovalPicker bind:value={approvals} />
-          <ContextUsage {usage} {contextWindow} />
-        </Composer>
       </div>
     </div>
-  {/if}
+  </div>
+
+  <div class="shrink-0 px-4 pb-4">
+    <div class="mx-auto max-w-3xl">
+      {#if queue.length}
+        <QueuedPrompts
+          {queue}
+          {running}
+          onsend={(id) => runQueued('sendQueued', id)}
+          onremove={(id) => runQueued('unqueue', id)}
+        />
+      {/if}
+      <Composer
+        paneId={pane.id}
+        label={`Message ${providerLabel}`}
+        {running}
+        onsend={send}
+      >
+        <ModelSelect value={model} onchange={changeModel} />
+        <EffortPicker bind:value={effort} />
+        <ContextUsage {usage} {contextWindow} />
+      </Composer>
+    </div>
+  </div>
 </Card.Root>

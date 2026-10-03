@@ -21,17 +21,34 @@ restart after main/preload edits.
 
 ## Use
 
-1. Add Claude or Codex chat panes with **＋** in the header; pick a model and thinking effort
-   in the composer. Switching provider mid-chat opens a new pane.
-2. Choose each pane's project from the picker above its composer (**New project** adds a local
-   repository). Panes can target different projects; the project locks after the first message.
-3. Panes operate directly in their project's own working directory and branch, and use your
-   existing CLI login. Switch branches from the picker above the composer.
-4. Each pane's toolbar toggles a file browser, a shell terminal, and the Git diff view.
-5. Conversations, layout, and models persist. Quitting stops running turns and terminals.
+1. Pick a project and workspace in the header (**New project** adds a local repository). Help,
+   Insights, and Settings live in the rail on the left.
+2. A **workspace** is one task: its own folder and branch, shared by any number of panes. Each
+   project has a default workspace on the project folder itself. **New workspace** (⇧⌘N) creates a
+   git worktree on a new branch, `bonfire/<name>`, off the chosen base (the remote default branch
+   after a fetch), named after a planet, dwarf planet, or moon. An optional first prompt starts a
+   pane on it straight away; once the conversation has a title, an unpushed branch is renamed after
+   it, such as `bonfire/fix-dropdown-height`.
+3. New workspaces get ignored files copied from the project folder (`.worktreeinclude`, else the
+   project's **Files to copy**, else `.env*`), then run the project's **setup script** in a login
+   shell; its output is the **Setup** tab of the workspace terminal. Scripts and terminals get
+   `BONFIRE_WORKSPACE_NAME`, `BONFIRE_WORKSPACE_PATH`, `BONFIRE_ROOT_PATH`,
+   `BONFIRE_DEFAULT_BRANCH`, and `BONFIRE_PORT` (the first of ten ports kept for the workspace).
+4. Add Claude or Codex panes with **＋**; pick a model and thinking effort in the composer.
+   Switching provider mid-chat opens a new pane. Panes use your existing CLI login.
+5. The header's Files, Terminal, and Diff buttons open a panel for the workspace beside its panes.
+6. Archiving a workspace runs the project's **archive script**, removes its folder (kept if it has
+   uncommitted changes), and optionally deletes its branch; it can be restored from **Archived**.
+   With **Archive on merge** on, a workspace is archived when its branch's pull request merges.
+   Branch prefix, archive on merge, and branch deletion are set in Settings › Worktrees and can be
+   overridden per project in **Project settings** (from the project menu), alongside the base
+   branch and scripts.
+7. Conversations, workspaces, layout, and models persist. Quitting stops running turns and
+   terminals.
 
-Project removal only removes Bonfire metadata and stops associated processes; project folders
-are never modified or deleted.
+Worktrees live in `worktrees/` inside the Bonfire user-data directory.
+Project removal removes Bonfire metadata, stops associated processes, and removes the project's
+clean worktrees; project folders are never modified or deleted.
 
 ## Architecture
 

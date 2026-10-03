@@ -1,4 +1,6 @@
+import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
+import type { Attachment } from '../../shared/contracts';
 
 export type ImageMimeType =
   'image/png' | 'image/webp' | 'image/gif' | 'image/jpeg';
@@ -21,4 +23,73 @@ export async function readImage(path: string) {
     base64,
     previewUrl: `data:${mimeType};base64,${base64}`,
   };
+}
+
+const PASTED_TEXT_NAME = 'Pasted text.txt';
+
+/** An attachment waiting to be sent, owned by a pane or by a draft that becomes one. */
+export type PendingAttachment = Attachment & { paneId: string } & (
+    | { kind: 'image'; path: string; mimeType: ImageMimeType; base64: string }
+    | { kind: 'text'; text: string }
+  );
+
+/** Attachments picked or pasted but not yet sent, shared by every provider. */
+export class PendingAttachments {
+  private readonly items = new Map<string, PendingAttachment>();
+
+  async addImage(paneId: string, file: { name: string; path: string }) {
+    const { size, previewUrl, mimeType, base64 } = await readImage(file.path);
+    const attachment = { id: randomUUID(), name: file.name, size, previewUrl };
+    this.items.set(attachment.id, {
+      ...attachment,
+      paneId,
+      kind: 'image',
+      path: file.path,
+      mimeType,
+      base64,
+    });
+    return attachment;
+  }
+
+  /** Holds pasted text as an attachment, so a long paste doesn't flood the message. */
+  addText(paneId: string, text: string): Attachment {
+    const attachment = {
+      id: randomUUID(),
+      name: PASTED_TEXT_NAME,
+      size: Buffer.byteLength(text),
+    };
+    this.items.set(attachment.id, {
+      ...attachment,
+      paneId,
+      kind: 'text',
+      text,
+    });
+    return attachment;
+  }
+
+  /** The pane's attachments with these ids; throws if any is gone or belongs elsewhere. */
+  get(paneId: string, ids: string[]) {
+    return ids.map((id) => {
+      const attachment = this.items.get(id);
+      if (attachment?.paneId !== paneId)
+        throw Error('Attachment is no longer available');
+      return attachment;
+    });
+  }
+
+  delete(ids: Iterable<string>) {
+    for (const id of ids) this.items.delete(id);
+  }
+
+  /** Drops everything the pane or draft still holds. */
+  discard(paneId: string) {
+    for (const [id, attachment] of this.items)
+      if (attachment.paneId === paneId) this.items.delete(id);
+  }
+
+  /** Hands a draft's attachments to the pane created from it. */
+  transfer(from: string, to: string) {
+    for (const attachment of this.items.values())
+      if (attachment.paneId === from) attachment.paneId = to;
+  }
 }

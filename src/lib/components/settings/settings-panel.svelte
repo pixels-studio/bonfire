@@ -17,6 +17,7 @@
   import ProviderSetting from './provider-setting.svelte';
   import Setting from './setting.svelte';
   import SettingsSection from './settings-section.svelte';
+  import WorktreeSettings from './worktree-settings.svelte';
 
   const FOLLOW_UPS: { value: FollowUpMode; label: string }[] = [
     { value: 'queue', label: 'Queue' },
@@ -130,7 +131,7 @@
         />
       {/snippet}
     </Setting>
-    <Setting title="Permissions" description="What new panes may do unasked">
+    <Setting title="Permissions" description="What agents may do unasked">
       {#snippet control(props)}
         <OptionSelect
           {...props}
@@ -177,6 +178,10 @@
         />
       {/snippet}
     </Setting>
+  </SettingsSection>
+
+  <SettingsSection title="Worktrees" icon="git">
+    <WorktreeSettings />
   </SettingsSection>
 
   <SettingsSection title="Providers" icon="section-providers">

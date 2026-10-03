@@ -6,13 +6,22 @@ import type {
   TerminalSnapshot,
 } from '../../shared/contracts';
 import type { Store } from './persistence';
+import {
+  defaultShell,
+  isWindows,
+  terminalEnvironment,
+  type WorkspaceEnvironment,
+} from './shell';
 
 const SCROLLBACK_BYTES = 1024 * 1024;
 
 type TerminalRecord = TerminalSnapshot & {
-  paneId: string;
+  /** Unset for the workspace's own terminals. */
+  paneId?: string;
   sessionId: string;
   type: TerminalCreateInput['type'];
+  /** Which of the workspace's own shells this is; unset for pane terminals. */
+  tab?: number;
   process: pty.IPty;
 };
 
@@ -22,41 +31,100 @@ export class Terminals {
   constructor(
     private readonly store: Store,
     private readonly emit: (event: TerminalEvent) => void,
+    private readonly environment: (sessionId: string) => WorkspaceEnvironment,
   ) {}
 
-  /** Starts a PTY for the pane, or returns its running one. Shells may attach to any pane. */
-  create({ sessionId, paneId, type }: TerminalCreateInput) {
+  /**
+   * Starts a PTY for the workspace, or for one of its panes, or returns the running one.
+   * Shells may attach to any pane; `setup` only finds the workspace's setup script.
+   */
+  create({ sessionId, paneId, type, tab = 0 }: TerminalCreateInput) {
     const session = this.store.session(sessionId);
-    const pane = this.store.pane(paneId);
-    const paneTerminalType = pane.type === 'terminal' ? 'shell' : pane.type;
-    if (
-      pane.sessionId !== session.id ||
-      (type !== 'shell' && type !== paneTerminalType)
-    )
-      throw Error('Pane/session mismatch');
-
-    for (const [id, record] of this.records)
+    if (type === 'setup') {
+      const setup = this.find(
+        (record) => record.sessionId === session.id && record.type === 'setup',
+      );
+      if (!setup) throw Error('No setup script has run in this workspace');
+      return setup;
+    }
+    if (paneId) {
+      const pane = this.store.pane(paneId);
+      const paneTerminalType = pane.type === 'terminal' ? 'shell' : pane.type;
       if (
-        record.paneId === pane.id &&
-        record.type === type &&
-        record.exitCode === undefined
+        pane.sessionId !== session.id ||
+        (type !== 'shell' && type !== paneTerminalType)
       )
-        return id;
+        throw Error('Pane/session mismatch');
+    } else if (type !== 'shell') throw Error('Only shells run without a pane');
+
+    const owner = {
+      sessionId: session.id,
+      paneId,
+      type,
+      tab: paneId ? undefined : tab,
+    };
+    const running = this.find(
+      (record) =>
+        record.sessionId === owner.sessionId &&
+        record.paneId === owner.paneId &&
+        record.type === owner.type &&
+        record.tab === owner.tab &&
+        record.exitCode === undefined,
+    );
+    if (running) return running;
 
     const command = type === 'shell' ? defaultShell() : type;
+    return this.spawn(
+      owner,
+      command,
+      type === 'shell' && !isWindows() ? ['-l'] : [],
+      session.worktreePath,
+    );
+  }
+
+  /**
+   * Runs the workspace's setup script in a login shell, replacing any earlier run, and
+   * resolves with its exit code. Its output is what `create({ type: 'setup' })` shows.
+   */
+  runSetup(sessionId: string, script: string) {
+    const session = this.store.session(sessionId);
+    this.closeWhere(
+      (record) => record.sessionId === sessionId && record.type === 'setup',
+    );
+    const id = this.spawn(
+      { sessionId, type: 'setup' },
+      defaultShell(),
+      isWindows() ? ['-Command', script] : ['-l', '-c', script],
+      session.worktreePath,
+    );
+    const record = this.get(id);
+    return new Promise<number>((resolve) =>
+      record.process.onExit(({ exitCode }) => resolve(exitCode)),
+    );
+  }
+
+  private find(matches: (record: TerminalRecord) => boolean) {
+    for (const [id, record] of this.records) if (matches(record)) return id;
+  }
+
+  private spawn(
+    owner: Pick<TerminalRecord, 'sessionId' | 'paneId' | 'type' | 'tab'>,
+    command: string,
+    args: string[],
+    cwd: string,
+  ) {
     let process: pty.IPty;
     try {
-      process = pty.spawn(
-        command,
-        type === 'shell' && !isWindows() ? ['-l'] : [],
-        {
-          name: 'xterm-256color',
-          cols: 80,
-          rows: 24,
-          cwd: session.worktreePath,
-          env: terminalEnvironment(),
+      process = pty.spawn(command, args, {
+        name: 'xterm-256color',
+        cols: 80,
+        rows: 24,
+        cwd,
+        env: {
+          ...terminalEnvironment(),
+          ...this.environment(owner.sessionId),
         },
-      );
+      });
     } catch (cause) {
       throw Error(
         `Could not launch ${command}. Install the CLI and ensure it is on PATH. ${String(cause)}`,
@@ -65,9 +133,7 @@ export class Terminals {
 
     const id = randomUUID();
     const record: TerminalRecord = {
-      paneId: pane.id,
-      sessionId: session.id,
-      type,
+      ...owner,
       process,
       sequence: 0,
       data: '',
@@ -103,6 +169,17 @@ export class Terminals {
     this.closeWhere((record) => record.sessionId === sessionId);
   }
 
+  /** Ends the workspace's own shell in a tab; its scrollback goes with it. */
+  closeTab(sessionId: string, tab: number) {
+    this.closeWhere(
+      (record) =>
+        record.sessionId === sessionId &&
+        !record.paneId &&
+        record.type === 'shell' &&
+        record.tab === tab,
+    );
+  }
+
   closePane(paneId: string) {
     this.closeWhere((record) => record.paneId === paneId);
   }
@@ -129,22 +206,4 @@ export class Terminals {
     const record = this.get(id);
     if (record.exitCode === undefined) record.process.kill();
   }
-}
-
-function isWindows() {
-  return process.platform === 'win32';
-}
-
-function defaultShell() {
-  return process.env.SHELL || (isWindows() ? 'powershell.exe' : '/bin/sh');
-}
-
-function terminalEnvironment() {
-  const env = Object.fromEntries(
-    Object.entries(process.env).filter(
-      (entry): entry is [string, string] => entry[1] !== undefined,
-    ),
-  );
-  delete env.ELECTRON_RUN_AS_NODE;
-  return { ...env, TERM: 'xterm-256color', COLORTERM: 'truecolor' };
 }

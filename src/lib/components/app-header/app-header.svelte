@@ -1,11 +1,14 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import type { Snippet } from 'svelte';
   import { Button } from '$lib/components/ui/button';
+  import WindowControls from './window-controls.svelte';
   import Icon from '$lib/components/icon/icon.svelte';
-  import InsightsPopover from '$lib/components/insights/insights-popover.svelte';
-  import SettingsPopover from '$lib/components/settings/settings-popover.svelte';
+  import {
+    WORKSPACE_VIEWS,
+    type WorkspaceView,
+  } from '$lib/components/workspace/workspace-panel.svelte';
   import type { PaneStatus } from '$lib/pane-status.svelte';
-  import { cn, isMac } from '$lib/utils';
+  import { cn } from '$lib/utils';
 
   type HeaderAction = {
     icon: string;
@@ -24,14 +27,14 @@
       ring: 'border-foreground/40',
     },
     working: {
-      slot: 'hover:bg-brand/10',
-      dot: 'bg-brand',
-      ring: 'border-brand',
+      slot: 'hover:bg-success/10',
+      dot: 'bg-success',
+      ring: 'border-success',
     },
     input: {
-      slot: 'hover:bg-warning/10',
-      dot: 'bg-warning',
-      ring: 'border-warning',
+      slot: 'hover:bg-orange-400/10',
+      dot: 'bg-orange-400',
+      ring: 'border-orange-400',
     },
     error: {
       slot: 'hover:bg-destructive/10',
@@ -51,16 +54,20 @@
     panes,
     canAddPane,
     onselectPane,
-    onhelp,
+    view = $bindable(),
+    viewsDisabled,
+    location,
   }: {
     onaddPane: () => void;
     panes: { id: string; status: PaneStatus; inView: boolean }[];
     canAddPane: boolean;
     onselectPane: (paneId: string) => void;
-    onhelp: () => void;
+    /** The workspace view open beside the panes, if any. */
+    view?: WorkspaceView;
+    viewsDisabled: boolean;
+    /** The project and workspace pickers. */
+    location: Snippet;
   } = $props();
-
-  let fullscreen = $state(false);
 
   const paneActions = $derived<HeaderAction[]>([
     {
@@ -71,18 +78,6 @@
     },
   ]);
   const UTILITY_BUTTON_CLASS = 'text-muted-foreground hover:text-foreground';
-  const helpAction: HeaderAction = {
-    icon: 'help',
-    label: 'Help',
-    onclick: () => onhelp(),
-  };
-
-  onMount(() => {
-    window.bonfire.app.isFullscreen().then((value) => (fullscreen = value));
-    return window.bonfire.app.onFullscreenChange(
-      (value) => (fullscreen = value),
-    );
-  });
 </script>
 
 {#snippet actionButtons(actions: HeaderAction[], className?: string)}
@@ -101,13 +96,17 @@
 {/snippet}
 
 <header
-  class={cn(
-    'sticky top-0 z-20 flex min-h-13 shrink-0 items-center justify-between bg-background px-4 py-2 app-drag',
-    isMac() && !fullscreen && 'pl-22',
-  )}
+  class="sticky top-0 z-20 flex min-h-13 shrink-0 items-center justify-between bg-background py-2 pr-4 app-drag"
 >
+  <div class="flex min-w-0 items-center gap-2 app-no-drag">
+    <div class="flex min-w-0 items-center gap-2">
+      {@render location()}
+    </div>
+    <div class="flex items-center gap-2">
+      {@render actionButtons(paneActions)}
+    </div>
+  </div>
   <div class="flex items-center gap-3 app-no-drag">
-    {@render actionButtons(paneActions)}
     {#if panes.length > 3}
       <nav
         class="flex h-7.5 items-center gap-0.5 rounded-full bg-secondary px-0.5"
@@ -134,11 +133,30 @@
           </button>
         {/each}
       </nav>
+      <div
+        class="h-4 w-0.5 rounded-full bg-foreground/20"
+        role="separator"
+        aria-orientation="vertical"
+      ></div>
     {/if}
-  </div>
-  <div class="flex items-center gap-3 app-no-drag">
-    {@render actionButtons([helpAction], UTILITY_BUTTON_CLASS)}
-    <InsightsPopover class={UTILITY_BUTTON_CLASS} />
-    <SettingsPopover class={UTILITY_BUTTON_CLASS} />
+    {#each WORKSPACE_VIEWS as item (item.view)}
+      <Button
+        variant={view === item.view ? 'default' : 'secondary'}
+        size="icon"
+        class={cn(view !== item.view && UTILITY_BUTTON_CLASS)}
+        aria-label={item.label}
+        aria-pressed={view === item.view}
+        disabled={viewsDisabled}
+        onclick={() => (view = view === item.view ? undefined : item.view)}
+      >
+        <Icon name={item.icon} />
+      </Button>
+    {/each}
+    <div
+      class="h-4 w-0.5 rounded-full bg-foreground/20"
+      role="separator"
+      aria-orientation="vertical"
+    ></div>
+    <WindowControls />
   </div>
 </header>

@@ -1,4 +1,11 @@
-import type { AssistantProvider, Preferences, State } from './contracts';
+import type {
+  AssistantProvider,
+  Preferences,
+  Project,
+  ProjectSettings,
+  Session,
+  State,
+} from './contracts';
 
 export const DEFAULT_TITLE = 'New Conversation';
 const TITLE_MAX_LENGTH = 42;
@@ -56,6 +63,8 @@ export const DEFAULT_PREFERENCES: Preferences = {
   claudeOutputStyle: 'default',
   codexPersonality: 'default',
   archiveOnMerge: false,
+  branchPrefix: 'bonfire/',
+  deleteBranchOnArchive: false,
   caffeinate: true,
 };
 
@@ -81,4 +90,113 @@ export function reorderLayout(paneIds: string[], ids: string[]) {
     throw new Error('Invalid pane order');
   const queue = [...ids];
   return paneIds.map((id) => (moving.has(id) ? queue.shift()! : id));
+}
+
+/** Short names for workspace folders: planets, dwarf planets, and moons. */
+export const WORKSPACE_NAMES = [
+  'mercury',
+  'venus',
+  'earth',
+  'mars',
+  'jupiter',
+  'saturn',
+  'uranus',
+  'neptune',
+  'pluto',
+  'ceres',
+  'eris',
+  'haumea',
+  'makemake',
+  'sedna',
+  'luna',
+  'phobos',
+  'deimos',
+  'io',
+  'europa',
+  'ganymede',
+  'callisto',
+  'titan',
+  'enceladus',
+  'mimas',
+  'rhea',
+  'iapetus',
+  'dione',
+  'tethys',
+  'miranda',
+  'ariel',
+  'oberon',
+  'titania',
+  'triton',
+  'charon',
+];
+
+/**
+ * A random workspace name not in `taken`. Once every name is in use, names get a
+ * number: `europa-2`, then `europa-3`.
+ */
+export function pickWorkspaceName(
+  taken: (name: string) => boolean,
+  random = Math.random,
+) {
+  for (let round = 1; ; round++) {
+    const free = WORKSPACE_NAMES.map((name) =>
+      round === 1 ? name : `${name}-${round}`,
+    ).filter((name) => !taken(name));
+    if (free.length) return free[Math.floor(random() * free.length)];
+  }
+}
+
+const SLUG_MAX_LENGTH = 40;
+
+/** Turns a title into a branch-safe slug: "Fix dropdown height" becomes `fix-dropdown-height`. */
+export function slugify(text: string) {
+  return text
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .slice(0, SLUG_MAX_LENGTH)
+    .replace(/^-+|-+$/g, '');
+}
+
+/** `base`, or `base-2`, `base-3`… for the first one `taken` doesn't claim. */
+export function uniqueName(base: string, taken: (name: string) => boolean) {
+  if (!taken(base)) return base;
+  for (let suffix = 2; ; suffix++)
+    if (!taken(`${base}-${suffix}`)) return `${base}-${suffix}`;
+}
+
+export const DEFAULT_FILES_TO_COPY = '.env*';
+
+/** A project's settings, with its overrides applied over the app-wide preferences. */
+export function resolveProjectSettings(
+  project: Project,
+  preferences: Preferences,
+): ProjectSettings & {
+  branchPrefix: string;
+  archiveOnMerge: boolean;
+  deleteBranchOnArchive: boolean;
+} {
+  const { settings } = project;
+  return {
+    baseBranch: settings.baseBranch ?? '',
+    setupScript: settings.setupScript ?? '',
+    archiveScript: settings.archiveScript ?? '',
+    filesToCopy: settings.filesToCopy ?? '',
+    branchPrefix: settings.branchPrefix ?? preferences.branchPrefix,
+    archiveOnMerge: settings.archiveOnMerge ?? preferences.archiveOnMerge,
+    deleteBranchOnArchive:
+      settings.deleteBranchOnArchive ?? preferences.deleteBranchOnArchive,
+  };
+}
+
+/** Whether the workspace is a worktree of its own rather than the project folder. */
+export function isWorktree(session: Session) {
+  return session.name !== undefined;
+}
+
+/** What a workspace is called in menus. */
+export function workspaceLabel(session: Session) {
+  if (!isWorktree(session)) return 'Project folder';
+  return session.title || session.name!;
 }
