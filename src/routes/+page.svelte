@@ -760,7 +760,16 @@
       onselectPanel={scrollToPanel}
     />
     <div class="flex min-w-0 flex-1 flex-col">
-      <AppHeader {trafficLightInset} bind:pullRequestOpen disabled={!project}>
+      <AppHeader
+        {trafficLightInset}
+        bind:pullRequestOpen
+        disabled={!project}
+        paneCount={panes.length}
+        onclosePanes={() =>
+          void runAction(async () => {
+            for (const { id } of panes) await window.bonfire.panes.archive(id);
+          })}
+      >
         {#snippet location()}
           <ProjectPicker
             projects={workspace.projects}

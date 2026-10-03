@@ -111,7 +111,7 @@ export const CAFFEINATE_BATTERY_FLOOR = 10;
 
 export const ACTION_LABELS: Record<ActionId, string> = {
   createPr: 'Create PR',
-  push: 'Push',
+  push: 'Push changes',
   resolveConflicts: 'Resolve conflicts',
   fixChecks: 'Fix checks',
 };

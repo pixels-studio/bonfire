@@ -11,7 +11,13 @@
     disabled,
     location,
     trafficLightInset = false,
+    paneCount = 0,
+    onclosePanes,
   }: {
+    /** How many panes are open, which the close button acts on. */
+    paneCount?: number;
+    /** Closes every open pane. */
+    onclosePanes?: () => void;
     /** Whether the pull request pane is open after the panes. */
     pullRequestOpen?: boolean;
     /** No project is open, so there is no pull request to show. */
@@ -45,7 +51,7 @@
   const UTILITY_BUTTON_CLASS = 'text-muted-foreground hover:text-foreground';
   const PILL_BUTTON_CLASS = 'min-w-36 rounded-full px-3';
   /** Each action has its own color, so what a button does shows before it is read. */
-  const PUSH_BUTTON_CLASS = 'bg-success text-white hover:bg-success/85';
+  const PUSH_BUTTON_CLASS = 'bg-green-700 text-white hover:bg-green-700/85';
   const CONFLICTS_BUTTON_CLASS =
     'bg-amber-500 text-black hover:bg-amber-500/85';
   const CHECKS_BUTTON_CLASS =
@@ -126,6 +132,16 @@
     {:else if pullRequest.onBase}
       {#if pullRequest.pushable}
         {@render pushButton()}
+      {:else if paneCount > 0 && pullRequest.draft}
+        <Button
+          size="sm"
+          variant="secondary"
+          class={cn(PILL_BUTTON_CLASS, UTILITY_BUTTON_CLASS)}
+          title="Everything is pushed; close all panes"
+          onclick={onclosePanes}
+        >
+          Close Panes
+        </Button>
       {/if}
     {:else}
       <Button
