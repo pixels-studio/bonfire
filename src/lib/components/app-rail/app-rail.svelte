@@ -142,7 +142,7 @@
         onpointerenter={() => (logoHovered = true)}
         onpointerleave={() => (logoHovered = false)}
       >
-        <Logo class="size-7"active={logoHovered || working} />
+        <Logo class="size-7" active={logoHovered || working} />
       </div>
     </div>
     <div
