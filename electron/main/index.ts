@@ -98,6 +98,7 @@ async function createWindow() {
     minHeight: 550,
     backgroundColor: '#111111',
     title: 'Bonfire',
+    icon: resolve(__dirname, '../../static/icon.png'),
     // On macOS the native traffic lights sit over the header; elsewhere the
     // regular frame is kept so the window keeps its native controls.
     ...(process.platform === 'darwin'
@@ -165,6 +166,8 @@ app
   .whenReady()
   .then(async () => {
     serveBuild(resolve(__dirname, '../../build'));
+    // Packaged builds take the icon from the bundle; in development this replaces Electron's.
+    app.dock?.setIcon(resolve(__dirname, '../../static/icon.png'));
     backend = services({
       dataDirectory: app.getPath('userData'),
       chooseDirectory: async () => {

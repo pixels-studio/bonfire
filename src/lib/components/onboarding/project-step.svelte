@@ -8,6 +8,7 @@
   import { Button } from '$lib/components/ui/button';
   import { Input } from '$lib/components/ui/input';
   import { Label } from '$lib/components/ui/label';
+  import * as Select from '$lib/components/ui/select';
   import Icon from '$lib/components/icon/icon.svelte';
   import FolderDialog, { type Folder } from './folder-dialog.svelte';
   import RepositoryList from './repository-list.svelte';
@@ -20,7 +21,6 @@
     repositoryName,
   } from '$shared/domain';
   import { connections } from '$lib/stores/connections.svelte';
-  import { cn } from '$lib/utils';
 
   type Source = 'github' | 'url' | 'folder';
 
@@ -56,6 +56,8 @@
     { value: 'github', label: 'From GitHub', icon: 'github' },
     { value: 'url', label: 'Clone URL', icon: 'git' },
   ];
+
+  const current = $derived(SOURCES.find((option) => option.value === source)!);
 
   const canClone = $derived(
     source === 'url' || (source === 'github' && !!githubSignedIn),
@@ -130,28 +132,31 @@
 </script>
 
 <form id={FORM_ID} class="flex min-h-0 flex-1 flex-col gap-5" onsubmit={submit}>
-  <div
-    class="flex gap-10 border-b border-border"
-    role="tablist"
-    aria-label="Where the project comes from"
+  <Select.Root
+    type="single"
+    items={SOURCES}
+    value={source}
+    disabled={cloning || adding}
+    onValueChange={(next) => (source = next as Source)}
   >
-    {#each SOURCES as option (option.value)}
-      <button
-        type="button"
-        role="tab"
-        aria-selected={source === option.value}
-        disabled={cloning || adding}
-        class={cn(
-          'flex items-center gap-2 pb-5 text-sm text-muted-foreground transition-colors outline-none hover:text-foreground focus-visible:text-foreground disabled:pointer-events-none',
-          source === option.value && 'text-foreground',
-        )}
-        onclick={() => (source = option.value)}
-      >
-        <Icon name={option.icon} class="size-4" />
-        {option.label}
-      </button>
-    {/each}
-  </div>
+    <Select.Trigger
+      class="h-9.5 w-full pl-3.5"
+      aria-label="Where the project comes from"
+    >
+      <span class="flex items-center gap-2">
+        <Icon name={current.icon} class="text-muted-foreground" />
+        {current.label}
+      </span>
+    </Select.Trigger>
+    <Select.Content class="bg-white/8 backdrop-blur-2xl">
+      {#each SOURCES as option (option.value)}
+        <Select.Item value={option.value} label={option.label} class="pl-3.75">
+          <Icon name={option.icon} class="text-muted-foreground" />
+          {option.label}
+        </Select.Item>
+      {/each}
+    </Select.Content>
+  </Select.Root>
 
   {#if source === 'folder'}
     {#if folder}
