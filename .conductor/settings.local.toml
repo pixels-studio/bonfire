@@ -1,0 +1,22 @@
+"$schema" = "https://conductor.build/schemas/settings.repo.schema.json"
+
+[scripts]
+# postinstall runs electron-rebuild for node-pty (needs Xcode Command Line Tools)
+setup = "npm ci"
+# Each workspace gets its own Electron profile so concurrent apps never share state.json
+archive = '[ -n "$CONDUCTOR_WORKSPACE_NAME" ] && rm -rf "$HOME/Library/Application Support/Bonfire-conductor/$CONDUCTOR_WORKSPACE_NAME"; exit 0'
+run_mode = "concurrent"
+
+[scripts.run.dev]
+available_in = [ "local" ]
+command = 'BONFIRE_USER_DATA="$HOME/Library/Application Support/Bonfire-conductor/$CONDUCTOR_WORKSPACE_NAME" npm run dev'
+default = true
+icon = "flame"
+
+[scripts.run.check]
+command = "npm run check"
+icon = "check"
+
+[scripts.run.unit]
+command = "npm run test:unit"
+icon = "test-tube"
