@@ -36,6 +36,9 @@
   } from '$shared/contracts';
 
   const MAX_ATTACHMENTS = 8;
+  /** The text around an attachment's name; the head's width leaves room for the chip's icon. */
+  const TOKEN_HEAD = '[[     ';
+  const TOKEN_TAIL = ' ]]';
   const FOLLOW_UP_ACTIONS: Record<FollowUpMode, string> = {
     queue: 'Queue message',
     steer: 'Steer response',
@@ -272,15 +275,14 @@
 
   /** Writes the attachment into the text where the caret is, so it is sent in place. */
   function insertAttachment(attachment: Attachment) {
-    const base = `[[${
+    const label =
       attachment.name.length > 32
         ? `${attachment.name.slice(0, 31)}…`
-        : attachment.name
-    }]]`;
+        : attachment.name;
     const taken = new Set(Object.values(tokens));
-    let token = base;
+    let token = `${TOKEN_HEAD}${label}${TOKEN_TAIL}`;
     for (let n = 2; taken.has(token); n++)
-      token = `${base.slice(0, -2)} ${n}]]`;
+      token = `${TOKEN_HEAD}${label} ${n}${TOKEN_TAIL}`;
     attachments.push(attachment);
     tokens[attachment.id] = token;
     const at = textarea?.selectionStart ?? prompt.length;
@@ -313,14 +315,27 @@
 
   /** The text cut at its chips, so a layer behind the box can paint them. */
   const segments = $derived.by(() => {
-    const list = attachments.map(({ id }) => tokens[id]).filter(Boolean);
-    if (!list.length) return [{ text: prompt, chip: false }];
-    const pattern = new RegExp(
-      `(${list.map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})`,
+    const byToken = new Map(
+      attachments.map((attachment) => [tokens[attachment.id], attachment]),
     );
-    return prompt
-      .split(pattern)
-      .map((text, index) => ({ text, chip: index % 2 === 1 }));
+    byToken.delete(undefined as never);
+    const plain = (
+      text: string,
+    ): { text: string; name?: string; icon?: string } => ({ text });
+    if (!byToken.size) return [plain(prompt)];
+    const pattern = new RegExp(
+      `(${[...byToken.keys()].map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})`,
+    );
+    return prompt.split(pattern).map((text, index) => {
+      const attachment = index % 2 === 1 ? byToken.get(text) : undefined;
+      return attachment
+        ? {
+            text,
+            name: text.slice(TOKEN_HEAD.length, -TOKEN_TAIL.length),
+            icon: attachment.previewUrl ? 'image' : 'file',
+          }
+        : plain(text);
+    });
   });
   let highlights = $state<HTMLElement>();
 
@@ -420,21 +435,33 @@
       </div>
     {/each}
     <div class="relative min-w-40 flex-1">
-      <!-- Paints the chips behind the text; it has the box's exact font and wrapping. -->
+      <!-- Paints the text and the chips; it has the box's exact font and wrapping, and the
+           chip is drawn without padding or borders so it never shifts the caret. -->
       <div
-        class="pointer-events-none absolute inset-0 overflow-hidden text-sm wrap-anywhere whitespace-pre-wrap text-transparent"
+        class={cn(
+          'pointer-events-none absolute inset-0 overflow-hidden text-sm wrap-anywhere whitespace-pre-wrap',
+          !attachments.length && 'text-transparent',
+        )}
         aria-hidden="true"
         bind:this={highlights}
       >
-        {#each segments as segment}{#if segment.chip}<mark
-              class="rounded-md bg-brand/20 text-transparent"
-              >{segment.text}</mark
+        {#each segments as segment}{#if segment.icon}<mark
+              class="rounded-md bg-background/40 text-transparent shadow-[inset_0_0_0_1px_var(--color-border)] box-decoration-clone"
+              ><span class="relative"
+                >{TOKEN_HEAD}<Icon
+                  name={segment.icon}
+                  class="absolute top-1/2 left-1 size-3.5 -translate-y-1/2 text-brand"
+                /><span class="absolute top-0 right-1 h-full w-px bg-border"
+                ></span></span
+              ><span class="text-foreground">{segment.name}</span
+              >{TOKEN_TAIL}</mark
             >{:else}{segment.text}{/if}{/each}
       </div>
       <!-- svelte-ignore a11y_autofocus -->
       <textarea
         class={cn(
-          'relative block min-h-15 w-full resize-none bg-transparent text-sm outline-none placeholder:text-muted-foreground',
+          'relative block min-h-15 w-full resize-none bg-transparent text-sm caret-foreground outline-none placeholder:text-muted-foreground',
+          attachments.length && 'text-transparent',
           skills.length && 'min-h-7',
           textareaClass,
         )}

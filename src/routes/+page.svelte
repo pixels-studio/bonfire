@@ -635,6 +635,8 @@
   /** Whether starting panes are being opened; a failed attempt isn't retried until the project changes. */
   let seeding = false;
   let seedFailedFor: string | undefined;
+  /** Projects that have had their starting panes, so closing them all leaves the empty state. */
+  const seeded = new Set<string>();
 
   async function openStartingPanes() {
     const agents = startingAgents();
@@ -654,7 +656,13 @@
   }
 
   $effect(() => {
-    if (!loaded || onboarding || !projectId || panes.length || busy) return;
+    if (!loaded || onboarding || !projectId || busy) return;
+    if (panes.length) {
+      seeded.add(projectId);
+      return;
+    }
+    if (seeded.has(projectId)) return;
+    seeded.add(projectId);
     void openStartingPanes();
   });
 
@@ -713,9 +721,21 @@
           Conversations work in {project?.name}.
         {/if}
       </p>
-      <Button disabled={!loaded || busy} onclick={() => addPane()}>
-        New conversation
-      </Button>
+      {@const agents = startingAgents()}
+      {#if agents.length === 2 && agents[0] !== agents[1]}
+        <div class="flex gap-2">
+          <Button disabled={!loaded || busy} onclick={() => addPane('claude')}>
+            Claude Session
+          </Button>
+          <Button disabled={!loaded || busy} onclick={() => addPane('codex')}>
+            Codex Session
+          </Button>
+        </div>
+      {:else}
+        <Button disabled={!loaded || busy} onclick={() => addPane()}>
+          New conversation
+        </Button>
+      {/if}
     </Card.Root>
   {/if}
 {/snippet}
