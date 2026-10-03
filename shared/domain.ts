@@ -1,10 +1,11 @@
 import type {
   AssistantProvider,
+  Pane,
   Preferences,
   Project,
-  ProjectSettings,
-  Session,
+  SshConnection,
   State,
+  ToolPaneType,
 } from './contracts';
 
 export const DEFAULT_TITLE = 'New Conversation';
@@ -14,6 +15,20 @@ export const PROVIDER_LABELS: Record<AssistantProvider, string> = {
   claude: 'Claude',
   codex: 'Codex',
 };
+
+/** What tool panes are called; agent panes are named after their conversation. */
+export const TOOL_PANE_TITLES: Record<ToolPaneType, string> = {
+  files: 'Files',
+  terminal: 'Terminal',
+  diff: 'Changes',
+};
+
+/** Whether the pane is a conversation with an agent, rather than a tool pane. */
+export function isAssistantPane(
+  pane: Pane,
+): pane is Pane & { type: AssistantProvider } {
+  return pane.type in PROVIDER_LABELS;
+}
 
 /** Older panes were titled after their provider before the first message. */
 export function isDefaultTitle(title: string) {
@@ -33,8 +48,8 @@ export function emptyState(): State {
   return {
     version: 1,
     projects: [],
-    sessions: [],
     panes: [],
+    connections: [],
     layout: { paneIds: [] },
     settings: {},
     preferences: {},
@@ -63,8 +78,6 @@ export const DEFAULT_PREFERENCES: Preferences = {
   claudeOutputStyle: 'default',
   codexPersonality: 'default',
   archiveOnMerge: false,
-  branchPrefix: 'bonfire/',
-  deleteBranchOnArchive: false,
   caffeinate: true,
 };
 
@@ -73,16 +86,21 @@ export function resolvePreferences(stored: Partial<Preferences>): Preferences {
   return { ...DEFAULT_PREFERENCES, ...stored };
 }
 
+/** What went wrong, without the wrapping Electron adds to errors thrown in main. */
 export function errorMessage(cause: unknown) {
-  return cause instanceof Error ? cause.message : String(cause);
+  const message = cause instanceof Error ? cause.message : String(cause);
+  return message.replace(
+    /^Error invoking remote method '[^']*': (Error: )?/,
+    '',
+  );
 }
 
-/** The most conversation panes that can be open at once. */
+/** The most panes, of any type, a project can have open at once. */
 export const MAX_PANES = 12;
 
 /**
  * Reorders `ids` among the layout slots they already occupy, leaving every other
- * pane (archived, terminal) where it was. Throws if `ids` isn't a subset of the layout.
+ * pane (archived, another project's) where it was. Throws if `ids` isn't a subset of the layout.
  */
 export function reorderLayout(paneIds: string[], ids: string[]) {
   const moving = new Set(ids);
@@ -92,111 +110,24 @@ export function reorderLayout(paneIds: string[], ids: string[]) {
   return paneIds.map((id) => (moving.has(id) ? queue.shift()! : id));
 }
 
-/** Short names for workspace folders: planets, dwarf planets, and moons. */
-export const WORKSPACE_NAMES = [
-  'mercury',
-  'venus',
-  'earth',
-  'mars',
-  'jupiter',
-  'saturn',
-  'uranus',
-  'neptune',
-  'pluto',
-  'ceres',
-  'eris',
-  'haumea',
-  'makemake',
-  'sedna',
-  'luna',
-  'phobos',
-  'deimos',
-  'io',
-  'europa',
-  'ganymede',
-  'callisto',
-  'titan',
-  'enceladus',
-  'mimas',
-  'rhea',
-  'iapetus',
-  'dione',
-  'tethys',
-  'miranda',
-  'ariel',
-  'oberon',
-  'titania',
-  'triton',
-  'charon',
-];
-
-/**
- * A random workspace name not in `taken`. Once every name is in use, names get a
- * number: `europa-2`, then `europa-3`.
- */
-export function pickWorkspaceName(
-  taken: (name: string) => boolean,
-  random = Math.random,
+/** Where a project lives: its connection's name, or this computer. */
+export function projectLocation(
+  project: Pick<Project, 'connectionId'>,
+  connections: SshConnection[],
 ) {
-  for (let round = 1; ; round++) {
-    const free = WORKSPACE_NAMES.map((name) =>
-      round === 1 ? name : `${name}-${round}`,
-    ).filter((name) => !taken(name));
-    if (free.length) return free[Math.floor(random() * free.length)];
-  }
+  if (!project.connectionId) return 'This computer';
+  return (
+    connections.find(({ id }) => id === project.connectionId)?.name ??
+    'Removed connection'
+  );
 }
 
-const SLUG_MAX_LENGTH = 40;
-
-/** Turns a title into a branch-safe slug: "Fix dropdown height" becomes `fix-dropdown-height`. */
-export function slugify(text: string) {
-  return text
-    .normalize('NFKD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .slice(0, SLUG_MAX_LENGTH)
-    .replace(/^-+|-+$/g, '');
-}
-
-/** `base`, or `base-2`, `base-3`… for the first one `taken` doesn't claim. */
-export function uniqueName(base: string, taken: (name: string) => boolean) {
-  if (!taken(base)) return base;
-  for (let suffix = 2; ; suffix++)
-    if (!taken(`${base}-${suffix}`)) return `${base}-${suffix}`;
-}
-
-export const DEFAULT_FILES_TO_COPY = '.env*';
-
-/** A project's settings, with its overrides applied over the app-wide preferences. */
-export function resolveProjectSettings(
-  project: Project,
-  preferences: Preferences,
-): ProjectSettings & {
-  branchPrefix: string;
-  archiveOnMerge: boolean;
-  deleteBranchOnArchive: boolean;
-} {
-  const { settings } = project;
-  return {
-    baseBranch: settings.baseBranch ?? '',
-    setupScript: settings.setupScript ?? '',
-    archiveScript: settings.archiveScript ?? '',
-    filesToCopy: settings.filesToCopy ?? '',
-    branchPrefix: settings.branchPrefix ?? preferences.branchPrefix,
-    archiveOnMerge: settings.archiveOnMerge ?? preferences.archiveOnMerge,
-    deleteBranchOnArchive:
-      settings.deleteBranchOnArchive ?? preferences.deleteBranchOnArchive,
-  };
-}
-
-/** Whether the workspace is a worktree of its own rather than the project folder. */
-export function isWorktree(session: Session) {
-  return session.name !== undefined;
-}
-
-/** What a workspace is called in menus. */
-export function workspaceLabel(session: Session) {
-  if (!isWorktree(session)) return 'Project folder';
-  return session.title || session.name!;
+/** The last segment of a path, for naming a project after its folder. */
+export function folderName(path: string) {
+  return (
+    path
+      .replace(/[\\/]+$/, '')
+      .split(/[\\/]/)
+      .pop() ?? ''
+  );
 }

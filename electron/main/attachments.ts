@@ -27,7 +27,7 @@ export async function readImage(path: string) {
 
 const PASTED_TEXT_NAME = 'Pasted text.txt';
 
-/** An attachment waiting to be sent, owned by a pane or by a draft that becomes one. */
+/** An attachment waiting to be sent, owned by a pane. */
 export type PendingAttachment = Attachment & { paneId: string } & (
     | { kind: 'image'; path: string; mimeType: ImageMimeType; base64: string }
     | { kind: 'text'; text: string }
@@ -81,15 +81,9 @@ export class PendingAttachments {
     for (const id of ids) this.items.delete(id);
   }
 
-  /** Drops everything the pane or draft still holds. */
+  /** Drops everything the pane still holds. */
   discard(paneId: string) {
     for (const [id, attachment] of this.items)
       if (attachment.paneId === paneId) this.items.delete(id);
-  }
-
-  /** Hands a draft's attachments to the pane created from it. */
-  transfer(from: string, to: string) {
-    for (const attachment of this.items.values())
-      if (attachment.paneId === from) attachment.paneId = to;
   }
 }

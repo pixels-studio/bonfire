@@ -10,7 +10,7 @@
   import type { PullRequest, PullRequestDraft } from '$shared/contracts';
   import { errorMessage } from '$shared/domain';
 
-  let { sessionId }: { sessionId: string } = $props();
+  let { projectId }: { projectId: string } = $props();
 
   const CHECKS: Record<
     PullRequest['checks'],
@@ -34,25 +34,25 @@
   let creating = $state(false);
 
   async function loadDraft() {
-    const id = sessionId;
+    const id = projectId;
     draft = undefined;
     loadError = '';
     try {
       const next = await window.bonfire.github.pullRequestDraft(id);
-      if (id !== sessionId) return;
+      if (id !== projectId) return;
       draft = next;
       title = next.title;
       body = next.body;
       commit = true;
     } catch (cause) {
-      if (id === sessionId) loadError = errorMessage(cause);
+      if (id === projectId) loadError = errorMessage(cause);
     }
   }
 
   // Each time there is a pull request to compose, start from what the branch holds.
   $effect(() => {
     if (!composing) return;
-    void sessionId;
+    void projectId;
     untrack(() => void loadDraft());
   });
 
@@ -76,7 +76,7 @@
 
   function open() {
     window.bonfire.github
-      .openPullRequest(sessionId)
+      .openPullRequest(projectId)
       .catch((cause) => toast(errorMessage(cause), { variant: 'error' }));
   }
 </script>
@@ -132,12 +132,11 @@
         {#if pull.state === 'open'}
           <Button
             size="sm"
-            disabled={pull.draft ||
-              pull.mergeable === 'no' ||
-              pullRequest.merging}
+            disabled={pull.draft || pull.mergeable === 'no'}
+            loading={pullRequest.merging}
             onclick={() => void pullRequest.merge()}
           >
-            {pullRequest.merging ? 'Merging…' : 'Squash and merge'}
+            Squash and merge
           </Button>
         {/if}
       </div>
@@ -201,9 +200,10 @@
       <Button
         type="submit"
         class="self-start"
-        disabled={creating || !title.trim() || nothingToOpen}
+        disabled={!title.trim() || nothingToOpen}
+        loading={creating}
       >
-        {creating ? 'Creating…' : 'Create pull request'}
+        Create pull request
       </Button>
     </form>
   {/if}

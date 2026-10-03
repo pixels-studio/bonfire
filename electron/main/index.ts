@@ -173,6 +173,14 @@ app
         });
         return result.canceled ? undefined : result.filePaths[0];
       },
+      chooseIdentity: async () => {
+        const result = await dialog.showOpenDialog(mainWindow, {
+          title: 'Choose a private key',
+          defaultPath: join(homedir(), '.ssh'),
+          properties: ['openFile', 'showHiddenFiles'],
+        });
+        return result.canceled ? undefined : result.filePaths[0];
+      },
       chooseImage: async () => {
         const result = await dialog.showOpenDialog(mainWindow, {
           properties: ['openFile'],

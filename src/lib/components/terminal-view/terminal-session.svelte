@@ -7,20 +7,7 @@
   import { errorMessage } from '$shared/domain';
   import type { TerminalEvent } from '$shared/contracts';
 
-  let {
-    sessionId,
-    paneId,
-    type = 'shell',
-    tab,
-  }: {
-    sessionId: string;
-    /** Unset for the workspace's own terminal. */
-    paneId?: string;
-    /** `setup` shows the output of the workspace's setup script instead of a shell. */
-    type?: 'shell' | 'setup';
-    /** Which of the workspace's shells to show. */
-    tab?: number;
-  } = $props();
+  let { projectId, paneId }: { projectId: string; paneId: string } = $props();
 
   let host: HTMLDivElement;
   let error = $state('');
@@ -57,10 +44,9 @@
     error = '';
     try {
       terminalId = await window.bonfire.terminal.create({
-        sessionId,
+        projectId,
         paneId,
-        type,
-        tab,
+        type: 'shell',
       });
       const snapshot = await window.bonfire.terminal.snapshot(terminalId);
       if (!mounted) return;
@@ -71,6 +57,7 @@
       pendingEvents.forEach(receive);
       pendingEvents = [];
       resize();
+      term.focus();
     } catch (cause) {
       reportError(cause);
     } finally {
@@ -89,7 +76,6 @@
     window.bonfire.terminal
       .resize(terminalId, term.cols, term.rows)
       .catch(reportError);
-    term.focus();
   }
 
   onMount(() => {
@@ -130,7 +116,7 @@
 
 <div class="absolute inset-0 flex flex-col px-5 py-4">
   {#if error}<p class="pb-3 text-sm text-destructive">{error}</p>{/if}
-  {#if type === 'shell' && (error || exited)}
+  {#if error || exited}
     <div class="pb-3">
       <Button variant="secondary" disabled={starting} onclick={relaunch}>
         Relaunch terminal

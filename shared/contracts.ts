@@ -1,8 +1,13 @@
 import { z } from 'zod';
 
 export const id = z.string().uuid();
-export const paneType = z.enum(['claude', 'codex', 'terminal']);
 export const assistantProvider = z.enum(['claude', 'codex']);
+/** Panes that show the project itself rather than talk to an agent. */
+export const toolPaneType = z.enum(['files', 'terminal', 'diff']);
+export const paneType = z.enum([
+  ...assistantProvider.options,
+  ...toolPaneType.options,
+]);
 export const reasoningEffort = z.enum([
   'minimal',
   'low',
@@ -62,12 +67,8 @@ export const preferencesSchema = z.object({
   providers: z.object({ claude: z.boolean(), codex: z.boolean() }),
   claudeOutputStyle: z.string().min(1).max(100),
   codexPersonality,
-  /** Archives a workspace once the pull request for its branch is merged, through the `gh` CLI. */
+  /** Archives conversations once the pull request for their branch is merged, through the `gh` CLI. */
   archiveOnMerge: z.boolean(),
-  /** Prefix for the branches new workspaces get, such as `bonfire/`. */
-  branchPrefix: z.string().max(100),
-  /** Deletes a workspace's branch along with its folder when it is archived. */
-  deleteBranchOnArchive: z.boolean(),
   /** Keeps the system awake while a turn runs. */
   caffeinate: z.boolean(),
 });
@@ -97,8 +98,8 @@ export const attachmentSchema = z.object({
 
 export const paneSchema = z.object({
   id,
-  /** The workspace the pane works in. Only panes saved before workspaces existed lack one. */
-  sessionId: id.optional(),
+  /** The project the pane works in. Only panes saved before projects existed lack one. */
+  projectId: id.optional(),
   type: paneType,
   title: z.string(),
   threadId: z.string().optional(),
@@ -113,64 +114,45 @@ export const paneSchema = z.object({
   archived: z.boolean().default(false),
 });
 
-/**
- * A workspace: one folder and branch that any number of panes share. Each project has one
- * default workspace on the project folder itself; every other workspace is a git worktree.
- */
-export const sessionSchema = z.object({
-  id,
-  projectId: id,
-  /** What the workspace is about, from its first conversation; empty until then. */
-  title: z.string(),
-  /** The worktree's short name, such as `europa`. Unset for the default workspace. */
-  name: z.string().optional(),
-  branch: z.string().optional(),
-  /** The branch or ref the workspace started from. */
-  baseBranch: z.string().optional(),
-  worktreePath: z.string(),
-  /** First of the ten ports set aside for the workspace's servers. */
-  port: z.number().int().optional(),
-  createdAt: z.number(),
-  lastOpenedAt: z.number(),
-  archived: z.boolean().default(false),
-  /** Panes that were open when the workspace was archived, reopened if it is restored. */
-  archivedPaneIds: z.array(id).optional(),
-});
+/** How a connection signs in: the SSH agent and config as they are, or a key file. */
+export const sshAuth = z.enum(['default', 'identity']);
 
-/** Per-project settings. Unset overrides follow the app-wide preference of the same name. */
-export const projectSettingsSchema = z.object({
-  /** The branch new workspaces start from; empty picks the remote's default branch. */
-  baseBranch: z.string().max(200),
-  /** Runs in a new workspace's folder once it is created, such as `npm ci`. */
-  setupScript: z.string().max(20_000),
-  /** Runs in a workspace's folder before it is archived. */
-  archiveScript: z.string().max(20_000),
-  /** Gitignore-style patterns of ignored files copied into new workspaces; empty means `.env*`. */
-  filesToCopy: z.string().max(5_000),
-  branchPrefix: z.string().max(100).optional(),
-  archiveOnMerge: z.boolean().optional(),
-  deleteBranchOnArchive: z.boolean().optional(),
+/** A machine reached over SSH, whose folders can hold projects. */
+export const sshConnectionSchema = z.object({
+  id,
+  name: z.string().trim().min(1).max(100),
+  /** `host`, `user@host`, or an alias from `~/.ssh/config`. */
+  host: z
+    .string()
+    .trim()
+    .min(1)
+    .max(255)
+    .regex(/^[^\s-][^\s]*$/, 'Enter a hostname such as user@host.com'),
+  port: z.number().int().min(1).max(65_535).optional(),
+  auth: sshAuth.default('default'),
+  /** The private key to sign in with, when `auth` is `identity`. */
+  identityFile: z.string().trim().max(4096).optional(),
 });
 
 export const projectSchema = z.object({
   id,
   name: z.string(),
+  /** The folder, on the connection's machine when there is one. */
   path: z.string(),
+  /** The SSH connection the project lives on; unset for folders on this computer. */
+  connectionId: id.optional(),
   createdAt: z.number(),
   lastOpenedAt: z.number(),
-  settings: projectSettingsSchema.partial().default({}),
 });
 
 export const stateSchema = z.object({
   version: z.literal(1),
   projects: z.array(projectSchema),
-  sessions: z.array(sessionSchema),
   panes: z.array(paneSchema),
+  connections: z.array(sshConnectionSchema).default([]),
   layout: z.object({ paneIds: z.array(id) }),
-  /** Default project for new panes. */
+  /** The project on screen. */
   lastProjectId: id.optional(),
-  /** The workspace on screen. */
-  currentSessionId: id.optional(),
   settings: z.object({
     lastProvider: assistantProvider.optional(),
     lastModels: z
@@ -207,45 +189,38 @@ export const assistantRespondInput = z.object({
     .optional(),
 });
 
-export const MAX_SHELL_TABS = 5;
-
 /**
- * Terminals belong to a workspace, and optionally to one of its panes. `setup` attaches to
- * the output of the workspace's setup script rather than starting anything. A workspace's
- * own shells are told apart by `tab`, which defaults to the first.
+ * Terminals belong to a pane. Terminal panes run a shell; agent panes can run a
+ * shell or their provider's CLI.
  */
 export const terminalCreateInput = z.object({
-  sessionId: id,
-  paneId: id.optional(),
-  type: z.enum(['claude', 'codex', 'shell', 'setup']),
-  tab: z
-    .number()
-    .int()
-    .min(0)
-    .max(MAX_SHELL_TABS - 1)
-    .optional(),
+  projectId: id,
+  paneId: id,
+  type: z.enum(['claude', 'codex', 'shell']),
 });
 
-export const workspaceCreateInput = z.object({
-  /** Owns the attachments picked before the workspace and its first pane exist. */
-  draftId: id,
-  projectId: id,
-  /** The branch or ref to start from. */
-  base: z.string().trim().min(1).max(200),
-  /** The first message; empty creates the workspace without starting a conversation. */
-  text: z.string().trim().max(100_000),
-  attachmentIds: z.array(id).max(8).default([]),
-  provider: assistantProvider,
-  model: z.string().max(100),
-  reasoningEffort,
+/** A branch name as typed; git decides whether it is valid. */
+export const branchName = z.string().trim().min(1).max(200);
+
+export const projectCreateInput = z.object({
+  name: z.string().trim().min(1).max(100),
+  path: z.string().trim().min(1).max(4096),
+  connectionId: id.optional(),
+});
+
+/** A connection as entered in its dialog; a new one has no id yet. */
+export const sshConnectionInput = sshConnectionSchema.extend({
+  id: id.optional(),
 });
 
 export type Project = z.infer<typeof projectSchema>;
-export type ProjectSettings = z.infer<typeof projectSettingsSchema>;
-export type WorkspaceCreateInput = z.infer<typeof workspaceCreateInput>;
-export type Session = z.infer<typeof sessionSchema>;
+export type ProjectCreateInput = z.infer<typeof projectCreateInput>;
+export type SshConnection = z.infer<typeof sshConnectionSchema>;
+export type SshConnectionInput = z.infer<typeof sshConnectionInput>;
+export type SshAuth = z.infer<typeof sshAuth>;
 export type Pane = z.infer<typeof paneSchema>;
 export type PaneType = z.infer<typeof paneType>;
+export type ToolPaneType = z.infer<typeof toolPaneType>;
 export type ConversationMessage = z.infer<typeof conversationMessageSchema>;
 export type Usage = z.infer<typeof usageSchema>;
 export type Attachment = z.infer<typeof attachmentSchema>;
@@ -281,12 +256,14 @@ export type PullRequest = {
   title: string;
   state: 'open' | 'merged' | 'closed';
   draft: boolean;
+  /** The branch it merges into, such as `main`. */
+  base: string;
   /** Whether the branch merges cleanly into its base; unknown while GitHub works it out. */
   mergeable: 'yes' | 'no' | 'unknown';
   /** The combined result of the pull request's checks. */
   checks: 'none' | 'pending' | 'passing' | 'failing';
 };
-/** What a new pull request from a workspace would contain. */
+/** What a new pull request from the checked-out branch would contain. */
 export type PullRequestDraft = {
   branch: string;
   base: string;
@@ -415,7 +392,26 @@ export type Change = {
   deletions: number;
 };
 export type GitStatus = { isGit: boolean; branch: string; changes: Change[] };
+/** What a project folder has checked out. */
+export type GitHead = {
+  isGit: boolean;
+  /** Unset when HEAD is detached or the folder isn't a repository. */
+  branch?: string;
+};
+/** A local branch, as listed for switching to. */
+export type Branch = {
+  name: string;
+  /** The subject of its newest commit. */
+  subject: string;
+  /** When its newest commit was made, in milliseconds since the epoch. */
+  committedAt: number;
+};
 export type Entry = { name: string; directory: boolean };
+/** A folder on a connection's machine and the folders inside it, for picking a project. */
+export type RemoteFolder = { path: string; parent?: string; folders: string[] };
+/** How reaching a connection went. */
+export type ConnectionCheck =
+  { ok: true; home: string } | { ok: false; error: string };
 export type TerminalSnapshot = {
   data: string;
   sequence: number;
@@ -427,19 +423,9 @@ export type TerminalEvent = {
   data?: string;
   exitCode?: number;
 };
-export type FileChangeEvent = { sessionId: string; path: string };
+export type FileChangeEvent = { projectId: string; path: string };
 /** Panes the app archived on its own, such as when their pull request merged. */
 export type PanesClosedEvent = { paneIds: string[]; reason: 'merged' };
-/** How a workspace's setup script is getting on. */
-export type SetupStatus = 'running' | 'succeeded' | 'failed';
-export type SetupEvent = { sessionId: string; status: SetupStatus };
-/** What archiving a workspace left behind. */
-export type ArchiveResult = {
-  /** The folder had uncommitted changes, so it was kept rather than deleted. */
-  keptFolder: boolean;
-  /** Why the archive script failed, when it did. */
-  scriptError?: string;
-};
 
 /** IPC argument schemas, keyed by `group.method`. Every channel is validated in main. */
 export const requests = {
@@ -458,25 +444,18 @@ export const requests = {
   'github.createPullRequest': z.tuple([id, pullRequestInput]),
   'github.mergePullRequest': z.tuple([id]),
   'github.openPullRequest': z.tuple([id]),
-  'projects.add': z.tuple([]),
+  'projects.chooseFolder': z.tuple([]),
+  'projects.create': z.tuple([projectCreateInput]),
+  'projects.open': z.tuple([id]),
   'projects.remove': z.tuple([id]),
   'projects.favicon': z.tuple([id]),
-  'projects.updateSettings': z.tuple([id, projectSettingsSchema.partial()]),
-  'projects.defaultBase': z.tuple([id]),
-  'workspaces.create': z.tuple([workspaceCreateInput]),
-  'workspaces.open': z.tuple([id]),
-  'workspaces.openProject': z.tuple([id]),
-  'workspaces.archive': z.tuple([id]),
-  'workspaces.restore': z.tuple([id]),
-  'workspaces.pickAttachment': z.tuple([id]),
-  'workspaces.attachText': z.tuple([
-    id,
-    z.string().min(1).max(MAX_TEXT_ATTACHMENT_LENGTH),
-  ]),
-  'workspaces.discardDraft': z.tuple([id]),
-  'workspaces.setupStatus': z.tuple([]),
-  'panes.add': z.tuple([paneType.optional(), z.string().max(100).optional()]),
-  'panes.retype': z.tuple([id, assistantProvider, z.string().max(100)]),
+  'connections.list': z.tuple([]),
+  'connections.save': z.tuple([sshConnectionInput]),
+  'connections.remove': z.tuple([id]),
+  'connections.check': z.tuple([sshConnectionInput]),
+  'connections.chooseIdentity': z.tuple([]),
+  'connections.browse': z.tuple([id, filePath.optional()]),
+  'panes.add': z.tuple([paneType.optional()]),
   'panes.archive': z.tuple([id]),
   'panes.reorder': z.tuple([z.array(id).max(100)]),
   'assistant.send': z.tuple([assistantSendInput]),
@@ -503,17 +482,14 @@ export const requests = {
     z.number().int().min(1).max(300),
   ]),
   'terminal.snapshot': z.tuple([id]),
-  'terminal.close': z.tuple([
-    id,
-    z
-      .number()
-      .int()
-      .min(0)
-      .max(MAX_SHELL_TABS - 1),
-  ]),
   'git.status': z.tuple([id]),
+  'git.head': z.tuple([id]),
+  'git.localBranches': z.tuple([id]),
   'git.branches': z.tuple([id]),
   'git.diff': z.tuple([id, filePath]),
+  'git.checkout': z.tuple([id, branchName]),
+  'git.createBranch': z.tuple([id, branchName, branchName]),
+  'git.pull': z.tuple([id]),
   'filesystem.list': z.tuple([id, filePath]),
   'filesystem.readFile': z.tuple([id, filePath]),
   'filesystem.search': z.tuple([id, z.string().max(256)]),
@@ -530,9 +506,6 @@ export const events = {
   focusPane: 'window:focus-pane',
   notificationsBlocked: 'window:notifications-blocked',
   panesClosed: 'panes:closed',
-  workspaceSetup: 'workspaces:setup',
-  /** Main changed workspaces on its own, such as renaming a branch; the renderer reloads state. */
-  workspacesChanged: 'workspaces:changed',
   githubSignInEnd: 'github:sign-in-end',
 } as const;
 
@@ -561,53 +534,46 @@ export type API = {
      */
     connect(): Promise<GithubSignIn>;
     cancelConnect(): Promise<void>;
-    /** The newest pull request from the workspace's branch, or null if it has none. */
-    pullRequest(sessionId: string): Promise<PullRequest | null>;
-    pullRequestDraft(sessionId: string): Promise<PullRequestDraft>;
-    /** Pushes the branch and opens a pull request against the workspace's base branch. */
+    /** The newest pull request from the project's checked-out branch, or null if it has none. */
+    pullRequest(projectId: string): Promise<PullRequest | null>;
+    pullRequestDraft(projectId: string): Promise<PullRequestDraft>;
+    /** Pushes the branch and opens a pull request against the remote's default branch. */
     createPullRequest(
-      sessionId: string,
+      projectId: string,
       input: PullRequestInput,
     ): Promise<PullRequest>;
-    /** Squash-merges the workspace's open pull request. */
-    mergePullRequest(sessionId: string): Promise<void>;
-    openPullRequest(sessionId: string): Promise<void>;
+    /** Squash-merges the open pull request of the checked-out branch. */
+    mergePullRequest(projectId: string): Promise<void>;
+    openPullRequest(projectId: string): Promise<void>;
     onSignInEnd(listener: (end: GithubSignInEnd) => void): Unsubscribe;
   };
   projects: {
-    /** Adds a folder and opens its default workspace. */
-    add(): Promise<Project | null>;
+    /** Asks for a folder on this computer; null if the user cancels. */
+    chooseFolder(): Promise<string | null>;
+    /** Adds a folder, here or on a connection's machine, and opens it. */
+    create(input: ProjectCreateInput): Promise<Project>;
+    /** Puts the project on screen. */
+    open(id: string): Promise<void>;
     remove(id: string): Promise<void>;
     favicon(id: string): Promise<string | null>;
-    updateSettings(
-      id: string,
-      patch: Partial<ProjectSettings>,
-    ): Promise<Project>;
-    /** The branch new workspaces start from unless another is picked. */
-    defaultBase(id: string): Promise<string>;
   };
-  workspaces: {
-    /** Creates a worktree on a new branch with one pane, opens it, and sends `text` if given. */
-    create(input: WorkspaceCreateInput): Promise<Session>;
-    open(id: string): Promise<void>;
-    /** Opens the project's most recent workspace. */
-    openProject(projectId: string): Promise<void>;
-    archive(id: string): Promise<ArchiveResult>;
-    restore(id: string): Promise<void>;
-    /** Attachments for a workspace that doesn't exist yet, owned by the dialog's draft id. */
-    pickAttachment(draftId: string): Promise<Attachment | null>;
-    attachText(draftId: string, text: string): Promise<Attachment>;
-    discardDraft(draftId: string): Promise<void>;
-    /** Setup scripts that ran since the app started, by workspace. */
-    setupStatus(): Promise<Record<string, SetupStatus>>;
-    onSetup(listener: (event: SetupEvent) => void): Unsubscribe;
-    onChanged(listener: () => void): Unsubscribe;
+  connections: {
+    list(): Promise<SshConnection[]>;
+    /** Adds or updates a connection. */
+    save(input: SshConnectionInput): Promise<SshConnection>;
+    /** Removes a connection no project uses. */
+    remove(id: string): Promise<void>;
+    /** Tries signing in with the connection as entered, saved or not. */
+    check(input: SshConnectionInput): Promise<ConnectionCheck>;
+    /** Asks for a private key file; null if the user cancels. */
+    chooseIdentity(): Promise<string | null>;
+    /** The folders in `path` on the connection's machine, its home folder by default. */
+    browse(id: string, path?: string): Promise<RemoteFolder>;
   };
   panes: {
-    /** Adds a pane to the open workspace. */
-    add(type?: PaneType, model?: string): Promise<Pane>;
+    /** Adds a pane at the front of the project on screen; an agent pane by default. */
+    add(type?: PaneType): Promise<Pane>;
     onClosed(listener: (event: PanesClosedEvent) => void): Unsubscribe;
-    retype(id: string, type: AssistantProvider, model: string): Promise<Pane>;
     archive(id: string): Promise<void>;
     /** Reorders the given panes among the layout slots they already occupy. */
     reorder(ids: string[]): Promise<void>;
@@ -647,23 +613,33 @@ export type API = {
     write(id: string, data: string): Promise<void>;
     resize(id: string, cols: number, rows: number): Promise<void>;
     snapshot(id: string): Promise<TerminalSnapshot>;
-    /** Ends the workspace's shell in this tab. */
-    close(sessionId: string, tab: number): Promise<void>;
     onData(listener: (event: TerminalEvent) => void): Unsubscribe;
   };
   git: {
-    status(sessionId: string): Promise<GitStatus>;
-    /** Local and remote-tracking branches, to start a workspace from. */
+    status(projectId: string): Promise<GitStatus>;
+    head(projectId: string): Promise<GitHead>;
+    /** Local branches to switch to, most recently committed first. */
+    localBranches(projectId: string): Promise<Branch[]>;
+    /** Local and remote-tracking branches, to start a new branch from. */
     branches(projectId: string): Promise<string[]>;
-    diff(sessionId: string, path: string): Promise<string>;
+    diff(projectId: string, path: string): Promise<string>;
+    /**
+     * Switches the project folder to another branch. Uncommitted changes come along when
+     * they can; refused while an agent in the project is working.
+     */
+    checkout(projectId: string, branch: string): Promise<void>;
+    /** Creates a branch from `base` and switches to it, as `checkout` does. */
+    createBranch(projectId: string, name: string, base: string): Promise<void>;
+    /** Fast-forwards the checked-out branch to its upstream. */
+    pull(projectId: string): Promise<void>;
   };
   filesystem: {
-    list(sessionId: string, path: string): Promise<Entry[]>;
-    readFile(sessionId: string, path: string): Promise<string>;
-    /** Workspace file paths matching `query`, best match first. */
-    search(sessionId: string, query: string): Promise<string[]>;
-    watch(sessionId: string): Promise<void>;
-    unwatch(sessionId: string): Promise<void>;
+    list(projectId: string, path: string): Promise<Entry[]>;
+    readFile(projectId: string, path: string): Promise<string>;
+    /** Project file paths matching `query`, best match first. */
+    search(projectId: string, query: string): Promise<string[]>;
+    watch(projectId: string): Promise<void>;
+    unwatch(projectId: string): Promise<void>;
     onChange(listener: (event: FileChangeEvent) => void): Unsubscribe;
   };
 };

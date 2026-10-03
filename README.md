@@ -21,38 +21,29 @@ restart after main/preload edits.
 
 ## Use
 
-1. Pick a project and workspace in the header (**New project** adds a local repository). Help,
+1. Pick a project and branch in the header. **Add project** takes a git repository on this
+   computer, or on another machine over SSH (connections are managed in Settings). Help,
    Insights, and Settings live in the rail on the left.
-2. A **workspace** is one task: its own folder and branch, shared by any number of panes. Each
-   project has a default workspace on the project folder itself. **New workspace** (⇧⌘N) creates a
-   git worktree on a new branch, `bonfire/<name>`, off the chosen base (the remote default branch
-   after a fetch), named after a planet, dwarf planet, or moon. An optional first prompt starts a
-   pane on it straight away; once the conversation has a title, an unpushed branch is renamed after
-   it, such as `bonfire/fix-dropdown-height`.
-3. New workspaces get ignored files copied from the project folder (`.worktreeinclude`, else the
-   project's **Files to copy**, else `.env*`), then run the project's **setup script** in a login
-   shell; its output is the **Setup** tab of the workspace terminal. Scripts and terminals get
-   `BONFIRE_WORKSPACE_NAME`, `BONFIRE_WORKSPACE_PATH`, `BONFIRE_ROOT_PATH`,
-   `BONFIRE_DEFAULT_BRANCH`, and `BONFIRE_PORT` (the first of ten ports kept for the workspace).
-4. Add Claude or Codex panes with **＋**; pick a model and thinking effort in the composer.
+2. Every pane works in the project folder itself, on whichever branch it has checked out.
+   The branch menu lists local branches, newest first, and switches between them; uncommitted
+   changes come along unless they would conflict, in which case git's message says why.
+   **Branch** (⇧⌘N) creates a branch from the checked-out one or any other, fetching first
+   when the base is a remote branch. Switching waits until no agent in the project is working.
+   Git owns the current branch, so switches made by agents or terminals show up too.
+3. Add Claude or Codex panes with **＋**; pick a model and thinking effort in the composer.
    Switching provider mid-chat opens a new pane. Panes use your existing CLI login.
-5. The header's Files, Terminal, and Diff buttons open a panel for the workspace beside its panes.
-6. Archiving a workspace runs the project's **archive script**, removes its folder (kept if it has
-   uncommitted changes), and optionally deletes its branch; it can be restored from **Archived**.
-   With **Archive on merge** on, a workspace is archived when its branch's pull request merges.
-   Branch prefix, archive on merge, and branch deletion are set in Settings › Worktrees and can be
-   overridden per project in **Settings** (from the project menu), alongside the base
-   branch and scripts.
-7. Conversations, workspaces, layout, and models persist. Quitting stops running turns and
-   terminals.
+4. The header's Files, Terminal, and Diff buttons open a panel for the project beside its panes.
+   **Create PR** pushes the branch and opens a pull request against the remote default branch;
+   after **Merge**, the toast offers to switch back to it and pull. With **Archive on merge**
+   on (Settings › GitHub), conversations close once their branch's pull request merges.
+5. Conversations, layout, and models persist. Quitting stops running turns and terminals.
 
-Worktrees live in `worktrees/` inside the Bonfire user-data directory.
-Project removal removes Bonfire metadata, stops associated processes, and removes the project's
-clean worktrees; project folders are never modified or deleted.
+Project removal removes Bonfire metadata and stops associated processes; project folders are
+never modified or deleted.
 
 ## Architecture
 
-- `src/lib/components/`: assistant chat panes, composer controls, inspector, terminal.
+- `src/lib/components/`: the strip's panes (`assistant-view`, `files-view`, `diff-view`, `terminal-view`, picked by `pane-view`), composer controls, and app chrome.
 - `src/routes/`: application workspace.
 - `shared/contracts.ts`: persisted models, typed API, runtime IPC schemas.
 - `shared/domain.ts`: pure helpers shared by main and renderer (titles, labels, defaults).
@@ -61,9 +52,9 @@ clean worktrees; project folders are never modified or deleted.
   (`assistant.ts` holds the shared turn lifecycle), and service composition.
 - `scripts/`: builds, development runner, isolated Electron integration test.
 
-Main is the authority for `sessionId → worktreePath`. Renderer terminal requests cannot
+Main is the authority for `projectId → folder`. Renderer terminal requests cannot
 supply a command or working directory. Every IPC invocation validates its sender, frame,
-and arguments. File paths resolve through realpath and cannot escape the session root.
+and arguments. File paths resolve through realpath and cannot escape the project root.
 Electron uses context isolation, renderer sandboxing, disabled Node integration, denied
 new windows, denied permission requests, and a local-only application protocol.
 

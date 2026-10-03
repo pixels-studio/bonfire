@@ -6,17 +6,15 @@
   import AppRail, {
     type AppPanel,
   } from '$lib/components/app-rail/app-rail.svelte';
-  import AssistantView from '$lib/components/assistant-view/assistant-view.svelte';
+  import BranchPicker from '$lib/components/workspace/branch-picker.svelte';
+  import CreateProjectDialog from '$lib/components/workspace/create-project-dialog.svelte';
   import Icon from '$lib/components/icon/icon.svelte';
   import InsightsPane from '$lib/components/insights/insights-pane.svelte';
   import SettingsPane from '$lib/components/settings/settings-pane.svelte';
-  import NewWorkspaceDialog from '$lib/components/workspace/new-workspace-dialog.svelte';
+  import PaneView from '$lib/components/pane-view/pane-view.svelte';
+  import PullRequestView from '$lib/components/pull-request/pull-request-view.svelte';
+  import NewBranchDialog from '$lib/components/workspace/new-branch-dialog.svelte';
   import ProjectPicker from '$lib/components/workspace/project-picker.svelte';
-  import ProjectSettingsDialog from '$lib/components/workspace/project-settings-dialog.svelte';
-  import WorkspacePanel, {
-    type WorkspaceView,
-  } from '$lib/components/workspace/workspace-panel.svelte';
-  import WorkspacePicker from '$lib/components/workspace/workspace-picker.svelte';
   import {
     PANE_SIZES,
     defaultPaneSize,
@@ -24,8 +22,9 @@
     type PaneSize,
   } from '$lib/panes';
   import { PaneDrag } from '$lib/pane-drag.svelte';
-  import { PaneStatuses, type PaneStatus } from '$lib/pane-status.svelte';
+  import { PaneStatuses } from '$lib/pane-status.svelte';
   import { playCompletionSound } from '$lib/sounds';
+  import { branch } from '$lib/stores/branch.svelte';
   import { preferences } from '$lib/stores/preferences.svelte';
   import { pullRequest } from '$lib/stores/pull-request.svelte';
   import { toast } from '$lib/stores/toast.svelte';
@@ -33,19 +32,17 @@
   import type { HTMLButtonAttributes } from 'svelte/elements';
   import type {
     AssistantEvent,
-    AssistantProvider,
     Pane,
+    PaneType,
     PanesClosedEvent,
-    SetupStatus,
     State,
   } from '$shared/contracts';
   import {
     MAX_PANES,
     emptyState,
     errorMessage,
-    isWorktree,
+    isAssistantPane,
     reorderLayout,
-    workspaceLabel,
   } from '$shared/domain';
 
   let workspace = $state<State>(emptyState());
@@ -55,74 +52,48 @@
   let paneStrip = $state<HTMLDivElement>();
   const statuses = new PaneStatuses();
   let inView = $state<Record<string, boolean>>({});
+  let panelsInView = $state<Partial<Record<AppPanel, boolean>>>({});
   let sizeOverrides = $state<Record<string, PaneSize>>({});
-  let viewSizes = $state<Partial<Record<WorkspaceView, PaneSize>>>({});
+  let pullRequestSize = $state<PaneSize>();
   const drag = new PaneDrag(() => paneStrip, reorder);
-  let view = $state<WorkspaceView>();
-  let panel = $state<AppPanel>();
-  let creatingWorkspace = $state(false);
-  let settingsProjectId = $state<string>();
-  let setupStatuses = $state<Record<string, SetupStatus>>({});
+  let pullRequestOpen = $state(false);
+  /** The open panels, newest first, ahead of the panes. */
+  let panels = $state<AppPanel[]>([]);
+  let creatingBranch = $state(false);
+  let creatingProject = $state(false);
 
-  const session = $derived(
-    workspace.sessions.find(({ id }) => id === workspace.currentSessionId),
-  );
   const project = $derived(
-    workspace.projects.find(({ id }) => id === session?.projectId),
+    workspace.projects.find(({ id }) => id === workspace.lastProjectId),
   );
-  const projectSessions = $derived(
-    workspace.sessions.filter(({ projectId }) => projectId === project?.id),
-  );
-  /** Open conversation panes, in layout order, across every workspace. */
-  const openPanes = $derived(
+  /** The open panes of the project on screen, agents and tools alike, in layout order. */
+  const panes = $derived(
     workspace.layout.paneIds
       .map((id) => workspace.panes.find((pane) => pane.id === id))
       .filter(
         (pane): pane is Pane =>
-          !!pane && !pane.archived && pane.type !== 'terminal',
+          !!pane && !pane.archived && pane.projectId === project?.id,
       ),
   );
-  /** The panes of the workspace on screen. */
-  const panes = $derived(
-    openPanes.filter(({ sessionId }) => sessionId === session?.id),
+  const assistantPanes = $derived(panes.filter(isAssistantPane));
+  /** Whether an agent is mid-turn, which keeps the branch where it is. */
+  const agentsWorking = $derived(
+    assistantPanes.some(({ id }) =>
+      ['working', 'input'].includes(statuses.get(id)),
+    ),
   );
+  const isRepository = $derived(!!branch.head?.isGit);
 
-  /** The workspace view, shown after the panes. */
-  const trailingView = $derived(session ? view : undefined);
-  /** Everything in the strip: the panel, the panes (or the empty state), and the view. */
+  /** The pull request pane, shown after the panes. */
+  const showPullRequest = $derived(!!project && pullRequestOpen);
+  /** Everything in the strip: the panels, the panes (or the empty state), and the pull request. */
   const stripCount = $derived(
-    (panel ? 1 : 0) + Math.max(panes.length, 1) + (trailingView ? 1 : 0),
+    panels.length + Math.max(panes.length, 1) + (showPullRequest ? 1 : 0),
   );
 
-  /** Conversations belong in worktrees; the project folder only hosts ones it already had. */
-  const canAddPane = $derived(
-    !!session && isWorktree(session) && panes.length < MAX_PANES,
-  );
-  /** The model new workspaces start with: the chosen default, else the last used. */
-  const startingModel = $derived.by(() => {
-    const { defaultModel, providers } = preferences.current;
-    if (defaultModel && providers[defaultModel.provider])
-      return defaultModel.model;
-    const { lastProvider, lastModels } = workspace.settings;
-    return lastProvider && providers[lastProvider]
-      ? (lastModels?.[lastProvider] ?? '')
-      : '';
-  });
+  const canAddPane = $derived(!!project && panes.length < MAX_PANES);
 
   const SECTION_CLASS =
     'h-full shrink-0 snap-start px-1 transition-[flex-basis,min-width] duration-200 ease-in-out motion-reduce:transition-none';
-
-  const STATUS_PRIORITY: PaneStatus[] = ['input', 'working', 'error'];
-
-  /** The most pressing status among a workspace's panes. */
-  function workspaceStatus(sessionId: string): PaneStatus {
-    const statusesHere = openPanes
-      .filter((pane) => pane.sessionId === sessionId)
-      .map(({ id }) => statuses.get(id));
-    return (
-      STATUS_PRIORITY.find((status) => statusesHere.includes(status)) ?? 'idle'
-    );
-  }
 
   function showError(cause: unknown) {
     toast(errorMessage(cause), { variant: 'error', duration: 0 });
@@ -144,83 +115,44 @@
     }
   }
 
-  /** A project starts with a worktree of its own, never in its folder. */
-  function askForWorkspace(projectId: string) {
-    const hasWorktree = workspace.sessions.some(
-      (item) =>
-        item.projectId === projectId && !item.archived && isWorktree(item),
-    );
-    if (!hasWorktree) creatingWorkspace = true;
-  }
-
-  async function addProject() {
-    let added: string | undefined;
-    await runAction(async () => {
-      added = (await window.bonfire.projects.add())?.id;
-    });
-    if (added) askForWorkspace(added);
+  function addProject() {
+    creatingProject = true;
   }
 
   function removeProject(projectId: string) {
     void runAction(() => window.bonfire.projects.remove(projectId));
   }
 
-  async function openProject(projectId: string) {
+  function openProject(projectId: string) {
     if (projectId === project?.id) return;
-    await runAction(() => window.bonfire.workspaces.openProject(projectId));
-    askForWorkspace(projectId);
+    void runAction(() => window.bonfire.projects.open(projectId));
   }
 
-  function openWorkspace(id: string) {
-    if (id === session?.id) return;
-    void runAction(() => window.bonfire.workspaces.open(id));
+  function switchBranch(name: string) {
+    void branch.switchTo(name).catch(showError);
   }
 
-  function newWorkspace() {
-    if (!workspace.projects.length) {
-      addProject();
+  function newBranch() {
+    if (!project || !isRepository) return;
+    if (agentsWorking) {
+      toast('An agent is working. Switch branches once it finishes.');
       return;
     }
-    creatingWorkspace = true;
+    creatingBranch = true;
   }
 
-  function archiveWorkspace(id: string) {
-    const target = workspace.sessions.find((item) => item.id === id);
-    void runAction(async () => {
-      const result = await window.bonfire.workspaces.archive(id);
-      const name = target ? `“${workspaceLabel(target)}”` : 'The workspace';
-      if (result.scriptError)
-        toast(`The archive script failed: ${result.scriptError}`, {
-          variant: 'error',
-          duration: 0,
-        });
-      toast(
-        result.keptFolder
-          ? `Archived ${name}. Its folder has uncommitted changes, so it was kept.`
-          : `Archived ${name}.`,
-      );
-    });
-  }
-
-  function restoreWorkspace(id: string) {
-    void runAction(() => window.bonfire.workspaces.restore(id));
-  }
-
-  async function addPane(provider?: AssistantProvider, model?: string) {
+  /** Opens a pane at the front of the strip; an agent with the last-used provider by default. */
+  async function addPane(type?: PaneType) {
     if (busy) return;
-    if (!session) {
+    if (!project) {
       addProject();
-      return;
-    }
-    if (!isWorktree(session)) {
-      toast('Create a workspace to start a conversation.');
       return;
     }
     if (!canAddPane) {
-      toast(`A workspace can have up to ${MAX_PANES} panes open.`);
+      toast(`A project can have up to ${MAX_PANES} panes open.`);
       return;
     }
-    await runAction(() => window.bonfire.panes.add(provider, model));
+    await runAction(() => window.bonfire.panes.add(type));
     await tick();
     paneStrip?.scrollTo({ left: 0, behavior: scrollBehavior() });
   }
@@ -247,22 +179,58 @@
     });
   }
 
+  const HIGHLIGHT_MS = 1200;
+  /** An inset overlay: the strip clips anything drawn outside the card. */
+  const HIGHLIGHT_CLASS =
+    'relative after:pointer-events-none after:absolute after:inset-x-1 after:inset-y-0 after:rounded-lg after:opacity-0 after:ring-2 after:ring-brand after:transition-opacity after:duration-500 after:ease-out after:ring-inset motion-reduce:after:transition-none';
+  const HIGHLIGHTED_CLASS = 'after:opacity-100 after:duration-150';
+  /** The pane or panel just scrolled to, outlined briefly so it's found at a glance. */
+  let highlightedId = $state<string>();
+  let highlightTimer: ReturnType<typeof setTimeout> | undefined;
+
+  function highlight(id: string) {
+    clearTimeout(highlightTimer);
+    highlightedId = id;
+    highlightTimer = setTimeout(
+      () => (highlightedId = undefined),
+      HIGHLIGHT_MS,
+    );
+  }
+
   /**
    * Scrolls only the strip. `scrollIntoView` would also scroll the page
    * itself, pushing the header off-screen.
    */
-  function scrollToPane(paneId: string) {
-    const pane = paneStrip?.querySelector<HTMLElement>(
-      `[data-pane-id="${CSS.escape(paneId)}"]`,
-    );
-    if (!paneStrip || !pane) return;
+  function scrollToSection(selector: string, id: string) {
+    const section = paneStrip?.querySelector<HTMLElement>(selector);
+    if (!paneStrip || !section) return;
+    highlight(id);
     const offset =
-      pane.getBoundingClientRect().left -
+      section.getBoundingClientRect().left -
       paneStrip.getBoundingClientRect().left;
     paneStrip.scrollTo({
       left: paneStrip.scrollLeft + offset,
       behavior: scrollBehavior(),
     });
+  }
+
+  function scrollToPane(paneId: string) {
+    scrollToSection(`[data-pane-id="${CSS.escape(paneId)}"]`, paneId);
+  }
+
+  /** Panel names can't clash with pane ids, which are UUIDs. */
+  function scrollToPanel(panel: AppPanel) {
+    scrollToSection(`[data-panel="${panel}"]`, panel);
+  }
+
+  /** Closes an open panel, or opens it at the front of the strip. */
+  function togglePanel(panel: AppPanel) {
+    if (panels.includes(panel)) {
+      panels = panels.filter((open) => open !== panel);
+      return;
+    }
+    panels = [panel, ...panels];
+    void revealEdge('start');
   }
 
   /** Applies a new visible pane order locally, then saves it. */
@@ -293,58 +261,67 @@
     };
   }
 
-  // Pane status needs events for every pane, including ones scrolled out of view or in
-  // other workspaces, whose status shows in the workspace picker.
+  // Pane status needs events for every agent, including ones scrolled out of view.
   $effect(() => {
     if (!loaded) return;
-    for (const { id } of openPanes) void statuses.load(id);
+    for (const { id } of assistantPanes) void statuses.load(id);
   });
 
-  // A view of a workspace that's no longer on screen would show the wrong folder.
   $effect(() => {
-    if (!session) view = undefined;
+    if (!project) pullRequestOpen = false;
   });
 
-  // The header's pull request button follows the workspace on screen.
   $effect(() => {
     if (!loaded) return;
-    const id = session?.id;
+    const id = project?.id;
+    return untrack(() => branch.watch(id));
+  });
+
+  // The header's pull request button follows the branch on screen.
+  $effect(() => {
+    if (!loaded) return;
+    const id = branch.head?.branch ? project?.id : undefined;
+    void branch.head;
     return untrack(() => pullRequest.watch(id));
-  });
-
-  $effect(() => {
-    if (panel) void revealEdge('start');
   });
 
   function handleKeydown(event: KeyboardEvent) {
     const modifier = isMac() ? event.metaKey : event.ctrlKey;
     if (modifier && event.shiftKey && event.key.toLowerCase() === 'n') {
       event.preventDefault();
-      newWorkspace();
+      newBranch();
     }
   }
 
-  // Tracks which panes are in view so the header can mark them.
+  // Tracks which panes and panels are in view so the rail can mark them.
   $effect(() => {
-    // Re-observes as panes come and go.
+    // Re-observes as panes and panels come and go.
     void panes.length;
+    void panels.length;
     if (!paneStrip) return;
     const observer = new IntersectionObserver(
       (entries) => {
         for (const { target, isIntersecting } of entries) {
-          const id = (target as HTMLElement).dataset.paneId;
-          if (id) inView[id] = isIntersecting;
+          const { dataset } = target as HTMLElement;
+          if (dataset.paneId) inView[dataset.paneId] = isIntersecting;
+          else if (dataset.panel)
+            panelsInView[dataset.panel as AppPanel] = isIntersecting;
         }
       },
       { root: paneStrip, threshold: 0.5 },
     );
-    for (const section of paneStrip.querySelectorAll('[data-pane-id]'))
+    for (const section of paneStrip.querySelectorAll(
+      '[data-pane-id], [data-panel]',
+    ))
       observer.observe(section);
     return () => observer.disconnect();
   });
 
   function handleAssistantEvent(event: AssistantEvent) {
     statuses.handle(event);
+    // Agents commit and switch branches too.
+    if (event.type === 'status' && event.status === 'idle')
+      void branch.reload();
     if (
       event.type === 'status' &&
       event.status === 'completed' &&
@@ -385,15 +362,6 @@
       // A clicked notification brings its pane into view.
       window.bonfire.app.onFocusPane(scrollToPane),
       window.bonfire.panes.onClosed((event) => void handlePanesClosed(event)),
-      window.bonfire.workspaces.onChanged(() => void refresh()),
-      window.bonfire.workspaces.onSetup(({ sessionId, status }) => {
-        setupStatuses[sessionId] = status;
-        if (status === 'failed')
-          toast(
-            'The setup script failed. Its output is in the workspace terminal.',
-            { variant: 'error' },
-          );
-      }),
       window.bonfire.app.onNotificationsBlocked((appName) =>
         toast(notificationsBlockedMessage(appName), {
           variant: 'error',
@@ -401,7 +369,10 @@
         }),
       ),
     ];
-    return () => subscriptions.forEach((unsubscribe) => unsubscribe());
+    return () => {
+      clearTimeout(highlightTimer);
+      subscriptions.forEach((unsubscribe) => unsubscribe());
+    };
   });
 
   onMount(async () => {
@@ -412,7 +383,6 @@
     }
     try {
       await refresh();
-      setupStatuses = await window.bonfire.workspaces.setupStatus();
       loaded = true;
     } catch (cause) {
       showError(cause);
@@ -433,7 +403,8 @@
       <Icon name="project" class="size-7" />
       <h1 class="mt-6 font-medium text-foreground">Add a project</h1>
       <p class="mb-6">
-        Choose a local repository for Claude and Codex to work in.
+        Choose a repository on this computer, or on another over SSH, for Claude
+        and Codex to work in.
       </p>
       <Button disabled={!loaded || busy} onclick={addProject}>
         Add project
@@ -444,77 +415,55 @@
       class="grid h-full place-content-center justify-items-center text-center text-muted-foreground"
     >
       <Icon name="bot" class="size-7" />
-      {#if session && isWorktree(session)}
-        <h1 class="mt-6 font-medium text-foreground">Start a conversation</h1>
-        <p class="mb-6 max-w-90 text-pretty">
-          Add a pane to work in “{workspaceLabel(session)}”, or start a new
-          workspace for a separate task.
-        </p>
-        <div class="flex gap-2.5">
-          <Button
-            variant="secondary"
-            disabled={!loaded || busy}
-            onclick={newWorkspace}
-          >
-            New workspace
-          </Button>
-          <Button disabled={!loaded || busy} onclick={() => addPane()}>
-            New conversation
-          </Button>
-        </div>
-      {:else}
-        <h1 class="mt-6 font-medium text-foreground">Create a workspace</h1>
-        <p class="mb-6 max-w-90 text-pretty">
-          Each task gets its own workspace: a separate branch and folder, so its
-          changes can become a pull request.
-        </p>
-        <Button disabled={!loaded || busy} onclick={newWorkspace}>
-          New workspace
-        </Button>
-      {/if}
+      <h1 class="mt-6 font-medium text-foreground">Start a conversation</h1>
+      <p class="mb-6 max-w-90 text-pretty">
+        {#if branch.head?.branch}
+          Conversations work on {branch.head.branch}.
+        {:else}
+          Conversations work in {project?.name}.
+        {/if}
+      </p>
+      <Button disabled={!loaded || busy} onclick={() => addPane()}>
+        New conversation
+      </Button>
     </Card.Root>
   {/if}
 {/snippet}
 
 <div class="flex h-screen">
   <AppRail
-    bind:panel
+    {panels}
+    ontogglePanel={togglePanel}
     {trafficLightInset}
     onhelp={() => window.bonfire.navigation.help()}
+    onaddPane={addPane}
+    panes={panes.map(({ id }) => ({
+      id,
+      status: statuses.get(id),
+      inView: !!inView[id],
+    }))}
+    {canAddPane}
+    onselectPane={scrollToPane}
+    {panelsInView}
+    onselectPanel={scrollToPanel}
   />
   <div class="flex min-w-0 flex-1 flex-col">
-    <AppHeader
-      {trafficLightInset}
-      onaddPane={() => addPane()}
-      panes={panes.map(({ id }) => ({
-        id,
-        status: statuses.get(id),
-        inView: !!inView[id],
-      }))}
-      {canAddPane}
-      onselectPane={scrollToPane}
-      bind:view
-      viewsDisabled={!session}
-    >
+    <AppHeader {trafficLightInset} bind:pullRequestOpen disabled={!project}>
       {#snippet location()}
         <ProjectPicker
           projects={workspace.projects}
           active={project}
           onselect={openProject}
           onadd={addProject}
-          onsettings={(id) => (settingsProjectId = id)}
           onremove={removeProject}
         />
         {#if project}
-          <WorkspacePicker
-            sessions={projectSessions}
-            current={session}
-            statusOf={workspaceStatus}
-            setupOf={(id) => setupStatuses[id]}
-            onopen={openWorkspace}
-            onnew={newWorkspace}
-            onarchive={archiveWorkspace}
-            onrestore={restoreWorkspace}
+          <BranchPicker
+            projectId={project.id}
+            head={branch.head}
+            locked={agentsWorking}
+            onswitch={switchBranch}
+            onnew={newBranch}
           />
         {/if}
       {/snippet}
@@ -541,9 +490,15 @@
                 drag.active && 'snap-none select-none',
               )}
             >
-              {#if panel}
+              {#each panels as panel (panel)}
                 <section
-                  class={cn(SECTION_CLASS, autoSizeClass)}
+                  data-panel={panel}
+                  class={cn(
+                    SECTION_CLASS,
+                    autoSizeClass,
+                    HIGHLIGHT_CLASS,
+                    highlightedId === panel && HIGHLIGHTED_CLASS,
+                  )}
                   in:paneWidth
                   out:paneWidth
                 >
@@ -553,29 +508,27 @@
                     <InsightsPane />
                   {/if}
                 </section>
-              {/if}
-              {#each panes as pane (`${pane.id}:${pane.type}`)}
+              {/each}
+              {#each panes as pane (pane.id)}
                 <section
                   data-pane-id={pane.id}
                   class={cn(
                     SECTION_CLASS,
                     paneSizeClass(pane),
+                    HIGHLIGHT_CLASS,
+                    highlightedId === pane.id && HIGHLIGHTED_CLASS,
                     drag.isDragging(pane.id) &&
                       '*:shadow-2xl *:shadow-black/50',
                   )}
                   style={drag.style(pane.id)}
                 >
-                  <AssistantView
+                  <PaneView
                     {pane}
+                    projectId={project!.id}
                     dragHandle={dragHandle(pane)}
                     onclose={() =>
                       runAction(() => window.bonfire.panes.archive(pane.id))}
                     onresize={(size) => (sizeOverrides[pane.id] = size)}
-                    onswitchprovider={addPane}
-                    onretype={(provider, model) =>
-                      runAction(() =>
-                        window.bonfire.panes.retype(pane.id, provider, model),
-                      )}
                   />
                 </section>
               {:else}
@@ -583,24 +536,22 @@
                   {@render placeholder()}
                 </section>
               {/each}
-              {#if session && trailingView}
+              {#if project && showPullRequest}
                 <section
                   class={cn(
                     SECTION_CLASS,
-                    viewSizes[trailingView]
-                      ? sizeClass(viewSizes[trailingView])
+                    pullRequestSize
+                      ? sizeClass(pullRequestSize)
                       : autoSizeClass,
                   )}
                   in:paneWidth
                   out:paneWidth
                   onintroend={() => void revealEdge('end')}
                 >
-                  <WorkspacePanel
-                    {session}
-                    view={trailingView}
-                    setup={setupStatuses[session.id]}
-                    onresize={(size) => (viewSizes[trailingView] = size)}
-                    onclose={() => (view = undefined)}
+                  <PullRequestView
+                    projectId={project.id}
+                    onresize={(size) => (pullRequestSize = size)}
+                    onclose={() => (pullRequestOpen = false)}
                   />
                 </section>
               {/if}
@@ -612,19 +563,10 @@
   </div>
 </div>
 
-<NewWorkspaceDialog
-  bind:open={creatingWorkspace}
-  projects={workspace.projects}
-  projectId={project?.id}
-  model={startingModel}
-  onaddproject={addProject}
-  oncreated={() => void refresh()}
-/>
-<ProjectSettingsDialog
-  bind:open={
-    () => !!settingsProjectId,
-    (next) => !next && (settingsProjectId = undefined)
-  }
-  project={workspace.projects.find(({ id }) => id === settingsProjectId)}
-  onsaved={() => void refresh()}
+{#if project}
+  <NewBranchDialog bind:open={creatingBranch} projectId={project.id} />
+{/if}
+<CreateProjectDialog
+  bind:open={creatingProject}
+  oncreated={() => void refresh().catch(showError)}
 />

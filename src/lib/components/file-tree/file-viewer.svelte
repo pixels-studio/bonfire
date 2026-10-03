@@ -5,20 +5,19 @@
   import { Button } from '$lib/components/ui/button';
   import PaneMenu from '$lib/components/pane-menu/pane-menu.svelte';
   import type { PaneSize } from '$lib/panes';
+  import { watchFiles } from '$lib/file-watch';
   import { highlight, type Token } from '$lib/highlight';
   import { errorMessage } from '$shared/domain';
   import FileIcon from './file-icon.svelte';
 
-  const REFRESH_DEBOUNCE_MS = 180;
-
   let {
-    sessionId,
+    projectId,
     path,
     onclose,
     onresize,
     onclosepanel,
   }: {
-    sessionId: string;
+    projectId: string;
     path: string;
     /** Closes the file, back to the tree. */
     onclose: () => void;
@@ -46,7 +45,7 @@
 
   async function load() {
     try {
-      const next = await window.bonfire.filesystem.readFile(sessionId, path);
+      const next = await window.bonfire.filesystem.readFile(projectId, path);
       if (next !== content) content = next;
       error = '';
     } catch (cause) {
@@ -69,16 +68,7 @@
 
   onMount(() => {
     void load();
-    let debounce: ReturnType<typeof setTimeout>;
-    const unsubscribe = window.bonfire.filesystem.onChange((event) => {
-      if (event.sessionId !== sessionId) return;
-      clearTimeout(debounce);
-      debounce = setTimeout(load, REFRESH_DEBOUNCE_MS);
-    });
-    return () => {
-      unsubscribe();
-      clearTimeout(debounce);
-    };
+    return watchFiles(projectId, load, { poll: false });
   });
 
   function lineTokens(index: number): Token[] {

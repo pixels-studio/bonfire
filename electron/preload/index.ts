@@ -24,8 +24,6 @@ api.app.onFullscreenChange = subscribe(events.fullscreen);
 api.app.onFocusPane = subscribe(events.focusPane);
 api.app.onNotificationsBlocked = subscribe(events.notificationsBlocked);
 api.panes.onClosed = subscribe(events.panesClosed);
-api.workspaces.onSetup = subscribe(events.workspaceSetup);
-api.workspaces.onChanged = subscribe(events.workspacesChanged);
 api.github.onSignInEnd = subscribe(events.githubSignInEnd);
 
 contextBridge.exposeInMainWorld('bonfire', api as unknown as API);

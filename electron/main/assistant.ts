@@ -11,10 +11,10 @@ import type {
   ConversationMessage,
   ModelOption,
   Pane,
+  Project,
   ProviderAccount,
   ProviderLimits,
   QueuedPrompt,
-  Session,
   Usage,
 } from '../../shared/contracts';
 import {
@@ -25,6 +25,7 @@ import {
 } from '../../shared/domain';
 import { PendingAttachments, type PendingAttachment } from './attachments';
 import { Cached } from './cached';
+import { localMachine, type Machine } from './machines';
 import type { Store } from './persistence';
 import { MAX_TOOL_OUTPUT } from './tool-text';
 
@@ -37,8 +38,10 @@ export type AssistantHost = {
   chooseImage: ChooseImage;
   /** Opens a URL in the user's browser, such as a sign-in page. */
   openUrl: (url: string) => Promise<void>;
-  /** Shared between providers, so a draft's attachments can go to either; each has its own otherwise. */
+  /** Shared between providers, so a pane keeps its attachments when its provider changes. */
   attachments?: PendingAttachments;
+  /** The machine a project's folder is on, where its agent runs; this computer by default. */
+  machineOf?: (project: Project) => Machine;
 };
 
 export type { PendingAttachment };
@@ -51,7 +54,9 @@ export type Steer = (prompt: Prompt) => Promise<void>;
 
 export type Turn = {
   pane: Pane;
-  session: Session;
+  project: Project;
+  /** Where the project's folder is, and so where the provider's CLI runs. */
+  machine: Machine;
   input: AssistantSendInput;
   attachments: PendingAttachment[];
   /** Hard stop: kills the provider process. */
@@ -330,8 +335,8 @@ export abstract class ChatAssistant {
   }
 
   private async start(pane: Pane, input: AssistantSendInput) {
-    if (!pane.sessionId) throw Error('Select a project first');
-    const session = this.store.session(pane.sessionId);
+    if (!pane.projectId) throw Error('Select a project first');
+    const project = this.store.project(pane.projectId);
     const attachments = this.attachmentsFor(pane, input.attachmentIds);
 
     pane.model = input.model;
@@ -348,7 +353,8 @@ export abstract class ChatAssistant {
 
     const turn: ActiveTurn = {
       pane,
-      session,
+      project,
+      machine: this.host.machineOf?.(project) ?? localMachine,
       input,
       attachments,
       controller: new AbortController(),

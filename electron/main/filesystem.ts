@@ -1,8 +1,13 @@
-import { access, readdir, readFile, realpath, stat } from 'node:fs/promises';
-import { basename, isAbsolute, relative, resolve, sep } from 'node:path';
+import { basename } from 'node:path';
 import { watch, type FSWatcher } from 'chokidar';
 import type { Entry, FileChangeEvent } from '../../shared/contracts';
 import { git } from './git';
+import {
+  FileTooLargeError,
+  resolvePlace,
+  type Machine,
+  type Place,
+} from './machines';
 
 const HIDDEN_DIRECTORIES = new Set([
   '.git',
@@ -39,9 +44,11 @@ export function rankFiles(paths: string[], query: string, limit: number) {
 }
 
 /** Resolves `path` inside `root`, rejecting escapes (incl. via symlinks) and Git metadata. */
-export async function safePath(root: string, path: string) {
-  const base = await realpath(root);
-  const target = await realpath(resolve(base, path));
+export async function safePath(root: Place, path: string) {
+  const { machine, path: rootPath } = resolvePlace(root);
+  const { isAbsolute, relative, resolve, sep } = machine.path;
+  const base = await machine.realpath(rootPath);
+  const target = await machine.realpath(resolve(base, path));
   const relativePath = relative(base, target);
   if (
     relativePath === '..' ||
@@ -49,25 +56,27 @@ export async function safePath(root: string, path: string) {
     isAbsolute(relativePath) ||
     relativePath.split(sep).includes('.git')
   )
-    throw Error('Path is outside the workspace or is Git metadata');
+    throw Error('Path is outside the project or is Git metadata');
   return target;
 }
 
 export class Filesystem {
   private readonly watchers = new Map<string, FSWatcher>();
 
-  async list(root: string, path: string): Promise<Entry[]> {
+  async list(root: Place, path: string): Promise<Entry[]> {
+    const { machine, path: rootPath } = resolvePlace(root);
+    const { relative, resolve } = machine.path;
     const directory = await safePath(root, path);
-    const items = await readdir(directory, { withFileTypes: true });
-    const ignored = await gitIgnored(root, directory);
+    const items = await machine.readdir(directory);
+    const ignored = await gitIgnored(root, relative(rootPath, directory));
     return items
       .filter(
         (item) =>
           !HIDDEN_DIRECTORIES.has(item.name) &&
-          !item.isSymbolicLink() &&
-          !ignored.has(relative(root, resolve(directory, item.name))),
+          !item.symlink &&
+          !ignored.has(relative(rootPath, resolve(directory, item.name))),
       )
-      .map((item) => ({ name: item.name, directory: item.isDirectory() }))
+      .map((item) => ({ name: item.name, directory: item.directory }))
       .sort(
         (first, second) =>
           Number(second.directory) - Number(first.directory) ||
@@ -75,43 +84,36 @@ export class Filesystem {
       );
   }
 
-  /** Paths of files in the workspace matching `query`, skipping hidden and git-ignored ones. */
-  async search(root: string, query: string): Promise<string[]> {
-    const matches = rankFiles(
-      await listFiles(root),
-      query,
-      SEARCH_RESULT_LIMIT * 2,
-    );
-    // `git ls-files` still lists tracked files that were deleted from disk.
-    const present = await Promise.all(
-      matches.map((path) =>
-        access(resolve(root, path)).then(
-          () => true,
-          () => false,
-        ),
-      ),
-    );
-    return matches
-      .filter((_, index) => present[index])
-      .slice(0, SEARCH_RESULT_LIMIT);
+  /** Paths of files in the project matching `query`, skipping hidden and git-ignored ones. */
+  async search(root: Place, query: string): Promise<string[]> {
+    return rankFiles(await listFiles(root), query, SEARCH_RESULT_LIMIT);
   }
 
-  async read(root: string, path: string) {
+  async read(root: Place, path: string) {
+    const { machine } = resolvePlace(root);
     const target = await safePath(root, path);
-    if ((await stat(target)).size > PREVIEW_LIMIT_BYTES)
-      throw Error('Preview limited to 2 MB');
-    const data = await readFile(target);
+    let data: Buffer;
+    try {
+      data = await machine.readFile(target, PREVIEW_LIMIT_BYTES);
+    } catch (cause) {
+      if (cause instanceof FileTooLargeError)
+        throw Error('Preview limited to 2 MB');
+      throw cause;
+    }
     if (data.includes(0)) throw Error('Binary file; text previews only');
     return data.toString('utf8');
   }
 
+  /** Reports changes to files on this computer; remote folders aren't watched. */
   watch(
-    sessionId: string,
-    root: string,
+    projectId: string,
+    root: Place,
     emit: (event: FileChangeEvent) => void,
   ) {
-    if (this.watchers.has(sessionId)) return;
-    const watcher = watch(root, {
+    const { machine, path: rootPath } = resolvePlace(root);
+    if (machine.remote || this.watchers.has(projectId)) return;
+    const { relative } = machine.path;
+    const watcher = watch(rootPath, {
       ignoreInitial: true,
       depth: WATCH_DEPTH,
       followSymlinks: false,
@@ -119,15 +121,15 @@ export class Filesystem {
         path.split(/[\\/]/).some((segment) => HIDDEN_DIRECTORIES.has(segment)),
     });
     watcher.on('all', (_eventName, path) =>
-      emit({ sessionId, path: relative(root, path) }),
+      emit({ projectId, path: relative(rootPath, path) }),
     );
     watcher.on('error', (error) => console.error('Watcher:', error));
-    this.watchers.set(sessionId, watcher);
+    this.watchers.set(projectId, watcher);
   }
 
-  async unwatch(sessionId: string) {
-    await this.watchers.get(sessionId)?.close();
-    this.watchers.delete(sessionId);
+  async unwatch(projectId: string) {
+    await this.watchers.get(projectId)?.close();
+    this.watchers.delete(projectId);
   }
 
   async close() {
@@ -135,7 +137,8 @@ export class Filesystem {
   }
 }
 
-async function gitIgnored(root: string, directory: string) {
+/** Ignored paths in the folder at `directory`, relative to the root. */
+async function gitIgnored(root: Place, directory: string) {
   const output = await git(root, [
     'ls-files',
     '--others',
@@ -144,41 +147,45 @@ async function gitIgnored(root: string, directory: string) {
     '--directory',
     '-z',
     '--',
-    relative(root, directory) || '.',
+    directory || '.',
   ]).catch(() => '');
   return new Set(output.split('\0').map((path) => path.replace(/\/$/, '')));
 }
 
-async function listFiles(root: string) {
-  const output = await git(root, [
-    'ls-files',
-    '--cached',
-    '--others',
-    '--exclude-standard',
-    '-z',
+const records = (output: string) => output.split('\0').filter(Boolean);
+
+async function listFiles(root: Place) {
+  const listed = await Promise.all([
+    git(root, ['ls-files', '--cached', '--others', '--exclude-standard', '-z']),
+    // Tracked files deleted from disk are still listed as cached.
+    git(root, ['ls-files', '--deleted', '-z']),
   ]).catch(() => undefined);
-  const paths =
-    output === undefined
-      ? await walk(root)
-      : output.split('\0').filter(Boolean);
+  let paths: string[];
+  if (listed) {
+    const deleted = new Set(records(listed[1]));
+    paths = records(listed[0]).filter((path) => !deleted.has(path));
+  } else {
+    const { machine, path } = resolvePlace(root);
+    paths = await walk(machine, path);
+  }
   return paths.filter(
     (path) => !path.split('/').some((part) => HIDDEN_DIRECTORIES.has(part)),
   );
 }
 
 /** Fallback for folders that are not Git repositories. */
-async function walk(root: string) {
+async function walk(machine: Machine, root: string) {
   const files: string[] = [];
   const pending = [''];
   while (pending.length && files.length < WALK_FILE_LIMIT) {
     const directory = pending.pop()!;
-    const items = await readdir(resolve(root, directory), {
-      withFileTypes: true,
-    }).catch(() => []);
+    const items = await machine
+      .readdir(machine.path.resolve(root, directory))
+      .catch(() => []);
     for (const item of items) {
-      if (HIDDEN_DIRECTORIES.has(item.name) || item.isSymbolicLink()) continue;
+      if (HIDDEN_DIRECTORIES.has(item.name) || item.symlink) continue;
       const path = directory ? `${directory}/${item.name}` : item.name;
-      if (item.isDirectory()) pending.push(path);
+      if (item.directory) pending.push(path);
       else files.push(path);
     }
   }

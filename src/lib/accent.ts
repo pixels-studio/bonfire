@@ -5,17 +5,26 @@
  */
 export const ACCENT_RANGE = { min: 230, max: 510 } as const;
 
-/** The slider position for a hue; hues outside the sweep snap to its nearer end. */
-export function accentSliderValue(hue: number) {
+/** The slider snaps to evenly spaced stops across the sweep, the first and last at its ends. */
+export const ACCENT_STOPS = 7;
+
+const STOP_SPACING = (ACCENT_RANGE.max - ACCENT_RANGE.min) / (ACCENT_STOPS - 1);
+
+/** The index of the stop nearest a hue; hues outside the sweep snap to its nearer end. */
+export function accentStopIndex(hue: number) {
   const value = hue < ACCENT_RANGE.min ? hue + 360 : hue;
-  if (value <= ACCENT_RANGE.max) return value;
+  const index = Math.round((value - ACCENT_RANGE.min) / STOP_SPACING);
+  if (index < ACCENT_STOPS) return index;
+  // Past the green end: the wrapped hues up to 150° belong to it, those beyond to blue.
   const pastEnd = value - ACCENT_RANGE.max;
   const beforeStart = ACCENT_RANGE.min + 360 - value;
-  return pastEnd < beforeStart ? ACCENT_RANGE.max : ACCENT_RANGE.min;
+  return pastEnd < beforeStart ? ACCENT_STOPS - 1 : 0;
 }
 
-export function accentHue(sliderValue: number) {
-  return sliderValue % 360;
+/** The hue of a stop, wrapped into 0-360°. */
+export function accentStopHue(index: number) {
+  const hue = (ACCENT_RANGE.min + index * STOP_SPACING) % 360;
+  return Math.round(hue * 100) / 100;
 }
 
 /** Applies the accent to the whole app; the theme derives every accent color from it. */

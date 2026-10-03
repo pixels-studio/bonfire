@@ -1,12 +1,10 @@
-import { execFile, spawn, type ChildProcess } from 'node:child_process';
-import { promisify } from 'node:util';
+import { spawn, type ChildProcess } from 'node:child_process';
 import type {
   GithubSignIn,
   GithubStatus,
   PullRequest,
 } from '../../shared/contracts';
-
-const execFileAsync = promisify(execFile);
+import { localMachine, resolvePlace, type Place } from './machines';
 
 const HOST = 'github.com';
 /** How long a device-flow sign-in may wait for the user to enter the code. */
@@ -14,13 +12,16 @@ const SIGN_IN_TIMEOUT_MS = 3 * 60_000;
 const DEVICE_CODE = /one-time code: ([A-Z0-9]{4}-[A-Z0-9]{4})/;
 const DEVICE_URL = /(https:\/\/\S+\/login\/device)/;
 
-function gh(args: string[], cwd?: string) {
-  return execFileAsync('gh', args, {
-    cwd,
-    encoding: 'utf8',
-    timeout: 30_000,
-    env: { ...process.env, GH_PROMPT_DISABLED: '1', NO_COLOR: '1' },
-  }).then(({ stdout }) => stdout);
+/** Runs gh, in a repository on whichever machine it is when given one. */
+function gh(args: string[], cwd?: Place) {
+  const { machine, path } =
+    cwd === undefined
+      ? { machine: localMachine, path: undefined }
+      : resolvePlace(cwd);
+  return machine.exec('gh', args, {
+    cwd: path,
+    env: { GH_PROMPT_DISABLED: '1', NO_COLOR: '1' },
+  });
 }
 
 function isMissing(cause: unknown) {
@@ -62,6 +63,7 @@ export function parsePullRequest(json: string): PullRequest {
     url: string;
     title: string;
     state: string;
+    baseRefName: string;
     isDraft: boolean;
     mergeable: string;
     statusCheckRollup?: CheckRollup;
@@ -76,6 +78,7 @@ export function parsePullRequest(json: string): PullRequest {
         : pull.state === 'CLOSED'
           ? 'closed'
           : 'open',
+    base: pull.baseRefName,
     draft: pull.isDraft,
     mergeable:
       pull.mergeable === 'MERGEABLE'
@@ -88,7 +91,7 @@ export function parsePullRequest(json: string): PullRequest {
 }
 
 const PULL_FIELDS =
-  'number,url,title,state,isDraft,mergeable,statusCheckRollup';
+  'number,url,title,state,baseRefName,isDraft,mergeable,statusCheckRollup';
 
 /** gh's own explanation, which says what went wrong better than the command line it ran. */
 function ghError(cause: unknown) {
@@ -195,7 +198,7 @@ export class GitHub {
   }
 
   /** When the newest merged pull request from `branch` was merged, if there is one. */
-  async lastMerge(cwd: string, branch: string): Promise<number | undefined> {
+  async lastMerge(cwd: Place, branch: string): Promise<number | undefined> {
     const output = await gh(
       [
         'pr',
@@ -216,7 +219,7 @@ export class GitHub {
   }
 
   /** The newest pull request from the branch checked out in `cwd`, or null if it has none. */
-  async pullRequest(cwd: string): Promise<PullRequest | null> {
+  async pullRequest(cwd: Place): Promise<PullRequest | null> {
     try {
       return parsePullRequest(
         await gh(['pr', 'view', '--json', PULL_FIELDS], cwd),
@@ -234,7 +237,7 @@ export class GitHub {
 
   /** Opens a pull request from the branch checked out in `cwd`, which must already be pushed. */
   async createPullRequest(
-    cwd: string,
+    cwd: Place,
     { title, body, base }: { title: string; body: string; base: string },
   ): Promise<PullRequest> {
     try {
@@ -252,7 +255,7 @@ export class GitHub {
   }
 
   /** Squash-merges the open pull request of the branch checked out in `cwd`. */
-  async mergePullRequest(cwd: string) {
+  async mergePullRequest(cwd: Place) {
     try {
       await gh(['pr', 'merge', '--squash'], cwd);
     } catch (cause) {

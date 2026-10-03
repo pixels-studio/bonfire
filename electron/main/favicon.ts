@@ -1,5 +1,7 @@
-import { readFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { resolvePlace, type Place } from './machines';
+
+/** Favicons larger than this aren't worth sending to the renderer. */
+const FAVICON_LIMIT_BYTES = 512 * 1024;
 
 const CANDIDATES = [
   'public/favicon.svg',
@@ -22,10 +24,14 @@ function mimeFor(path: string) {
   return 'image/x-icon';
 }
 
-export async function favicon(projectPath: string): Promise<string | null> {
+export async function favicon(project: Place): Promise<string | null> {
+  const { machine, path } = resolvePlace(project);
   for (const candidate of CANDIDATES) {
     try {
-      const data = await readFile(join(projectPath, candidate));
+      const data = await machine.readFile(
+        machine.path.join(path, candidate),
+        FAVICON_LIMIT_BYTES,
+      );
       return `data:${mimeFor(candidate)};base64,${data.toString('base64')}`;
     } catch {
       continue;

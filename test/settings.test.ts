@@ -19,7 +19,6 @@ test('state saved before preferences existed still loads', () => {
   const state = stateSchema.parse({
     version: 1,
     projects: [],
-    sessions: [],
     panes: [
       {
         id: crypto.randomUUID(),

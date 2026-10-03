@@ -4,6 +4,7 @@
   import * as Tooltip from '$lib/components/ui/tooltip';
   import Toast from '$lib/components/ui/toast/toast.svelte';
   import { applyAccent } from '$lib/accent';
+  import { connections } from '$lib/stores/connections.svelte';
   import { preferences } from '$lib/stores/preferences.svelte';
   import { toast } from '$lib/stores/toast.svelte';
   import { errorMessage } from '$shared/domain';
@@ -12,9 +13,9 @@
   $effect(() => applyAccent(preferences.current.accentHue));
 
   onMount(() => {
-    preferences
-      .load()
-      .catch((cause) => toast(errorMessage(cause), { variant: 'error' }));
+    Promise.all([preferences.load(), connections.load()]).catch((cause) =>
+      toast(errorMessage(cause), { variant: 'error' }),
+    );
   });
 </script>
 

@@ -1,5 +1,5 @@
 import type { AssistantEvent } from '../../shared/contracts';
-import { PROVIDER_LABELS } from '../../shared/domain';
+import { PROVIDER_LABELS, isAssistantPane } from '../../shared/domain';
 import type { Store } from './persistence';
 
 /** A system notification about a pane. */
@@ -29,7 +29,7 @@ export class TurnNotifier {
   handle(event: AssistantEvent) {
     if (this.closed || !this.store.preferences.notifications) return;
     const pane = this.store.state.panes.find(({ id }) => id === event.paneId);
-    if (!pane || pane.archived || pane.type === 'terminal') return;
+    if (!pane || pane.archived || !isAssistantPane(pane)) return;
     const body = noticeBody(event, PROVIDER_LABELS[pane.type]);
     if (body) this.show({ paneId: pane.id, title: pane.title, body });
   }

@@ -29,6 +29,7 @@ import type {
   UserInputQuestion,
 } from './codex-protocol';
 import { codexLimits, type CodexRateLimits } from './limits';
+import { localMachine, type Machine } from './machines';
 import { CodexRpc, codexCommand, type CodexCommand } from './codex-rpc';
 import type { Store } from './persistence';
 
@@ -39,6 +40,8 @@ const SILENCE_LIMIT_MS = 10 * 60_000;
 type Run = {
   turn: Turn;
   rpc: CodexRpc;
+  /** The machine whose server runs the turn. */
+  machine: Machine;
   threadId: string;
   /** Known once the turn starts; notifications for other turns on the thread are ignored. */
   turnId?: string;
@@ -67,7 +70,8 @@ type Generation = {
  */
 export class CodexAssistant extends ChatAssistant {
   protected readonly provider = 'codex';
-  private server?: Promise<CodexRpc>;
+  /** App servers by machine id. */
+  private readonly servers = new Map<string, Promise<CodexRpc>>();
   private readonly runs = new Map<string, Run>();
   private readonly generations = new Map<string, Generation>();
   /** Sign-ins waiting for the browser, keyed by login id. */
@@ -77,18 +81,18 @@ export class CodexAssistant extends ChatAssistant {
     store: Store,
     emit: (event: AssistantEvent) => void,
     host: AssistantHost,
-    private readonly command: () => CodexCommand = codexCommand,
+    private readonly command: (machine: Machine) => CodexCommand = codexCommand,
   ) {
     super(store, emit, host);
   }
 
   protected async run(turn: Turn) {
-    const { pane, session, input, attachments } = turn;
-    const rpc = await this.connection();
+    const { pane, project, machine, input, attachments } = turn;
+    const rpc = await this.connection(machine);
     const auto = turn.approvals === 'auto';
     const settings = {
       model: input.model || undefined,
-      cwd: session.worktreePath,
+      cwd: project.path,
       // The sandbox keeps writes inside the project; "on-request" asks before leaving it.
       approvalPolicy: auto ? 'never' : 'on-request',
       approvalsReviewer: 'user',
@@ -114,6 +118,7 @@ export class CodexAssistant extends ChatAssistant {
       run = {
         turn,
         rpc,
+        machine,
         threadId,
         interruptPending: false,
         summaryIndex: new Map(),
@@ -133,7 +138,7 @@ export class CodexAssistant extends ChatAssistant {
         'turn/start',
         {
           threadId,
-          input: userInput({ text: input.text, attachments }),
+          input: userInput({ text: input.text, attachments }, machine),
           effort: input.reasoningEffort,
           // Without this the model's reasoning isn't summarized, so there is nothing to show.
           summary: 'auto',
@@ -268,15 +273,24 @@ export class CodexAssistant extends ChatAssistant {
 
   close() {
     super.close();
-    const server = this.server;
-    this.server = undefined;
-    void server?.then((rpc) => rpc.close()).catch(() => {});
+    const servers = [...this.servers.values()];
+    this.servers.clear();
+    for (const server of servers)
+      void server.then((rpc) => rpc.close()).catch(() => {});
   }
 
-  /** The shared server, started on first use and again if it dies. */
-  private connection(): Promise<CodexRpc> {
-    if (this.server) return this.server;
-    const server: Promise<CodexRpc> = CodexRpc.start(this.command(), {
+  /**
+   * The machine's shared server, started on first use and again if it dies. Accounts,
+   * models, and text generation use the one on this computer.
+   */
+  private connection(machine: Machine = localMachine): Promise<CodexRpc> {
+    const known = this.servers.get(machine.id);
+    if (known) return known;
+    const forget = () => {
+      if (this.servers.get(machine.id) === server)
+        this.servers.delete(machine.id);
+    };
+    const server: Promise<CodexRpc> = CodexRpc.start(this.command(machine), {
       onNotification: (method, params) => {
         if (method === 'account/login/completed')
           return this.logins.get(params.loginId)?.(params);
@@ -288,17 +302,17 @@ export class CodexAssistant extends ChatAssistant {
       onRequest: (id, method, params) =>
         void this.request(id, method, params, server),
       onExit: (error) => {
-        if (this.server === server) this.server = undefined;
-        for (const run of this.runs.values()) this.fail(run, error);
-        for (const generation of this.generations.values())
-          generation.reject(error);
+        forget();
+        for (const run of this.runs.values())
+          if (run.machine.id === machine.id) this.fail(run, error);
+        if (!machine.remote)
+          for (const generation of this.generations.values())
+            generation.reject(error);
       },
     });
     // A failed start must not be remembered, or every later turn would fail the same way.
-    server.catch(() => {
-      if (this.server === server) this.server = undefined;
-    });
-    this.server = server;
+    server.catch(forget);
+    this.servers.set(machine.id, server);
     return server;
   }
 
@@ -306,7 +320,7 @@ export class CodexAssistant extends ChatAssistant {
     await run.rpc.request('turn/steer', {
       threadId: run.threadId,
       expectedTurnId: run.turnId,
-      input: userInput(prompt),
+      input: userInput(prompt, run.machine),
     });
   }
 
@@ -491,14 +505,27 @@ export class CodexAssistant extends ChatAssistant {
   }
 }
 
-function userInput({ text, attachments }: Prompt) {
+/** A prompt as Codex input. Images on this computer go by path, and inline to a remote machine. */
+function userInput(
+  { text, attachments }: Prompt,
+  machine: Machine = localMachine,
+) {
   return [
     { type: 'text', text, text_elements: [] },
-    ...attachments.map((attachment: PendingAttachment) =>
-      attachment.kind === 'image'
-        ? { type: 'localImage', path: attachment.path }
-        : { type: 'text', text: attachedText(attachment), text_elements: [] },
-    ),
+    ...attachments.map((attachment: PendingAttachment) => {
+      if (attachment.kind !== 'image')
+        return {
+          type: 'text',
+          text: attachedText(attachment),
+          text_elements: [],
+        };
+      return machine.remote
+        ? {
+            type: 'image',
+            url: `data:${attachment.mimeType};base64,${attachment.base64}`,
+          }
+        : { type: 'localImage', path: attachment.path };
+    }),
   ];
 }
 
