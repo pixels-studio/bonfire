@@ -2,7 +2,7 @@
 // Reuses the installed Electron.app as the shell and puts the built app inside it, unpacked, so
 // node-pty and the bundled agent CLIs stay ordinary files that can be executed.
 import { execFileSync } from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
 
 const root = resolve(import.meta.dirname, '..');
@@ -27,11 +27,27 @@ writeFileSync(
 );
 for (const dir of ['dist', 'build', 'static']) cpSync(join(root, dir), join(app, dir), { recursive: true });
 
+// The agent CLIs are ~520 MB. By default the app uses the `claude` and `codex` installed on the
+// machine (both are already the fallback); pass --with-agents to bundle them instead.
+const withAgents = process.argv.includes('--with-agents');
+const isAgentBinary = (path) => /node_modules\/@(openai\/codex-|anthropic-ai\/claude-agent-sdk-)/.test(path);
+
 // Only what the main process loads at runtime: the production dependency tree.
 const tree = execFileSync('npm', ['ls', '--omit=dev', '--all', '--parseable'], { cwd: root, encoding: 'utf8' });
 for (const path of tree.split('\n').filter((line) => line.includes('/node_modules/'))) {
+  if (!withAgents && (isAgentBinary(path) || path.endsWith('/node_modules/@openai/codex'))) continue;
   cpSync(path, join(app, relative(root, path)), { recursive: true, verbatimSymlinks: true });
 }
+
+// node-pty ships prebuilds for every platform; keep this machine's.
+const prebuilds = join(app, 'node_modules/node-pty/prebuilds');
+if (existsSync(prebuilds))
+  for (const name of readdirSync(prebuilds))
+    if (name !== `${process.platform}-${process.arch}`) rmSync(join(prebuilds, name), { recursive: true, force: true });
+
+// Electron ships ~60 locale folders; keep English.
+for (const name of readdirSync(resources))
+  if (name.endsWith('.lproj') && !name.startsWith('en')) rmSync(join(resources, name), { recursive: true, force: true });
 
 // Icon: static/icon.png -> icns.
 const iconset = join(root, 'release', 'icon.iconset');

@@ -2,14 +2,17 @@ import { tmpdir } from 'node:os';
 import type {
   AssistantEvent,
   ModelOption,
+  Project,
   ProviderAccount,
   ProviderLimits,
   Question,
+  Skill,
 } from '../../shared/contracts';
 import { errorMessage } from '../../shared/domain';
 import {
   ChatAssistant,
   attachedText,
+  inlineParts,
   type AssistantHost,
   type PendingAttachment,
   type Prompt,
@@ -23,6 +26,7 @@ import type {
   LoginCompleted,
   ModelEntry,
   RequestId,
+  SkillsListEntry,
   ThreadItem,
   TokenUsageBreakdown,
   TurnStatus,
@@ -49,6 +53,8 @@ type Run = {
   interruptPending: boolean;
   /** Highest summary section seen per reasoning item, to separate sections. */
   summaryIndex: Map<string, number>;
+  /** When each reasoning item started, to time it once it completes. */
+  reasoningStarts: Map<string, number>;
   settle: { resolve: () => void; reject: (error: Error) => void };
   finished: boolean;
   /** Whether this turn has already shown its failure. */
@@ -122,6 +128,7 @@ export class CodexAssistant extends ChatAssistant {
         threadId,
         interruptPending: false,
         summaryIndex: new Map(),
+        reasoningStarts: new Map(),
         settle: { resolve, reject },
         finished: false,
         reported: false,
@@ -138,7 +145,10 @@ export class CodexAssistant extends ChatAssistant {
         'turn/start',
         {
           threadId,
-          input: userInput({ text: input.text, attachments }, machine),
+          input: userInput(
+            { text: input.text, attachments, skills: turn.skills },
+            machine,
+          ),
           effort: input.reasoningEffort,
           // Without this the model's reasoning isn't summarized, so there is nothing to show.
           summary: 'auto',
@@ -169,6 +179,31 @@ export class CodexAssistant extends ChatAssistant {
       cursor = page.nextCursor;
     } while (cursor);
     return models;
+  }
+
+  /** Enabled skills for the project's folder: its own, the user's, plugins', and Codex's. */
+  protected async listSkills(
+    project: Project,
+    machine: Machine,
+  ): Promise<Skill[]> {
+    const rpc = await this.connection(machine);
+    const { data } = await rpc.request<{ data: SkillsListEntry[] }>(
+      'skills/list',
+      { cwds: [project.path] },
+    );
+    const skills = new Map<string, Skill>();
+    for (const entry of data)
+      for (const skill of entry.skills)
+        if (skill.enabled && !skills.has(skill.name))
+          skills.set(skill.name, {
+            name: skill.name,
+            description:
+              skill.interface?.shortDescription ??
+              skill.shortDescription ??
+              skill.description,
+            path: skill.path,
+          });
+    return [...skills.values()];
   }
 
   protected async readLimits(): Promise<ProviderLimits> {
@@ -247,7 +282,7 @@ export class CodexAssistant extends ChatAssistant {
         this.generations.set(thread.id, { text: '', resolve, reject });
         const started = rpc.request<{ turn: { id: string } }>('turn/start', {
           threadId: thread.id,
-          input: userInput({ text: prompt, attachments: [] }),
+          input: userInput({ text: prompt, attachments: [], skills: [] }),
         });
         started.catch(reject);
         signal.addEventListener(
@@ -372,7 +407,13 @@ export class CodexAssistant extends ChatAssistant {
       case 'item/started':
       case 'item/completed': {
         const completed = method === 'item/completed';
-        const message = messageFromItem(params.item as ThreadItem, completed);
+        const item = params.item as ThreadItem;
+        const message = messageFromItem(item, completed);
+        if (message && item.type === 'reasoning') {
+          const startedAt = run.reasoningStarts.get(item.id) ?? Date.now();
+          run.reasoningStarts.set(item.id, startedAt);
+          if (completed) message.durationMs = Date.now() - startedAt;
+        }
         if (message) this.publish(pane, message, completed);
         break;
       }
@@ -505,27 +546,41 @@ export class CodexAssistant extends ChatAssistant {
   }
 }
 
-/** A prompt as Codex input. Images on this computer go by path, and inline to a remote machine. */
+/**
+ * A prompt as Codex input. Images on this computer go by path, and inline to a remote
+ * machine. Skills go by the path the server listed them at, which is on its own machine.
+ */
 function userInput(
-  { text, attachments }: Prompt,
+  { text, attachments, skills }: Prompt,
   machine: Machine = localMachine,
 ) {
   return [
-    { type: 'text', text, text_elements: [] },
-    ...attachments.map((attachment: PendingAttachment) => {
+    ...inlineParts(text, attachments).flatMap((part) => {
+      if ('text' in part)
+        return part.text.trim()
+          ? [{ type: 'text', text: part.text, text_elements: [] }]
+          : [];
+      const attachment: PendingAttachment = part.attachment;
       if (attachment.kind !== 'image')
-        return {
-          type: 'text',
-          text: attachedText(attachment),
-          text_elements: [],
-        };
-      return machine.remote
-        ? {
-            type: 'image',
-            url: `data:${attachment.mimeType};base64,${attachment.base64}`,
-          }
-        : { type: 'localImage', path: attachment.path };
+        return [
+          {
+            type: 'text',
+            text: attachedText(attachment),
+            text_elements: [],
+          },
+        ];
+      return [
+        machine.remote
+          ? {
+              type: 'image',
+              url: `data:${attachment.mimeType};base64,${attachment.base64}`,
+            }
+          : { type: 'localImage', path: attachment.path },
+      ];
     }),
+    ...skills
+      .filter((skill) => skill.path)
+      .map(({ name, path }) => ({ type: 'skill', name, path })),
   ];
 }
 

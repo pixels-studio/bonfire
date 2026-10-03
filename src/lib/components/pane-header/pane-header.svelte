@@ -4,10 +4,24 @@
   import Icon from '$lib/components/icon/icon.svelte';
   import PaneMenu from '$lib/components/pane-menu/pane-menu.svelte';
   import type { PaneSize } from '$lib/panes';
+  import type { PaneStatus } from '$lib/pane-status.svelte';
+  import { cn } from '$lib/utils';
+
+  const STATUS_DOTS: Record<Exclude<PaneStatus, 'idle'>, string> = {
+    working: 'bg-success dot-working',
+    input: 'bg-orange-400',
+    error: 'bg-destructive',
+  };
+  const STATUS_LABELS: Record<Exclude<PaneStatus, 'idle'>, string> = {
+    working: 'Working',
+    input: 'Needs input',
+    error: 'Failed',
+  };
 
   let {
     title,
     icon,
+    status = 'idle',
     menuLabel,
     dragHandle,
     actions,
@@ -17,6 +31,8 @@
     title: string;
     /** Shown before the title. */
     icon?: string;
+    /** Replaces the icon with a colored dot while the pane is anything but idle. */
+    status?: PaneStatus;
     /** What the pane menu's trigger is announced as; "<title> options" by default. */
     menuLabel?: string;
     /** Adds a grip for reordering the pane; panes fixed in place have none. */
@@ -46,7 +62,17 @@
       </button>
     {/if}
     <h2 class="flex min-w-0 items-center gap-2 text-sm font-semibold">
-      {#if icon}<Icon name={icon} class="shrink-0 text-muted-foreground" />{/if}
+      {#if status !== 'idle'}
+        <span class="grid size-4 shrink-0 place-content-center">
+          <span
+            class={cn('size-2.5 rounded-full', STATUS_DOTS[status])}
+            role="img"
+            aria-label={STATUS_LABELS[status]}
+          ></span>
+        </span>
+      {:else if icon}
+        <Icon name={icon} class="shrink-0 text-muted-foreground" />
+      {/if}
       <span class="truncate" {title}>{title}</span>
     </h2>
   </div>

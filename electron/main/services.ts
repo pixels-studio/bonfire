@@ -31,9 +31,11 @@ import {
   folderName,
   isAssistantPane,
   isDefaultTitle,
+  promptText,
   reorderLayout,
   repositoryName,
   resolvePreferences,
+  withoutMarkers,
   titleFrom,
 } from '../../shared/domain';
 import type { AssistantHost } from './assistant';
@@ -209,6 +211,18 @@ export function services(options: ServiceOptions) {
       options.send(events.panesClosed, { paneIds: closed, reason: 'merged' });
     },
   });
+
+  /** Closes every open pane of the project once its changes are pushed, if the setting is on. */
+  function closeAfterPush(projectId: string) {
+    if (!store.preferences.closeOnPush) return;
+    const project = store.state.projects.find(({ id }) => id === projectId);
+    if (!project) return;
+    const closed = openPanesOf(project).map(({ id }) => id);
+    if (!closed.length) return;
+    for (const id of closed) archivePane(store.pane(id));
+    store.save();
+    options.send(events.panesClosed, { paneIds: closed, reason: 'pushed' });
+  }
   mergeWatcher.start();
 
   function requireEnabled(provider: AssistantProvider) {
@@ -286,7 +300,11 @@ export function services(options: ServiceOptions) {
     const naming = !hasStarted(pane) && isDefaultTitle(pane.title);
     await recordBranch(pane);
     const turn = assistant.send(input);
-    if (naming) void nameConversation(pane, input.text);
+    if (naming)
+      void nameConversation(
+        pane,
+        withoutMarkers(promptText(input.text, input.skills)),
+      );
     return turn;
   }
 
@@ -545,7 +563,13 @@ export function services(options: ServiceOptions) {
         if (draft.blocked) throw Error(draft.blocked);
         if (commit && draft.uncommitted) await git.commitAll(cwd, title);
         await git.pushBranch(cwd);
-        return github.createPullRequest(cwd, { title, body, base: draft.base });
+        const pull = await github.createPullRequest(cwd, {
+          title,
+          body,
+          base: draft.base,
+        });
+        closeAfterPush(projectId);
+        return pull;
       },
       createPullRequestForMe: async (projectId) => {
         const cwd = folder(projectId);
@@ -554,7 +578,13 @@ export function services(options: ServiceOptions) {
         const { title, body } = await writePullRequest(cwd, draft);
         if (draft.uncommitted) await git.commitAll(cwd, title);
         await git.pushBranch(cwd);
-        return github.createPullRequest(cwd, { title, body, base: draft.base });
+        const pull = await github.createPullRequest(cwd, {
+          title,
+          body,
+          base: draft.base,
+        });
+        closeAfterPush(projectId);
+        return pull;
       },
       push: async (projectId) => {
         const cwd = folder(projectId);
@@ -567,6 +597,7 @@ export function services(options: ServiceOptions) {
           await git.commitAll(cwd, title);
         }
         await git.pushBranch(cwd);
+        closeAfterPush(projectId);
       },
       mergePullRequest: async (projectId) =>
         github.mergePullRequest(folder(projectId)),
@@ -617,10 +648,13 @@ export function services(options: ServiceOptions) {
       respond: async (input) => assistantFor(input.paneId).respond(input),
       snapshot: async (paneId) => assistantFor(paneId).snapshot(paneId),
       models: async (provider) => assistants[provider].models(),
+      skills: async (paneId) => assistantFor(paneId).skills(paneId),
       pickAttachment: async (paneId) =>
         assistantFor(paneId).pickAttachment(paneId),
       attachFile: async (paneId, path) =>
         assistantFor(paneId).attachFile(paneId, path),
+      attachImage: async (paneId, name, data) =>
+        assistantFor(paneId).attachImage(paneId, name, data),
       attachText: async (paneId, text) =>
         assistantFor(paneId).attachText(paneId, text),
       sendQueued: async (paneId, queuedId) =>

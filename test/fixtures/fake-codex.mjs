@@ -227,6 +227,12 @@ async function runTurn(threadId, turnId, text, params) {
     const steer = await steered;
     agentReply(threadId, turnId, 'a1', `Steered: ${steer}`);
     complete(threadId, turnId);
+  } else if (text.startsWith('skills')) {
+    const skills = params.input
+      .filter((part) => part.type === 'skill')
+      .map((part) => `${part.name}@${part.path}`);
+    agentReply(threadId, turnId, 'a1', `skills:${skills.join(',')}`);
+    complete(threadId, turnId);
   } else if (text.startsWith('personality')) {
     agentReply(
       threadId,
@@ -307,6 +313,32 @@ createInterface({ input: process.stdin }).on('line', (line) => {
           { model: 'fake-hidden', displayName: 'Hidden', hidden: true },
         ],
         nextCursor: null,
+      });
+    case 'skills/list':
+      return reply({
+        data: [
+          {
+            cwd: params.cwds[0],
+            skills: [
+              {
+                name: 'review',
+                description: 'Reviews the diff in detail',
+                interface: { shortDescription: 'Reviews the diff' },
+                path: '/skills/review/SKILL.md',
+                scope: 'user',
+                enabled: true,
+              },
+              {
+                name: 'off',
+                description: 'Turned off',
+                path: '/skills/off/SKILL.md',
+                scope: 'user',
+                enabled: false,
+              },
+            ],
+            errors: [],
+          },
+        ],
       });
     case 'thread/start':
       return reply({

@@ -6,26 +6,33 @@
     pick: () => Promise<Attachment | null>;
     text: (text: string) => Promise<Attachment>;
     file: (path: string) => Promise<Attachment>;
+    image: (name: string, data: Uint8Array) => Promise<Attachment>;
   };
 </script>
 
 <script lang="ts">
   import ArrowUp from '@lucide/svelte/icons/arrow-up';
   import X from '@lucide/svelte/icons/x';
-  import type { Snippet } from 'svelte';
+  import { tick, type Snippet } from 'svelte';
   import { Button } from '$lib/components/ui/button';
   import * as Tooltip from '$lib/components/ui/tooltip';
   import Icon from '$lib/components/icon/icon.svelte';
   import ShortcutKeys from '$lib/components/shortcuts/shortcut-keys.svelte';
-  import AttachmentView from '../conversation/attachment-view.svelte';
+  import SkillMenu, { matchSkills } from './skill-menu.svelte';
   import { preferences } from '$lib/stores/preferences.svelte';
   import { toast } from '$lib/stores/toast.svelte';
   import { matchShortcut } from '$lib/shortcuts';
   import { cn, isMac } from '$lib/utils';
-  import { LONG_TEXT_THRESHOLD, errorMessage } from '$shared/domain';
   import {
+    LONG_TEXT_THRESHOLD,
+    attachmentMarker,
+    errorMessage,
+  } from '$shared/domain';
+  import {
+    MAX_SKILLS,
     MAX_TEXT_ATTACHMENT_LENGTH,
     type FollowUpMode,
+    type Skill,
   } from '$shared/contracts';
 
   const MAX_ATTACHMENTS = 8;
@@ -48,6 +55,8 @@
       pick: () => window.bonfire.assistant.pickAttachment(paneId),
       text: (text) => window.bonfire.assistant.attachText(paneId, text),
       file: (path) => window.bonfire.assistant.attachFile(paneId, path),
+      image: (name, data) =>
+        window.bonfire.assistant.attachImage(paneId, name, data),
     },
     allowEmpty = false,
     submitLabel = 'Send message',
@@ -70,12 +79,13 @@
     textareaClass?: string;
     autofocus?: boolean;
     /**
-     * Sends the message; `followUp` says how, when a turn is already running. A
-     * rejection hands the draft back to the composer.
+     * Sends the message with the names of its attached skills; `followUp` says how, when
+     * a turn is already running. A rejection hands the draft back to the composer.
      */
     onsend: (
       text: string,
       attachmentIds: string[],
+      skills: string[],
       followUp?: FollowUpMode,
     ) => Promise<void>;
     children: Snippet;
@@ -83,26 +93,127 @@
 
   let prompt = $state('');
   let attachments = $state<Attachment[]>([]);
+  /**
+   * What each attachment looks like in the text, `[[name]]`, keyed by id. It is written at
+   * the caret, shown as a chip, and swapped for the real marker when the message is sent.
+   */
+  let tokens = $state<Record<string, string>>({});
+  /** Skills attached with `/`, which run with the message. */
+  let skills = $state<Skill[]>([]);
   const canAttach = $derived(attachments.length < MAX_ATTACHMENTS);
   const followUp = $derived(preferences.current.followUp);
+  const hasMessage = $derived(!!prompt.trim() || skills.length > 0);
 
   /** Sends the draft. While a turn runs, `invert` swaps queueing and steering for this message. */
   async function send(invert = false) {
-    const text = prompt.trim();
-    if ((!text && !allowEmpty) || disabled) return;
-    const draft = { prompt, attachments };
+    const text = withMarkers(prompt).trim();
+    if ((!text && !skills.length && !allowEmpty) || disabled) return;
+    const draft = { prompt, attachments, skills, tokens };
     prompt = '';
     attachments = [];
+    skills = [];
+    tokens = {};
     try {
       await onsend(
         text,
         draft.attachments.map(({ id }) => id),
+        draft.skills.map(({ name }) => name),
         running ? followUpMode(invert) : undefined,
       );
     } catch {
       // Nothing typed is lost, unless the user has already started a new draft.
-      if (!prompt && !attachments.length) ({ prompt, attachments } = draft);
+      if (!prompt && !attachments.length && !skills.length)
+        ({ prompt, attachments, skills, tokens } = draft);
     }
+  }
+
+  // The `/` menu: typing `/` at the start of a word lists the provider's skills.
+  const menuId = $props.id();
+  /** Where the `/` being completed is, and what follows it; null while the menu is closed. */
+  let slash = $state<{ start: number; query: string } | null>(null);
+  /** The `/` whose menu Escape closed, so it stays closed until another `/` is typed. */
+  let dismissed = -1;
+  let highlighted = $state(0);
+  let offered = $state<Skill[]>();
+  let skillsError = $state('');
+  const matches = $derived(
+    slash ? matchSkills(offered ?? [], slash.query, skills) : [],
+  );
+
+  /** Opens, narrows, or closes the menu after the text or the caret moved. */
+  function updateSlash() {
+    if (!paneId || !textarea) return;
+    const { value, selectionStart: caret, selectionEnd } = textarea;
+    const typed =
+      caret === selectionEnd
+        ? /(?:^|\s)\/([^\s/]*)$/.exec(value.slice(0, caret))
+        : null;
+    if (!typed) {
+      slash = null;
+      dismissed = -1;
+      return;
+    }
+    const query = typed[1];
+    const start = caret - query.length - 1;
+    if (start === dismissed) return;
+    if (!slash) void loadSkills();
+    if (slash?.start !== start || slash.query !== query) highlighted = 0;
+    slash = { start, query };
+  }
+
+  /** Fetches the list each time the menu opens, so new skills show up; main caches it. */
+  async function loadSkills() {
+    skillsError = '';
+    try {
+      offered = await window.bonfire.assistant.skills(paneId);
+    } catch (cause) {
+      skillsError = errorMessage(cause);
+    }
+  }
+
+  /** Attaches the skill and takes the `/` and what was typed after it out of the text. */
+  async function chooseSkill(skill: Skill) {
+    if (!slash || !textarea) return;
+    if (skills.length >= MAX_SKILLS) {
+      toast(`You can attach up to ${MAX_SKILLS} skills.`);
+      return;
+    }
+    const before = prompt.slice(0, slash.start);
+    const after = prompt.slice(textarea.selectionStart);
+    prompt = before + (before.endsWith(' ') ? after.trimStart() : after);
+    skills.push(skill);
+    slash = null;
+    await tick();
+    textarea.setSelectionRange(before.length, before.length);
+    textarea.focus();
+  }
+
+  function removeSkill(name: string) {
+    skills = skills.filter((skill) => skill.name !== name);
+  }
+
+  /** Moves through and picks from the menu; returns whether the key was used. */
+  function handleMenuKey(event: KeyboardEvent) {
+    if (!slash) return false;
+    const count = matches.length;
+    switch (event.key) {
+      case 'ArrowDown':
+      case 'ArrowUp':
+        if (!count) return false;
+        highlighted =
+          (highlighted + (event.key === 'ArrowDown' ? 1 : count - 1)) % count;
+        return true;
+      case 'Enter':
+      case 'Tab':
+        if (!count || event.shiftKey) return false;
+        void chooseSkill(matches[Math.min(highlighted, count - 1)]);
+        return true;
+      case 'Escape':
+        dismissed = slash.start;
+        slash = null;
+        return true;
+    }
+    return false;
   }
 
   function followUpMode(invert: boolean): FollowUpMode {
@@ -113,7 +224,7 @@
   async function pickAttachment() {
     try {
       const attachment = await attach.pick();
-      if (attachment) attachments.push(attachment);
+      if (attachment) insertAttachment(attachment);
     } catch (cause) {
       toast(errorMessage(cause), { variant: 'error' });
     }
@@ -127,8 +238,14 @@
         return;
       }
       try {
-        attachments.push(
-          await attach.file(window.bonfire.app.pathForFile(file)),
+        const path = window.bonfire.app.pathForFile(file);
+        insertAttachment(
+          path
+            ? await attach.file(path)
+            : await attach.image(
+                file.name || 'Image',
+                new Uint8Array(await file.arrayBuffer()),
+              ),
         );
       } catch (cause) {
         toast(errorMessage(cause), { variant: 'error' });
@@ -153,12 +270,69 @@
     resize();
   });
 
-  function removeAttachment(id: string) {
-    attachments = attachments.filter((attachment) => attachment.id !== id);
+  /** Writes the attachment into the text where the caret is, so it is sent in place. */
+  function insertAttachment(attachment: Attachment) {
+    const base = `[[${
+      attachment.name.length > 32
+        ? `${attachment.name.slice(0, 31)}…`
+        : attachment.name
+    }]]`;
+    const taken = new Set(Object.values(tokens));
+    let token = base;
+    for (let n = 2; taken.has(token); n++)
+      token = `${base.slice(0, -2)} ${n}]]`;
+    attachments.push(attachment);
+    tokens[attachment.id] = token;
+    const at = textarea?.selectionStart ?? prompt.length;
+    const end = textarea?.selectionEnd ?? at;
+    const before = prompt.slice(0, at);
+    const after = prompt.slice(end);
+    const lead = before && !/\s$/.test(before) ? ' ' : '';
+    const tail = after.startsWith(' ') ? '' : ' ';
+    prompt = `${before}${lead}${token}${tail}${after}`;
+    const caret = before.length + lead.length + token.length + 1;
+    void tick().then(() => {
+      textarea?.setSelectionRange(caret, caret);
+      textarea?.focus();
+    });
   }
 
+  /** The text with each attachment's chip swapped for the marker that is sent. */
+  function withMarkers(text: string) {
+    let result = text;
+    for (const { id } of attachments)
+      result = result.split(tokens[id]).join(attachmentMarker(id));
+    return result;
+  }
+
+  // Deleting a chip's text takes the attachment out of the message.
+  $effect(() => {
+    const kept = attachments.filter(({ id }) => prompt.includes(tokens[id]));
+    if (kept.length !== attachments.length) attachments = kept;
+  });
+
+  /** The text cut at its chips, so a layer behind the box can paint them. */
+  const segments = $derived.by(() => {
+    const list = attachments.map(({ id }) => tokens[id]).filter(Boolean);
+    if (!list.length) return [{ text: prompt, chip: false }];
+    const pattern = new RegExp(
+      `(${list.map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})`,
+    );
+    return prompt
+      .split(pattern)
+      .map((text, index) => ({ text, chip: index % 2 === 1 }));
+  });
+  let highlights = $state<HTMLElement>();
+
   function handleKeydown(event: KeyboardEvent) {
-    if (event.key !== 'Enter' || event.shiftKey || event.isComposing) return;
+    if (event.isComposing) return;
+    if (handleMenuKey(event)) {
+      event.preventDefault();
+      // Escape here closes the menu, not the response the composer would otherwise stop.
+      event.stopPropagation();
+      return;
+    }
+    if (event.key !== 'Enter' || event.shiftKey) return;
     event.preventDefault();
     void send(event.metaKey || event.ctrlKey);
   }
@@ -178,6 +352,13 @@
 
   /** Turns a long paste into an attachment, so the message itself stays readable. */
   async function handlePaste(event: ClipboardEvent) {
+    // Files and images copied from Finder, a browser or a screenshot tool.
+    const files = [...(event.clipboardData?.files ?? [])];
+    if (files.length) {
+      event.preventDefault();
+      await addFiles(files);
+      return;
+    }
     const text = event.clipboardData?.getData('text/plain') ?? '';
     if (
       !preferences.current.convertLongText ||
@@ -194,7 +375,7 @@
       return;
     }
     try {
-      attachments.push(await attach.text(text));
+      insertAttachment(await attach.text(text));
     } catch (cause) {
       toast(errorMessage(cause), { variant: 'error' });
     }
@@ -204,53 +385,91 @@
 <!-- The form only listens for keys bubbling up from the controls inside it. -->
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 <form
-  class="rounded-lg bg-composer px-4 py-3"
+  class="relative rounded-lg bg-composer px-4 py-3"
   onkeydown={handleShortcut}
   onsubmit={(event) => {
     event.preventDefault();
     void send();
   }}
 >
-  {#if attachments.length}
-    <div
-      class="flex gap-2 overflow-x-auto pb-2"
-      aria-label="Selected attachments"
-    >
-      {#each attachments as attachment (attachment.id)}
-        <div class="relative shrink-0">
-          <AttachmentView
-            class="max-w-60"
-            name={attachment.name}
-            size={attachment.size}
-            previewUrl={attachment.previewUrl}
-          />
-          <button
-            type="button"
-            class="absolute top-1 right-1 grid place-items-center rounded-full bg-muted p-1"
-            aria-label={`Remove ${attachment.name}`}
-            onclick={() => removeAttachment(attachment.id)}
-          >
-            <X class="size-3" />
-          </button>
-        </div>
-      {/each}
-    </div>
+  {#if slash}
+    <SkillMenu
+      id={menuId}
+      {matches}
+      bind:highlighted
+      loading={!offered}
+      error={skillsError}
+      onchoose={chooseSkill}
+    />
   {/if}
-  <!-- svelte-ignore a11y_autofocus -->
-  <textarea
-    class={cn(
-      'block min-h-15 w-full resize-none bg-transparent text-sm outline-none placeholder:text-muted-foreground',
-      textareaClass,
-    )}
-    aria-label={label}
-    {autofocus}
-    placeholder={placeholder ??
-      (running ? FOLLOW_UP_PLACEHOLDERS[followUp] : 'Ask for changes')}
-    bind:this={textarea}
-    bind:value={prompt}
-    onkeydown={handleKeydown}
-    onpaste={handlePaste}></textarea>
-  <div class="flex items-center justify-between gap-3">
+  <div class="flex flex-wrap items-start gap-x-2 gap-y-1.5">
+    {#each skills as skill (skill.name)}
+      <div
+        class="flex h-7 max-w-56 shrink-0 items-center gap-1 rounded-md bg-brand/15 py-1 pr-1 pl-2 text-xs font-medium text-brand"
+        title={skill.description}
+      >
+        <span class="truncate">/{skill.name}</span>
+        <button
+          type="button"
+          class="grid shrink-0 place-items-center rounded-full p-0.5 hover:bg-brand/20"
+          aria-label={`Remove the ${skill.name} skill`}
+          onclick={() => removeSkill(skill.name)}
+        >
+          <X class="size-3" />
+        </button>
+      </div>
+    {/each}
+    <div class="relative min-w-40 flex-1">
+      <!-- Paints the chips behind the text; it has the box's exact font and wrapping. -->
+      <div
+        class="pointer-events-none absolute inset-0 overflow-hidden text-sm wrap-anywhere whitespace-pre-wrap text-transparent"
+        aria-hidden="true"
+        bind:this={highlights}
+      >
+        {#each segments as segment}{#if segment.chip}<mark
+              class="rounded-md bg-brand/20 text-transparent"
+              >{segment.text}</mark
+            >{:else}{segment.text}{/if}{/each}
+      </div>
+      <!-- svelte-ignore a11y_autofocus -->
+      <textarea
+        class={cn(
+          'relative block min-h-15 w-full resize-none bg-transparent text-sm outline-none placeholder:text-muted-foreground',
+          skills.length && 'min-h-7',
+          textareaClass,
+        )}
+        aria-label={label}
+        role={paneId ? 'combobox' : undefined}
+        aria-autocomplete={paneId ? 'list' : undefined}
+        aria-expanded={paneId ? !!slash : undefined}
+        aria-controls={slash && matches.length ? menuId : undefined}
+        aria-activedescendant={slash && matches.length
+          ? `${menuId}-${highlighted}`
+          : undefined}
+        {autofocus}
+        placeholder={placeholder ??
+          (running
+            ? FOLLOW_UP_PLACEHOLDERS[followUp]
+            : paneId
+              ? 'Ask for changes, or type / for skills'
+              : 'Ask for changes')}
+        bind:this={textarea}
+        bind:value={prompt}
+        oninput={updateSlash}
+        onkeyup={(event) => {
+          if (event.key.startsWith('Arrow') && !slash) updateSlash();
+          else if (['Home', 'End'].includes(event.key)) updateSlash();
+        }}
+        onclick={updateSlash}
+        onblur={() => (slash = null)}
+        onkeydown={handleKeydown}
+        onscroll={() => {
+          if (highlights && textarea) highlights.scrollTop = textarea.scrollTop;
+        }}
+        onpaste={handlePaste}></textarea>
+    </div>
+  </div>
+  <div class="flex items-center justify-between gap-3 pt-3">
     <div class="flex min-w-0 items-center gap-6">
       {@render children()}
     </div>
@@ -294,13 +513,13 @@
           </Tooltip.Content>
         </Tooltip.Root>
       {/if}
-      {#if !running || prompt.trim()}
+      {#if !running || hasMessage}
         <Button
           type="submit"
           size="icon"
           class="bg-brand text-white hover:bg-brand/80"
           aria-label={running ? FOLLOW_UP_ACTIONS[followUp] : submitLabel}
-          disabled={disabled || (!prompt.trim() && !allowEmpty)}
+          disabled={disabled || (!hasMessage && !allowEmpty)}
         >
           <ArrowUp />
         </Button>

@@ -165,6 +165,20 @@
       {/snippet}
     </Setting>
     <Setting
+      title="Close panes after push"
+      description="Closes every pane in the project once its changes are pushed"
+      inline
+    >
+      {#snippet control(props)}
+        <Switch
+          {...props}
+          checked={current.closeOnPush}
+          onCheckedChange={(closeOnPush) =>
+            preferences.update({ closeOnPush })}
+        />
+      {/snippet}
+    </Setting>
+    <Setting
       title="Auto-convert long text"
       description={`Pastes over ${LONG_TEXT_THRESHOLD.toLocaleString()} characters become attachments`}
       inline

@@ -7,7 +7,7 @@
   const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS;
   const TONES = {
     normal: { stroke: 'stroke-muted-foreground', fill: 'bg-muted-foreground' },
-    warning: { stroke: 'stroke-brand', fill: 'bg-brand' },
+    warning: { stroke: 'stroke-orange-500', fill: 'bg-orange-500' },
     critical: { stroke: 'stroke-destructive', fill: 'bg-destructive' },
   };
 

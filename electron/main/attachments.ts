@@ -25,6 +25,17 @@ export async function readImage(path: string) {
   };
 }
 
+/** The file extension for image data, judged by its leading bytes; undefined if not a supported image. */
+export function sniffImageExtension(data: Uint8Array) {
+  const starts = (...bytes: number[]) => bytes.every((b, i) => data[i] === b);
+  if (starts(0x89, 0x50, 0x4e, 0x47)) return 'png';
+  if (starts(0xff, 0xd8, 0xff)) return 'jpg';
+  if (starts(0x47, 0x49, 0x46, 0x38)) return 'gif';
+  if (starts(0x52, 0x49, 0x46, 0x46) && data[8] === 0x57 && data[9] === 0x45)
+    return 'webp';
+  return undefined;
+}
+
 const PASTED_TEXT_NAME = 'Pasted text.txt';
 
 /** An attachment waiting to be sent, owned by a pane. */

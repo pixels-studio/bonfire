@@ -89,3 +89,18 @@ export type LoginCompleted = {
   success: boolean;
   error: string | null;
 };
+
+/** One folder's skills, from `skills/list`. */
+export type SkillsListEntry = {
+  cwd: string;
+  skills: {
+    name: string;
+    description: string;
+    /** Legacy short description from SKILL.md; `interface.shortDescription` is preferred. */
+    shortDescription?: string;
+    interface?: { shortDescription?: string };
+    /** The skill's SKILL.md, on the server's machine. */
+    path: string;
+    enabled: boolean;
+  }[];
+};

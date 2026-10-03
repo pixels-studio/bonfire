@@ -1,22 +1,22 @@
 import Bot from '@lucide/svelte/icons/bot';
-import FilePen from '@lucide/svelte/icons/file-pen';
-import FileText from '@lucide/svelte/icons/file-text';
 import Globe from '@lucide/svelte/icons/globe';
 import ListTodo from '@lucide/svelte/icons/list-todo';
 import Search from '@lucide/svelte/icons/search';
-import Terminal from '@lucide/svelte/icons/terminal';
 import Wrench from '@lucide/svelte/icons/wrench';
+import BashIcon from '$lib/components/icon/bash-icon.svelte';
+import EditIcon from '$lib/components/icon/edit-icon.svelte';
+import ReadIcon from '$lib/components/icon/read-icon.svelte';
 import type { ConversationMessage } from '$shared/contracts';
 
 export type ToolCall = NonNullable<ConversationMessage['tool']>;
 
-const ICONS: Record<string, typeof Wrench> = {
-  Bash: Terminal,
-  Read: FileText,
-  Edit: FilePen,
-  MultiEdit: FilePen,
-  Write: FilePen,
-  NotebookEdit: FilePen,
+const ICONS: Record<string, typeof Wrench | typeof ReadIcon | typeof EditIcon | typeof BashIcon> = {
+  Bash: BashIcon,
+  Read: ReadIcon,
+  Edit: EditIcon,
+  MultiEdit: EditIcon,
+  Write: EditIcon,
+  NotebookEdit: EditIcon,
   Grep: Search,
   Glob: Search,
   WebFetch: Globe,

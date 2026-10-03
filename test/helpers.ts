@@ -4,6 +4,7 @@ import type {
   Pane,
   ProviderAccount,
   ProviderLimits,
+  Skill,
 } from '../shared/contracts';
 import { DEFAULT_PREFERENCES } from '../shared/domain';
 import {
@@ -49,6 +50,7 @@ export function sendInput(text = 'hi') {
     paneId: 'pane',
     text,
     attachmentIds: [],
+    skills: [] as string[],
     model: '',
     reasoningEffort: 'medium' as const,
     fastMode: false,
@@ -77,6 +79,10 @@ export class ScriptedAssistant extends ChatAssistant {
       { value: 'a', label: 'A', supportsFast: true },
       { value: 'b', label: 'B', supportsFast: false },
     ];
+  }
+  skillList: Skill[] = [{ name: 'review', description: 'Reviews the diff' }];
+  protected async listSkills(): Promise<Skill[]> {
+    return this.skillList;
   }
   protected async readLimits(): Promise<ProviderLimits> {
     return { provider: 'claude', windows: [] };

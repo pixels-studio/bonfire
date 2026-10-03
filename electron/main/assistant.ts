@@ -15,15 +15,26 @@ import type {
   ProviderAccount,
   ProviderLimits,
   QueuedPrompt,
+  Skill,
   Usage,
 } from '../../shared/contracts';
 import {
   PROVIDER_LABELS,
   errorMessage,
   isDefaultTitle,
+  promptText,
   titleFrom,
+  splitPrompt,
+  withoutMarkers,
 } from '../../shared/domain';
-import { PendingAttachments, type PendingAttachment } from './attachments';
+import { mkdtemp, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import {
+  PendingAttachments,
+  sniffImageExtension,
+  type PendingAttachment,
+} from './attachments';
 import { Cached } from './cached';
 import { localMachine, type Machine } from './machines';
 import type { Store } from './persistence';
@@ -47,7 +58,12 @@ export type AssistantHost = {
 export type { PendingAttachment };
 
 /** A message from the user, as handed to a provider. */
-export type Prompt = { text: string; attachments: PendingAttachment[] };
+export type Prompt = {
+  text: string;
+  attachments: PendingAttachment[];
+  /** Skills to run with the message, already checked against what the provider offers. */
+  skills: Skill[];
+};
 
 /** Adds a message to the running turn. */
 export type Steer = (prompt: Prompt) => Promise<void>;
@@ -59,6 +75,8 @@ export type Turn = {
   machine: Machine;
   input: AssistantSendInput;
   attachments: PendingAttachment[];
+  /** Skills to run with the first message. */
+  skills: Skill[];
   /** Hard stop: kills the provider process. */
   controller: AbortController;
   /** Whether tools run unattended or the user is asked first. */
@@ -100,6 +118,8 @@ const INTERRUPT_GRACE_MS = 5_000;
 const LOGIN_TIMEOUT_MS = 3 * 60_000;
 /** How long generating a short text, such as a title, may take. */
 const GENERATE_TIMEOUT_MS = 60_000;
+/** How long a project's skill list is reused; skills change only when files on disk do. */
+const SKILLS_TTL_MS = 60_000;
 
 export function assistantMessage(
   id: string,
@@ -115,6 +135,32 @@ export function attachedText({ name, text }: { name: string; text: string }) {
   return `<attachment name="${name}">\n${text}\n</attachment>`;
 }
 
+/**
+ * A prompt's text and attachments in the order the user placed them. An attachment
+ * without a marker in the text comes after it.
+ */
+export function inlineParts<T extends { id: string }>(
+  text: string,
+  attachments: T[],
+): ({ text: string } | { attachment: T })[] {
+  const used = new Set<string>();
+  const parts: ({ text: string } | { attachment: T })[] = [];
+  for (const part of splitPrompt(text)) {
+    if ('text' in part) {
+      parts.push(part);
+      continue;
+    }
+    const attachment = attachments.find(({ id }) => id === part.attachmentId);
+    if (attachment && !used.has(attachment.id)) {
+      used.add(attachment.id);
+      parts.push({ attachment });
+    }
+  }
+  for (const attachment of attachments)
+    if (!used.has(attachment.id)) parts.push({ attachment });
+  return parts;
+}
+
 type ActiveTurn = Turn & {
   /** Whether an error for this turn has already been shown. */
   errored: boolean;
@@ -124,7 +170,7 @@ type ActiveTurn = Turn & {
 };
 
 /** A follow-up waiting for the running turn to end. */
-type Queued = { id: string; input: AssistantSendInput };
+type Queued = { id: string; input: AssistantSendInput; skills: Skill[] };
 
 /** What the renderer last received for a streaming message, to work out the next update. */
 type Sent = { text: string; output: string; rest: string };
@@ -157,6 +203,8 @@ export abstract class ChatAssistant {
     () => this.readAccount(),
     60_000,
   );
+  /** Skill lists by project id. */
+  private readonly skillLists = new Map<string, Cached<Skill[]>>();
   private login?: AbortController;
   private readonly attachments: PendingAttachments;
 
@@ -170,6 +218,11 @@ export abstract class ChatAssistant {
 
   protected abstract run(turn: Turn): Promise<void>;
   protected abstract listModels(): Promise<ModelOption[]>;
+  /** Skills the provider can run in the project's folder, on the machine it is on. */
+  protected abstract listSkills(
+    project: Project,
+    machine: Machine,
+  ): Promise<Skill[]>;
   protected abstract readLimits(): Promise<ProviderLimits>;
   protected abstract readAccount(): Promise<ProviderAccount>;
   /** Signs in through the browser; rejects if `signal` aborts first. */
@@ -198,6 +251,24 @@ export abstract class ChatAssistant {
     });
   }
 
+  /** Attaches image data with no file behind it, such as a pasted screenshot. */
+  async attachImage(
+    paneId: string,
+    name: string,
+    data: Uint8Array,
+  ): Promise<Attachment> {
+    this.paneFor(paneId);
+    const type = sniffImageExtension(data);
+    if (!type)
+      throw Error('Only PNG, JPEG, WebP and GIF images can be attached');
+    // Providers read images from disk, so the data needs a file.
+    const dir = await mkdtemp(join(tmpdir(), 'bonfire-paste-'));
+    const base = name.replace(/\.[^.]*$/, '').replace(/[\\/]/g, '_') || 'Image';
+    const path = join(dir, `${base}.${type}`);
+    await writeFile(path, data);
+    return this.attachments.addImage(paneId, { name: `${base}.${type}`, path });
+  }
+
   /** Holds pasted text as an attachment, so a long paste doesn't flood the message. */
   attachText(paneId: string, text: string): Attachment {
     this.paneFor(paneId);
@@ -210,14 +281,18 @@ export abstract class ChatAssistant {
    */
   async send(input: AssistantSendInput) {
     const pane = this.paneFor(input.paneId);
+    // Looked up before the running turn is, so nothing can start a turn in between.
+    const skills = input.skills.length
+      ? await this.skillsFor(pane, input.skills)
+      : [];
     const turn = this.turns.get(pane.id);
-    if (!turn) return this.start(pane, input);
+    if (!turn) return this.start(pane, input, skills);
     if (!input.followUp)
       throw Error(`${PROVIDER_LABELS[this.provider]} is already responding`);
     // A turn that can't take a message yet, or is winding down, gets it next instead.
     if (input.followUp === 'steer' && turn.steer && !turn.cancelled)
-      return this.steerTurn(turn, turn.steer, input);
-    this.enqueue(pane, input);
+      return this.steerTurn(turn, turn.steer, input, skills);
+    this.enqueue(pane, input, skills);
   }
 
   /** Sends a queued message now: it steers the running turn, or starts the next one. */
@@ -290,6 +365,27 @@ export abstract class ChatAssistant {
     return this.modelList.get();
   }
 
+  /** Skills the pane's provider can run in its project. Cached briefly; a failed refresh serves the stale list. */
+  skills(paneId: string): Promise<Skill[]> {
+    const pane = this.paneFor(paneId);
+    if (!pane.projectId) return Promise.resolve([]);
+    const project = this.store.project(pane.projectId);
+    let list = this.skillLists.get(project.id);
+    if (!list) {
+      list = new Cached(
+        () =>
+          this.listSkills(
+            project,
+            this.host.machineOf?.(project) ?? localMachine,
+          ),
+        SKILLS_TTL_MS,
+        { serveStale: true },
+      );
+      this.skillLists.set(project.id, list);
+    }
+    return list.get();
+  }
+
   /** Plan limits of the signed-in account. Cached briefly so reopening the popover is cheap. */
   limits(): Promise<ProviderLimits> {
     return this.planLimits.get();
@@ -345,16 +441,17 @@ export abstract class ChatAssistant {
     this.flush();
   }
 
-  private async start(pane: Pane, input: AssistantSendInput) {
+  private async start(pane: Pane, input: AssistantSendInput, skills: Skill[]) {
     if (!pane.projectId) throw Error('Select a project first');
     const project = this.store.project(pane.projectId);
     const attachments = this.attachmentsFor(pane, input.attachmentIds);
+    const shown = withoutMarkers(promptText(input.text, skills));
 
     pane.model = input.model;
     pane.reasoningEffort = input.reasoningEffort;
     pane.fastMode = input.fastMode;
     pane.approvals = input.approvals;
-    if (isDefaultTitle(pane.title)) pane.title = titleFrom(input.text);
+    if (isDefaultTitle(pane.title)) pane.title = titleFrom(shown);
     const { settings } = this.store.state;
     settings.lastProvider = this.provider;
     settings.lastReasoningEffort = input.reasoningEffort;
@@ -362,7 +459,7 @@ export abstract class ChatAssistant {
       ...settings.lastModels,
       [this.provider]: input.model,
     };
-    this.publishPrompt(pane, { text: input.text, attachments });
+    this.publishPrompt(pane, { text: input.text, attachments, skills });
 
     const turn: ActiveTurn = {
       pane,
@@ -370,6 +467,7 @@ export abstract class ChatAssistant {
       machine: this.host.machineOf?.(project) ?? localMachine,
       input,
       attachments,
+      skills,
       controller: new AbortController(),
       approvals: input.approvals,
       cancelled: false,
@@ -423,19 +521,20 @@ export abstract class ChatAssistant {
     turn: ActiveTurn,
     steer: Steer,
     input: AssistantSendInput,
+    skills: Skill[],
   ) {
     const attachments = this.attachmentsFor(turn.pane, input.attachmentIds);
-    const prompt = { text: input.text, attachments };
+    const prompt = { text: input.text, attachments, skills };
     await steer(prompt);
     this.publishPrompt(turn.pane, prompt);
     this.attachments.delete(attachments.map(({ id }) => id));
   }
 
-  private enqueue(pane: Pane, input: AssistantSendInput) {
+  private enqueue(pane: Pane, input: AssistantSendInput, skills: Skill[]) {
     // Checked now, so a bad attachment is reported to the sender rather than lost later.
     this.attachmentsFor(pane, input.attachmentIds);
     const queue = this.queues.get(pane.id) ?? [];
-    queue.push({ id: randomUUID(), input });
+    queue.push({ id: randomUUID(), input, skills });
     this.queues.set(pane.id, queue);
     this.notifyQueue(pane.id);
   }
@@ -445,7 +544,7 @@ export abstract class ChatAssistant {
     if (!next) return;
     this.notifyQueue(pane.id);
     // Nobody awaits a queued message, so a failure to start is shown in the pane.
-    this.start(pane, next.input).catch((cause) =>
+    this.start(pane, next.input, next.skills).catch((cause) =>
       this.publishError(pane, errorMessage(cause)),
     );
   }
@@ -461,9 +560,9 @@ export abstract class ChatAssistant {
   }
 
   private queueOf(paneId: string): QueuedPrompt[] {
-    return (this.queues.get(paneId) ?? []).map(({ id, input }) => ({
+    return (this.queues.get(paneId) ?? []).map(({ id, input, skills }) => ({
       id,
-      text: input.text,
+      text: withoutMarkers(promptText(input.text, skills)),
       attachments: input.attachmentIds.length,
     }));
   }
@@ -476,7 +575,18 @@ export abstract class ChatAssistant {
     return this.attachments.get(pane.id, ids);
   }
 
-  private publishPrompt(pane: Pane, { text, attachments }: Prompt) {
+  /** The named skills, refused if the provider no longer offers one. */
+  private async skillsFor(pane: Pane, names: string[]): Promise<Skill[]> {
+    if (!names.length) return [];
+    const offered = await this.skills(pane.id);
+    return [...new Set(names)].map((name) => {
+      const skill = offered.find((item) => item.name === name);
+      if (!skill) throw Error(`The /${name} skill is no longer available`);
+      return skill;
+    });
+  }
+
+  private publishPrompt(pane: Pane, { text, attachments, skills }: Prompt) {
     for (const { id, name, size, previewUrl } of attachments)
       this.publish(pane, {
         id,
@@ -491,7 +601,7 @@ export abstract class ChatAssistant {
       id: randomUUID(),
       role: 'user',
       kind: 'text',
-      text,
+      text: promptText(text, skills),
       status: 'complete',
     });
   }

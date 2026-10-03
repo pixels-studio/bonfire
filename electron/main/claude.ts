@@ -17,16 +17,19 @@ import type {
   ConversationMessage,
   ModelOption,
   Pane,
+  Project,
   ProviderAccount,
   ProviderLimits,
   Question,
   ReasoningEffort,
+  Skill,
   Usage,
 } from '../../shared/contracts';
 import {
   ChatAssistant,
   assistantMessage,
   attachedText,
+  inlineParts,
   type Prompt,
   type Turn,
 } from './assistant';
@@ -52,6 +55,9 @@ type StreamedBlock = {
   json: string;
   /** Set once the complete assistant message has replaced the streamed text. */
   settled: boolean;
+  startedAt: number;
+  /** How long a thinking block streamed, known once the block stops. */
+  durationMs?: number;
 };
 
 type StreamState = {
@@ -116,9 +122,7 @@ export class ClaudeAssistant extends ChatAssistant {
         this.authorize(turn, tool, toolArguments, details),
       abortController: controller,
       includePartialMessages: true,
-      spawnClaudeCodeProcess: machine.remote
-        ? (spawn) => spawnRemote(machine, spawn)
-        : undefined,
+      spawnClaudeCodeProcess: remoteSpawner(machine),
     };
     const { query } = await import('@anthropic-ai/claude-agent-sdk');
     // Interrupting, steering, and permission callbacks all need streaming input. The
@@ -130,7 +134,7 @@ export class ClaudeAssistant extends ChatAssistant {
       unanswered.add(uuid);
       prompts.push(userMessage(prompt, uuid, priority));
     };
-    submit({ text: input.text, attachments });
+    submit({ text: input.text, attachments, skills: turn.skills });
     // The CLI folds a message sent mid-turn into the turn between tool calls.
     turn.setSteer(async (prompt) => submit(prompt, 'next'));
     const run = query({ prompt: prompts, options });
@@ -160,6 +164,29 @@ export class ClaudeAssistant extends ChatAssistant {
   protected listModels(): Promise<ModelOption[]> {
     return this.withIdleSession(async (run) =>
       modelList(await run.supportedModels()),
+    );
+  }
+
+  /** The CLI's skills and prompt commands: the user's, the project's, plugins', and its own. */
+  protected listSkills(project: Project, machine: Machine): Promise<Skill[]> {
+    return this.withIdleSession(
+      async (run) =>
+        (await run.supportedCommands())
+          // Internal commands, and ones the CLI keeps only to say they are gone.
+          .filter(
+            ({ name, description }) =>
+              !name.startsWith('__') && !description.startsWith('(removed)'),
+          )
+          .map(({ name, description, argumentHint }) => ({
+            name,
+            description,
+            argumentHint: argumentHint || undefined,
+          })),
+      {
+        cwd: project.path,
+        settingSources: ['user', 'project', 'local'],
+        spawnClaudeCodeProcess: remoteSpawner(machine),
+      },
     );
   }
 
@@ -230,7 +257,10 @@ export class ClaudeAssistant extends ChatAssistant {
   /** Runs `use` against a session that never receives a message, as the handshake alone answers it. */
   private async withIdleSession<Result>(
     use: (run: Query) => Promise<Result>,
-    options: Pick<Options, 'settingSources'> = { settingSources: [] },
+    options: Pick<
+      Options,
+      'settingSources' | 'cwd' | 'spawnClaudeCodeProcess'
+    > = { settingSources: [] },
   ): Promise<Result> {
     const { query } = await import('@anthropic-ai/claude-agent-sdk');
     const controller = new AbortController();
@@ -356,7 +386,8 @@ export class ClaudeAssistant extends ChatAssistant {
             match?.id ??
             (blocks.length > 1 ? `${event.uuid}-${index}` : event.uuid);
           const message = messageFrom(id, block);
-          if (message) this.publish(pane, message);
+          if (message)
+            this.publish(pane, { ...message, durationMs: match?.durationMs });
         });
         break;
       }
@@ -424,9 +455,16 @@ export class ClaudeAssistant extends ChatAssistant {
           name: block.type === 'tool_use' ? block.name : '',
           json: '',
           settled: false,
+          startedAt: Date.now(),
         };
         blocks.set(index, entry);
         this.publish(pane, streamingMessage(entry, ''), false);
+        break;
+      }
+      case 'content_block_stop': {
+        const entry = state.blocks.get(state.current)?.get(event.index);
+        if (entry?.kind === 'thinking')
+          entry.durationMs = Date.now() - entry.startedAt;
         break;
       }
       case 'content_block_delta': {
@@ -499,8 +537,21 @@ function stopped(): PermissionResult {
   };
 }
 
+/**
+ * The message text with its skills. The CLI runs a skill named at the start of a message,
+ * so the first leads; the model loads any others with its Skill tool.
+ */
+export function skillText(text: string, skills: Pick<Skill, 'name'>[]) {
+  const [first, ...rest] = skills;
+  if (!first) return text;
+  const also = rest.length
+    ? `Also use the ${rest.map(({ name }) => `/${name}`).join(', ')} skill${rest.length > 1 ? 's' : ''}.`
+    : '';
+  return [`/${first.name}`, text, also].filter(Boolean).join(' ');
+}
+
 function userMessage(
-  { text, attachments }: Prompt,
+  { text, attachments, skills }: Prompt,
   uuid: SDKUserMessage['uuid'],
   priority?: SDKUserMessage['priority'],
 ): SDKUserMessage {
@@ -511,21 +562,27 @@ function userMessage(
     priority,
     message: {
       role: 'user',
-      content: [
-        { type: 'text', text },
-        ...attachments.map((attachment) =>
-          attachment.kind === 'image'
-            ? {
-                type: 'image' as const,
-                source: {
-                  type: 'base64' as const,
-                  media_type: attachment.mimeType,
-                  data: attachment.base64,
+      content: inlineParts(skillText(text, skills), attachments).flatMap(
+        (part) => {
+          if ('text' in part)
+            return part.text.trim()
+              ? [{ type: 'text' as const, text: part.text }]
+              : [];
+          const { attachment } = part;
+          return attachment.kind === 'image'
+            ? [
+                {
+                  type: 'image' as const,
+                  source: {
+                    type: 'base64' as const,
+                    media_type: attachment.mimeType,
+                    data: attachment.base64,
+                  },
                 },
-              }
-            : { type: 'text' as const, text: attachedText(attachment) },
-        ),
-      ],
+              ]
+            : [{ type: 'text' as const, text: attachedText(attachment) }];
+        },
+      ),
     },
   };
 }
@@ -554,6 +611,11 @@ function claudeExecutable() {
       // Not installed for this platform; try the next.
     }
   return 'claude';
+}
+
+/** How the SDK starts the CLI: the remote machine's own, or the bundled one by default. */
+function remoteSpawner(machine: Machine): Options['spawnClaudeCodeProcess'] {
+  return machine.remote ? (spawn) => spawnRemote(machine, spawn) : undefined;
 }
 
 /**

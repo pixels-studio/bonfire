@@ -5,6 +5,20 @@
 
   let { message }: { message: ConversationMessage } = $props();
   const streaming = $derived(message.status === 'streaming');
+
+  const seconds = $derived(
+    message.durationMs === undefined
+      ? null
+      : Math.max(1, Math.round(message.durationMs / 1000)),
+  );
+
+  const label = $derived(
+    streaming
+      ? 'Thinking'
+      : seconds === null
+        ? 'Thought process'
+        : `Thought for ${seconds} ${seconds === 1 ? 'second' : 'seconds'}`,
+  );
 </script>
 
 <details class="group text-sm text-muted-foreground">
@@ -12,7 +26,7 @@
     class="flex w-fit cursor-pointer list-none items-center gap-1 hover:text-foreground [&::-webkit-details-marker]:hidden"
   >
     <span class={streaming ? 'shimmer-text' : ''}>
-      {streaming ? 'Thinking' : 'Thought process'}
+      {label}
     </span>
     <Icon
       name="chevron-down"

@@ -530,15 +530,17 @@
     return `Notifications are turned off for ${appName}. Allow them in System Settings › Notifications › ${appName}.`;
   }
 
-  async function handlePanesClosed({ paneIds }: PanesClosedEvent) {
+  async function handlePanesClosed({ paneIds, reason }: PanesClosedEvent) {
     const titles = workspace.panes
       .filter(({ id }) => paneIds.includes(id))
       .map(({ title }) => `“${title}”`);
     await refresh();
+    const why =
+      reason === 'pushed' ? 'changes were pushed' : 'pull request was merged';
     toast(
       titles.length === 1
-        ? `Closed ${titles[0]}: its pull request was merged.`
-        : `Closed ${titles.length} panes whose pull requests were merged.`,
+        ? `Closed ${titles[0]}: its ${why}.`
+        : `Closed ${titles.length} panes after the ${why}.`,
     );
   }
 

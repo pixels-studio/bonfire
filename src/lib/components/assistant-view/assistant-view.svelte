@@ -17,6 +17,7 @@
     PROVIDER_LABELS,
     errorMessage,
     isDefaultTitle,
+    promptText,
     titleFrom,
   } from '$shared/domain';
   import type { PaneProps } from '$lib/panes';
@@ -221,12 +222,14 @@
   async function send(
     text: string,
     attachmentIds: string[],
+    skills: string[],
     followUp?: FollowUpMode,
   ) {
     const input = {
       paneId: pane.id,
       text,
       attachmentIds,
+      skills,
       model,
       reasoningEffort: effort,
       fastMode: fast && fastSupported,
@@ -245,7 +248,7 @@
     error = '';
     running = true;
     following = true;
-    if (title === DEFAULT_TITLE) title = titleFrom(text);
+    if (title === DEFAULT_TITLE) title = titleFrom(promptText(text, skills));
     try {
       // Resolves when the turn ends; a rejection means it never started.
       await window.bonfire.assistant.send(input);

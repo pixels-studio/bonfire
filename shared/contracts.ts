@@ -24,6 +24,8 @@ export const conversationMessageSchema = z.object({
   status: z.enum(['streaming', 'complete', 'failed']).default('complete'),
   size: z.number().int().nonnegative().optional(),
   previewUrl: z.string().optional(),
+  /** How long a thinking message took to stream, once complete. */
+  durationMs: z.number().int().nonnegative().optional(),
   /** Structured details for tool-call messages. */
   tool: z
     .object({
@@ -69,6 +71,8 @@ export const preferencesSchema = z.object({
   codexPersonality,
   /** Archives conversations once the pull request for their branch is merged, through the `gh` CLI. */
   archiveOnMerge: z.boolean(),
+  /** Closes every pane of the project once its changes are pushed. */
+  closeOnPush: z.boolean(),
   /** Keeps the system awake while a turn runs. */
   caffeinate: z.boolean(),
 });
@@ -168,20 +172,34 @@ export const stateSchema = z.object({
 });
 
 const filePath = z.string().max(4096);
+/** The largest pasted image, in bytes, that can be attached. */
+export const MAX_IMAGE_BYTES = 30_000_000;
+
 /** The longest text, in characters, that can be attached. */
 export const MAX_TEXT_ATTACHMENT_LENGTH = 1_000_000;
 
-export const assistantSendInput = z.object({
-  paneId: id,
-  text: z.string().trim().min(1).max(100_000),
-  attachmentIds: z.array(id).max(8).default([]),
-  model: z.string().max(100),
-  reasoningEffort,
-  fastMode: z.boolean().default(false),
-  approvals: approvalMode,
-  /** How to deliver the message if a turn is already running; without it the send is refused. */
-  followUp: followUpMode.optional(),
-});
+/** Most skills one message can carry. */
+export const MAX_SKILLS = 8;
+
+export const assistantSendInput = z
+  .object({
+    paneId: id,
+    /** May be empty when a skill is attached, as a skill can run on its own. */
+    text: z.string().trim().max(100_000),
+    attachmentIds: z.array(id).max(8).default([]),
+    /** Names of skills to run with the message, from `assistant.skills`. */
+    skills: z.array(z.string().min(1).max(200)).max(MAX_SKILLS).default([]),
+    model: z.string().max(100),
+    reasoningEffort,
+    fastMode: z.boolean().default(false),
+    approvals: approvalMode,
+    /** How to deliver the message if a turn is already running; without it the send is refused. */
+    followUp: followUpMode.optional(),
+  })
+  .refine((input) => input.text || input.skills.length, {
+    message: 'A message needs text or a skill',
+    path: ['text'],
+  });
 
 export const assistantRespondInput = z.object({
   paneId: id,
@@ -368,6 +386,15 @@ export type ModelOption = {
   /** Whether the model can run in fast mode. */
   supportsFast?: boolean;
 };
+/** A skill (or prompt command) the provider's CLI can run, attached in the composer with `/`. */
+export type Skill = {
+  name: string;
+  description: string;
+  /** What to type after the skill, e.g. `<file>`. */
+  argumentHint?: string;
+  /** The skill's SKILL.md, for providers that load a skill by path. */
+  path?: string;
+};
 /** One rate-limit window of a provider's plan, such as the weekly limit. */
 export type LimitWindow = {
   id: string;
@@ -453,7 +480,10 @@ export type TerminalEvent = {
 };
 export type FileChangeEvent = { projectId: string; path: string };
 /** Panes the app archived on its own, such as when their pull request merged. */
-export type PanesClosedEvent = { paneIds: string[]; reason: 'merged' };
+export type PanesClosedEvent = {
+  paneIds: string[];
+  reason: 'merged' | 'pushed';
+};
 
 /** IPC argument schemas, keyed by `group.method`. Every channel is validated in main. */
 export const requests = {
@@ -494,6 +524,15 @@ export const requests = {
   'assistant.send': z.tuple([assistantSendInput]),
   'assistant.pickAttachment': z.tuple([id]),
   'assistant.attachFile': z.tuple([id, filePath]),
+  'assistant.attachImage': z.tuple([
+    id,
+    z.string().max(255),
+    z
+      .instanceof(Uint8Array)
+      .refine(
+        (data) => data.byteLength > 0 && data.byteLength <= MAX_IMAGE_BYTES,
+      ),
+  ]),
   'assistant.attachText': z.tuple([
     id,
     z.string().min(1).max(MAX_TEXT_ATTACHMENT_LENGTH),
@@ -504,6 +543,7 @@ export const requests = {
   'assistant.respond': z.tuple([assistantRespondInput]),
   'assistant.snapshot': z.tuple([id]),
   'assistant.models': z.tuple([assistantProvider]),
+  'assistant.skills': z.tuple([id]),
   'limits.get': z.tuple([assistantProvider]),
   'tokens.get': z.tuple([tokenRange]),
   'navigation.help': z.tuple([]),
@@ -630,6 +670,12 @@ export type API = {
     pickAttachment(paneId: string): Promise<Attachment | null>;
     /** Attaches an image dropped onto the pane, by its path on disk. */
     attachFile(paneId: string, path: string): Promise<Attachment>;
+    /** Attaches image data that has no file on disk, e.g. a screenshot on the clipboard. */
+    attachImage(
+      paneId: string,
+      name: string,
+      data: Uint8Array,
+    ): Promise<Attachment>;
     attachText(paneId: string, text: string): Promise<Attachment>;
     /** Sends a queued message now: it steers the running turn, or starts one. */
     sendQueued(paneId: string, queuedId: string): Promise<void>;
@@ -638,6 +684,8 @@ export type API = {
     respond(input: AssistantRespondInput): Promise<void>;
     snapshot(paneId: string): Promise<AssistantSnapshot>;
     models(provider: AssistantProvider): Promise<ModelOption[]>;
+    /** Skills the pane's provider can run in its project, for the composer's `/` menu. */
+    skills(paneId: string): Promise<Skill[]>;
     onEvent(listener: (event: AssistantEvent) => void): Unsubscribe;
   };
   limits: {

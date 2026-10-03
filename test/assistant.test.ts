@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { assistantMessage } from '../electron/main/assistant';
+import { skillText } from '../electron/main/claude';
 import { scripted, sendInput, sleep } from './helpers';
 
 const streaming = (id: string, text = '') =>
@@ -356,4 +357,67 @@ test('fast mode is kept for a model that supports it and dropped for one that do
     assert.equal(ran, expected, model);
     assert.equal(pane.fastMode, expected, model);
   }
+});
+
+test('attached skills reach the provider and show as /name in the conversation', async () => {
+  const { assistant, pane, events } = scripted();
+  let skills: string[] = [];
+  assistant.script = async (_, turn) => {
+    skills = turn.skills.map(({ name }) => name);
+  };
+  await assistant.send({ ...sendInput('the auth module'), skills: ['review'] });
+  assert.deepEqual(skills, ['review']);
+  const prompt = pane.messages.find((item) => item.role === 'user');
+  assert.equal(prompt?.text, '/review the auth module');
+  assert(events.some((event) => event.type === 'message'));
+});
+
+test('a skill can be sent without any text', async () => {
+  const { assistant, pane } = scripted();
+  await assistant.send({ ...sendInput(''), skills: ['review'] });
+  assert.equal(pane.messages[0]?.text, '/review');
+});
+
+test('a skill the provider no longer offers is refused before the turn starts', async () => {
+  const { assistant, pane } = scripted();
+  let ran = false;
+  assistant.script = async () => void (ran = true);
+  await assert.rejects(
+    assistant.send({ ...sendInput('x'), skills: ['gone'] }),
+    /\/gone skill is no longer available/,
+  );
+  assert.equal(ran, false);
+  assert.equal(pane.messages.length, 0);
+});
+
+test('a queued follow-up keeps its skills', async () => {
+  const { assistant } = scripted();
+  const seen: string[][] = [];
+  let release!: () => void;
+  assistant.script = async (_, turn) => {
+    seen.push(turn.skills.map(({ name }) => name));
+    if (seen.length === 1) await new Promise<void>((r) => (release = r));
+  };
+  const first = assistant.send(sendInput('first'));
+  await sleep(10);
+  await assistant.send({
+    ...sendInput('next'),
+    skills: ['review'],
+    followUp: 'queue',
+  });
+  assert.equal(assistant.snapshot('pane').queue[0]?.text, '/review next');
+  release();
+  await first;
+  await sleep(20);
+  assert.deepEqual(seen, [[], ['review']]);
+});
+
+test('Claude runs the first skill as a command and is told about the rest', () => {
+  assert.equal(skillText('fix it', []), 'fix it');
+  assert.equal(skillText('fix it', [{ name: 'a' }]), '/a fix it');
+  assert.equal(skillText('', [{ name: 'a' }]), '/a');
+  assert.equal(
+    skillText('fix it', [{ name: 'a' }, { name: 'b' }, { name: 'c' }]),
+    '/a fix it Also use the /b, /c skills.',
+  );
 });

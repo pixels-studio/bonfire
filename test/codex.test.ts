@@ -258,6 +258,30 @@ test('the chosen personality is sent with the turn', async () => {
   );
 });
 
+test('skills are listed for the project, without turned-off ones', async () => {
+  const { assistant } = codex();
+  assert.deepEqual(await assistant.skills('pane'), [
+    {
+      name: 'review',
+      description: 'Reviews the diff',
+      path: '/skills/review/SKILL.md',
+    },
+  ]);
+});
+
+test('an attached skill is sent by the path Codex listed it at', async () => {
+  const { assistant, pane } = codex();
+  await assistant.send({
+    ...sendInput('skills please'),
+    skills: ['review'],
+  });
+  assert.equal(
+    pane.messages.find((item) => item.id === 'a1')?.text,
+    'skills:review@/skills/review/SKILL.md',
+  );
+  assert(pane.messages.some((item) => item.text === '/review skills please'));
+});
+
 test('the default personality is left to Codex', async () => {
   const { pane, send } = codex();
   await send('personality');

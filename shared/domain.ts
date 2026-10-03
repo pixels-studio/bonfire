@@ -44,6 +44,49 @@ export function titleFrom(text: string) {
     : compact;
 }
 
+/**
+ * Where an attachment sits in a prompt: the composer writes this marker into the text at
+ * the caret, so the attachment is sent and shown in place.
+ */
+export function attachmentMarker(id: string) {
+  return `[[attachment:${id}]]`;
+}
+
+const ATTACHMENT_MARKER = /\[\[attachment:([\w-]+)\]\]/g;
+
+/** A prompt cut at its attachment markers: plain text, and attachment ids, in order. */
+export function splitPrompt(
+  text: string,
+): ({ text: string } | { attachmentId: string })[] {
+  const parts: ({ text: string } | { attachmentId: string })[] = [];
+  let last = 0;
+  for (const match of text.matchAll(ATTACHMENT_MARKER)) {
+    if (match.index > last) parts.push({ text: text.slice(last, match.index) });
+    parts.push({ attachmentId: match[1] });
+    last = match.index + match[0].length;
+  }
+  if (last < text.length) parts.push({ text: text.slice(last) });
+  return parts;
+}
+
+/** The text with its attachment markers taken out, for titles and queue previews. */
+export function withoutMarkers(text: string) {
+  return text.replace(ATTACHMENT_MARKER, ' ').replace(/ {2,}/g, ' ').trim();
+}
+
+/** A message as the user sees it: its skills as `/name`, then the text. Skills are named once. */
+export function promptText(
+  text: string,
+  skills: (string | { name: string })[],
+) {
+  const names = new Set(
+    skills.map((skill) => (typeof skill === 'string' ? skill : skill.name)),
+  );
+  return [...[...names].map((name) => `/${name}`), text]
+    .filter(Boolean)
+    .join(' ');
+}
+
 export function emptyState(): State {
   return {
     version: 1,
@@ -78,6 +121,7 @@ export const DEFAULT_PREFERENCES: Preferences = {
   claudeOutputStyle: 'default',
   codexPersonality: 'default',
   archiveOnMerge: false,
+  closeOnPush: true,
   caffeinate: true,
 };
 
