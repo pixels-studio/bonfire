@@ -218,17 +218,6 @@ export function services(options: ServiceOptions) {
     },
   });
 
-  /** Closes every open pane of the project once its changes are pushed, if the setting is on. */
-  function closeAfterPush(projectId: string) {
-    if (!store.preferences.closeOnPush) return;
-    const project = store.state.projects.find(({ id }) => id === projectId);
-    if (!project) return;
-    const closed = openPanesOf(project).map(({ id }) => id);
-    if (!closed.length) return;
-    for (const id of closed) archivePane(store.pane(id));
-    store.save();
-    options.send(events.panesClosed, { paneIds: closed, reason: 'pushed' });
-  }
   mergeWatcher.start();
 
   function requireEnabled(provider: AssistantProvider) {
@@ -574,7 +563,6 @@ export function services(options: ServiceOptions) {
           body,
           base: draft.base,
         });
-        closeAfterPush(projectId);
         return pull;
       },
       runAction: async (projectId, action) => {
@@ -601,19 +589,11 @@ export function services(options: ServiceOptions) {
           reasoningEffort: pane.reasoningEffort,
           fastMode: pane.fastMode,
           approvals: pane.approvals,
-        })
-          .then(async () => {
-            if (action !== 'push') return;
-            // Close panes only if the agent actually got everything pushed.
-            const after = await pullRequestDraft(projectId);
-            if (!after.uncommitted && !after.unpushed)
-              closeAfterPush(projectId);
-          })
-          .catch((cause) =>
-            console.warn(
-              `Could not run ${ACTION_LABELS[action]}: ${errorMessage(cause)}`,
-            ),
-          );
+        }).catch((cause) =>
+          console.warn(
+            `Could not run ${ACTION_LABELS[action]}: ${errorMessage(cause)}`,
+          ),
+        );
         return pane.id;
       },
       mergePullRequest: async (projectId) =>

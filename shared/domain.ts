@@ -181,7 +181,6 @@ export const DEFAULT_PREFERENCES: Preferences = {
   claudeOutputStyle: 'default',
   codexPersonality: 'default',
   archiveOnMerge: false,
-  closeOnPush: true,
   caffeinate: true,
   actionPrompts: DEFAULT_ACTION_PROMPTS,
 };

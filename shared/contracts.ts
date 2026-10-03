@@ -80,8 +80,6 @@ export const preferencesSchema = z.object({
   codexPersonality,
   /** Archives conversations once the pull request for their branch is merged, through the `gh` CLI. */
   archiveOnMerge: z.boolean(),
-  /** Closes every pane of the project once its changes are pushed. */
-  closeOnPush: z.boolean(),
   /** Keeps the system awake while a turn runs. */
   caffeinate: z.boolean(),
   /** The instructions each action sends its agent; unset ones use the defaults. */
@@ -494,7 +492,7 @@ export type FileChangeEvent = { projectId: string; path: string };
 /** Panes the app archived on its own, such as when their pull request merged. */
 export type PanesClosedEvent = {
   paneIds: string[];
-  reason: 'merged' | 'pushed';
+  reason: 'merged';
 };
 
 /** IPC argument schemas, keyed by `group.method`. Every channel is validated in main. */
