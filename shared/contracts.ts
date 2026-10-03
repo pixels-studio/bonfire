@@ -211,6 +211,12 @@ export const projectCreateInput = z.object({
   connectionId: id.optional(),
 });
 
+/** A repository to clone into a new folder inside `parent` on this computer. */
+export const projectCloneInput = z.object({
+  url: z.string().trim().min(1).max(2048),
+  parent: z.string().trim().min(1).max(4096),
+});
+
 /** A connection as entered in its dialog; a new one has no id yet. */
 export const sshConnectionInput = sshConnectionSchema.extend({
   id: id.optional(),
@@ -218,6 +224,7 @@ export const sshConnectionInput = sshConnectionSchema.extend({
 
 export type Project = z.infer<typeof projectSchema>;
 export type ProjectCreateInput = z.infer<typeof projectCreateInput>;
+export type ProjectCloneInput = z.infer<typeof projectCloneInput>;
 export type SshConnection = z.infer<typeof sshConnectionSchema>;
 export type SshConnectionInput = z.infer<typeof sshConnectionInput>;
 export type SshAuth = z.infer<typeof sshAuth>;
@@ -249,6 +256,18 @@ export type ProviderAccount = {
 };
 export type GithubStatus =
   { installed: false } | { installed: true; login?: string };
+/** A repository the signed-in GitHub account can reach, for cloning. */
+export type GithubRepository = {
+  /** `owner/name`. */
+  fullName: string;
+  description?: string;
+  private: boolean;
+  /** When it was last pushed to, in milliseconds since the epoch. */
+  pushedAt: number;
+  cloneUrl: string;
+  /** The owner's avatar. */
+  avatarUrl?: string;
+};
 /** A GitHub device-flow sign-in waiting for the user to enter the code. */
 export type GithubSignIn = { userCode: string; verificationUrl: string };
 /** How a GitHub sign-in ended: the account gh now uses, and why it failed if it did. */
@@ -444,6 +463,7 @@ export const requests = {
   'github.status': z.tuple([]),
   'github.connect': z.tuple([]),
   'github.cancelConnect': z.tuple([]),
+  'github.repositories': z.tuple([]),
   'github.pullRequest': z.tuple([id]),
   'github.pullRequestDraft': z.tuple([id]),
   'github.createPullRequest': z.tuple([id, pullRequestInput]),
@@ -451,6 +471,8 @@ export const requests = {
   'github.openPullRequest': z.tuple([id]),
   'projects.chooseFolder': z.tuple([]),
   'projects.create': z.tuple([projectCreateInput]),
+  'projects.clone': z.tuple([projectCloneInput]),
+  'projects.cloneFolder': z.tuple([]),
   'projects.open': z.tuple([id]),
   'projects.remove': z.tuple([id]),
   'projects.favicon': z.tuple([id]),
@@ -539,6 +561,8 @@ export type API = {
      */
     connect(): Promise<GithubSignIn>;
     cancelConnect(): Promise<void>;
+    /** Repositories the signed-in account owns or works on, recently pushed first. */
+    repositories(): Promise<GithubRepository[]>;
     /** The newest pull request from the project's checked-out branch, or null if it has none. */
     pullRequest(projectId: string): Promise<PullRequest | null>;
     pullRequestDraft(projectId: string): Promise<PullRequestDraft>;
@@ -557,6 +581,10 @@ export type API = {
     chooseFolder(): Promise<string | null>;
     /** Adds a folder, here or on a connection's machine, and opens it. */
     create(input: ProjectCreateInput): Promise<Project>;
+    /** Clones a repository on this computer, then adds and opens it. */
+    clone(input: ProjectCloneInput): Promise<Project>;
+    /** Where clones go unless another folder is chosen. */
+    cloneFolder(): Promise<string>;
     /** Puts the project on screen. */
     open(id: string): Promise<void>;
     remove(id: string): Promise<void>;

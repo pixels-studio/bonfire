@@ -1,5 +1,6 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import type {
+  GithubRepository,
   GithubSignIn,
   GithubStatus,
   PullRequest,
@@ -88,6 +89,26 @@ export function parsePullRequest(json: string): PullRequest {
           : 'unknown',
     checks: summarizeChecks(pull.statusCheckRollup),
   };
+}
+
+/** The repositories in the JSON of GitHub's `user/repos`. */
+export function parseRepositories(json: string): GithubRepository[] {
+  const repositories = JSON.parse(json) as {
+    full_name: string;
+    description: string | null;
+    private: boolean;
+    pushed_at: string | null;
+    clone_url: string;
+    owner?: { avatar_url?: string };
+  }[];
+  return repositories.map((repository) => ({
+    fullName: repository.full_name,
+    description: repository.description || undefined,
+    private: repository.private,
+    pushedAt: repository.pushed_at ? Date.parse(repository.pushed_at) : 0,
+    cloneUrl: repository.clone_url,
+    avatarUrl: repository.owner?.avatar_url,
+  }));
 }
 
 const PULL_FIELDS =
@@ -195,6 +216,22 @@ export class GitHub {
         else onDone(error);
       });
     });
+  }
+
+  /** Repositories the signed-in account owns or works on, recently pushed first. */
+  async repositories(): Promise<GithubRepository[]> {
+    let output: string;
+    try {
+      output = await gh([
+        'api',
+        '--hostname',
+        HOST,
+        'user/repos?sort=pushed&per_page=100&affiliation=owner,collaborator,organization_member',
+      ]);
+    } catch (cause) {
+      throw ghError(cause);
+    }
+    return parseRepositories(output);
   }
 
   /** When the newest merged pull request from `branch` was merged, if there is one. */

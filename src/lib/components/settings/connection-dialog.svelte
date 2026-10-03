@@ -1,6 +1,7 @@
 <script lang="ts">
   import { untrack } from 'svelte';
   import Globe from '@lucide/svelte/icons/globe';
+  import { Label } from '$lib/components/ui/label';
   import { Button } from '$lib/components/ui/button';
   import * as Dialog from '$lib/components/ui/dialog';
   import { Input } from '$lib/components/ui/input';
@@ -119,7 +120,7 @@
     <form class="flex flex-col" onsubmit={save}>
       <Dialog.Body class="gap-4">
         <label class="flex flex-col gap-2">
-          <span class="text-sm text-muted-foreground">Display name</span>
+          <Label>Display name</Label>
           <div
             class="flex items-center rounded-lg border border-input transition-colors focus-within:border-brand dark:bg-input/30"
           >
@@ -138,7 +139,7 @@
           </div>
         </label>
         <label class="flex flex-col gap-2">
-          <span class="text-sm text-muted-foreground">Hostname</span>
+          <Label>Hostname</Label>
           <Input
             bind:value={host}
             class="h-8.5"
@@ -149,9 +150,9 @@
           />
         </label>
         <label class="flex flex-col gap-2">
-          <span class="text-sm text-muted-foreground">
+          <Label>
             SSH port <span class="opacity-60"> (optional) </span>
-          </span>
+          </Label>
           <Input
             bind:value={port}
             class="h-8.5"

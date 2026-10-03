@@ -1,5 +1,6 @@
 <script lang="ts">
   import { untrack } from 'svelte';
+  import { Label } from '$lib/components/ui/label';
   import { Button } from '$lib/components/ui/button';
   import * as Dialog from '$lib/components/ui/dialog';
   import { Input } from '$lib/components/ui/input';
@@ -57,7 +58,7 @@
     <form class="flex flex-col" onsubmit={create}>
       <Dialog.Body class="gap-8">
         <label class="flex flex-col gap-2">
-          <span class="text-sm text-muted-foreground">Name</span>
+          <Label>Name</Label>
           <Input
             bind:value={
               () => name,
@@ -70,9 +71,7 @@
           />
         </label>
         <div class="flex flex-col gap-2">
-          <span id="source-branch-label" class="text-sm text-muted-foreground">
-            Source branch
-          </span>
+          <Label id="source-branch-label">Source branch</Label>
           <BaseBranchPicker
             {projectId}
             bind:value={base}

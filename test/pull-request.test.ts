@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { parsePullRequest } from '../electron/main/github';
+import { parsePullRequest, parseRepositories } from '../electron/main/github';
 
 function pull(overrides: Record<string, unknown> = {}) {
   return JSON.stringify({
@@ -64,4 +64,36 @@ test('checks fold into one result, failures first', () => {
     ]),
     'failing',
   );
+});
+
+test('repositories keep what the picker shows', () => {
+  const [repository, empty] = parseRepositories(
+    JSON.stringify([
+      {
+        full_name: 'o/r',
+        description: 'A thing',
+        private: true,
+        pushed_at: '2026-01-02T03:04:05Z',
+        clone_url: 'https://github.com/o/r.git',
+        owner: { avatar_url: 'https://avatars.githubusercontent.com/u/1' },
+      },
+      {
+        full_name: 'o/empty',
+        description: '',
+        private: false,
+        pushed_at: null,
+        clone_url: 'https://github.com/o/empty.git',
+      },
+    ]),
+  );
+  assert.deepEqual(repository, {
+    fullName: 'o/r',
+    description: 'A thing',
+    private: true,
+    pushedAt: Date.parse('2026-01-02T03:04:05Z'),
+    cloneUrl: 'https://github.com/o/r.git',
+    avatarUrl: 'https://avatars.githubusercontent.com/u/1',
+  });
+  assert.equal(empty.description, undefined);
+  assert.equal(empty.pushedAt, 0);
 });

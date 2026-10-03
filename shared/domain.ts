@@ -122,6 +122,31 @@ export function projectLocation(
   );
 }
 
+/**
+ * The URL to clone for what was typed: a URL or scp-style address as is, and GitHub's
+ * `owner/name` shorthand as its HTTPS URL. Undefined when it is neither.
+ */
+export function cloneUrl(input: string) {
+  const text = input.trim();
+  if (/^(https?|ssh|git|file):\/\/\S+$/.test(text)) return text;
+  if (/^[\w.-]+@[\w.-]+:\S+$/.test(text)) return text;
+  if (/^[\w.-]+\/[\w.-]+$/.test(text))
+    return `https://github.com/${text.replace(/\.git$/, '')}.git`;
+  return undefined;
+}
+
+/** The folder a clone of `url` goes in: its last segment without `.git`. */
+export function repositoryName(url: string) {
+  return (
+    url
+      .trim()
+      .replace(/[\\/]+$/, '')
+      .replace(/\.git$/, '')
+      .split(/[\\/:]/)
+      .pop() ?? ''
+  );
+}
+
 /** The last segment of a path, for naming a project after its folder. */
 export function folderName(path: string) {
   return (

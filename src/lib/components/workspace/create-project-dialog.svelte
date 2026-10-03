@@ -1,6 +1,7 @@
 <script lang="ts">
   import { untrack } from 'svelte';
   import ChevronDown from '@lucide/svelte/icons/chevron-down';
+  import { Label } from '$lib/components/ui/label';
   import { Button } from '$lib/components/ui/button';
   import * as Dialog from '$lib/components/ui/dialog';
   import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
@@ -109,7 +110,7 @@
         </div>
 
         <div class="flex flex-col gap-3">
-          <span class="text-sm text-muted-foreground">Source folder</span>
+          <Label>Source folder</Label>
           <div class="overflow-hidden rounded-lg border border-border">
             {#if folder}
               {@const remote = connections.find(folder.connectionId)}

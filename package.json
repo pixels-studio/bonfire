@@ -5,6 +5,7 @@
   "main": "dist/main/index.cjs",
   "scripts": {
     "dev": "node scripts/dev.mjs",
+    "dev:onboarding": "node scripts/dev.mjs --onboarding",
     "build": "vite build && node scripts/build-electron.mjs",
     "prestart": "npm run build",
     "start": "electron .",
