@@ -187,6 +187,17 @@ export abstract class ChatAssistant {
     return file ? this.attachments.addImage(paneId, file) : null;
   }
 
+  /** Attaches an image from disk, e.g. one dropped onto the pane. */
+  async attachFile(paneId: string, path: string): Promise<Attachment> {
+    this.paneFor(paneId);
+    if (!/\.(png|jpe?g|webp|gif)$/i.test(path))
+      throw Error('Only PNG, JPEG, WebP and GIF images can be attached');
+    return this.attachments.addImage(paneId, {
+      name: path.split(/[\\/]/).pop() ?? path,
+      path,
+    });
+  }
+
   /** Holds pasted text as an attachment, so a long paste doesn't flood the message. */
   attachText(paneId: string, text: string): Attachment {
     this.paneFor(paneId);

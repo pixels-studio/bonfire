@@ -140,9 +140,10 @@ export function services(options: ServiceOptions) {
     const cwd = folder(projectId);
     const branch = (await git.currentBranch(cwd)) ?? '';
     const base = await pullRequestBase(cwd);
-    const [commits, status] = await Promise.all([
+    const [commits, status, unpushed] = await Promise.all([
       branch ? commitsBeyond(cwd, base) : [],
       git.status(cwd),
+      branch ? git.unpushedCount(cwd) : 0,
     ]);
     const uncommitted = status.changes.length;
     const single = commits.length === 1;
@@ -158,6 +159,7 @@ export function services(options: ServiceOptions) {
             .join('\n'),
       commits,
       uncommitted,
+      unpushed,
     };
     if (!branch) draft.blocked = 'Check out a branch to open a pull request.';
     else if (branch === base)
@@ -554,6 +556,18 @@ export function services(options: ServiceOptions) {
         await git.pushBranch(cwd);
         return github.createPullRequest(cwd, { title, body, base: draft.base });
       },
+      push: async (projectId) => {
+        const cwd = folder(projectId);
+        const draft = await pullRequestDraft(projectId);
+        if (!draft.branch) throw Error('Check out a branch to push.');
+        if (!draft.uncommitted && !draft.unpushed)
+          throw Error('There is nothing to push.');
+        if (draft.uncommitted) {
+          const { title } = await writePullRequest(cwd, draft);
+          await git.commitAll(cwd, title);
+        }
+        await git.pushBranch(cwd);
+      },
       mergePullRequest: async (projectId) =>
         github.mergePullRequest(folder(projectId)),
       openPullRequest: async (projectId) => {
@@ -605,6 +619,8 @@ export function services(options: ServiceOptions) {
       models: async (provider) => assistants[provider].models(),
       pickAttachment: async (paneId) =>
         assistantFor(paneId).pickAttachment(paneId),
+      attachFile: async (paneId, path) =>
+        assistantFor(paneId).attachFile(paneId, path),
       attachText: async (paneId, text) =>
         assistantFor(paneId).attachText(paneId, text),
       sendQueued: async (paneId, queuedId) =>

@@ -221,6 +221,27 @@
   container-type: inline-size;
 }
 
+/* A working pane's dot breathing between faint and solid. */
+@keyframes dot-breathe {
+  0%,
+  100% {
+    opacity: 0.1;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.dot-working {
+  animation: dot-breathe 1.6s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dot-working {
+    animation: none;
+  }
+}
+
 /* A star streaking left to right across the track, brighter at its head. */
 @keyframes effort-star {
   from {

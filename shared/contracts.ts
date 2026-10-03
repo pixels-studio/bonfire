@@ -296,6 +296,8 @@ export type PullRequestDraft = {
   commits: string[];
   /** Files with changes that aren't committed yet. */
   uncommitted: number;
+  /** Commits not pushed yet. */
+  unpushed: number;
   /** Why no pull request can be opened from here, if so. */
   blocked?: string;
 };
@@ -470,6 +472,7 @@ export const requests = {
   'github.createPullRequestForMe': z.tuple([id]),
   'github.mergePullRequest': z.tuple([id]),
   'github.openPullRequest': z.tuple([id]),
+  'github.push': z.tuple([id]),
   'projects.chooseFolder': z.tuple([]),
   'projects.create': z.tuple([projectCreateInput]),
   'projects.clone': z.tuple([projectCloneInput]),
@@ -488,6 +491,7 @@ export const requests = {
   'panes.reorder': z.tuple([z.array(id).max(100)]),
   'assistant.send': z.tuple([assistantSendInput]),
   'assistant.pickAttachment': z.tuple([id]),
+  'assistant.attachFile': z.tuple([id, filePath]),
   'assistant.attachText': z.tuple([
     id,
     z.string().min(1).max(MAX_TEXT_ATTACHMENT_LENGTH),
@@ -580,6 +584,8 @@ export type API = {
     /** Squash-merges the open pull request of the checked-out branch. */
     mergePullRequest(projectId: string): Promise<void>;
     openPullRequest(projectId: string): Promise<void>;
+    /** Commits any uncommitted changes and pushes the checked-out branch, for the base branch where no pull request applies. */
+    push(projectId: string): Promise<void>;
     onSignInEnd(listener: (end: GithubSignInEnd) => void): Unsubscribe;
   };
   projects: {
@@ -620,6 +626,8 @@ export type API = {
   assistant: {
     send(input: AssistantSendInput): Promise<void>;
     pickAttachment(paneId: string): Promise<Attachment | null>;
+    /** Attaches an image dropped onto the pane, by its path on disk. */
+    attachFile(paneId: string, path: string): Promise<Attachment>;
     attachText(paneId: string, text: string): Promise<Attachment>;
     /** Sends a queued message now: it steers the running turn, or starts one. */
     sendQueued(paneId: string, queuedId: string): Promise<void>;
@@ -641,6 +649,8 @@ export type API = {
   navigation: { help(): Promise<void> };
   app: {
     isFullscreen(): Promise<boolean>;
+    /** The path on disk of a file from a drop or file input. */
+    pathForFile(file: File): string;
     onFullscreenChange(listener: (fullscreen: boolean) => void): Unsubscribe;
     /** A notification for a pane was clicked. */
     onFocusPane(listener: (paneId: string) => void): Unsubscribe;

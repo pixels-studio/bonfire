@@ -78,6 +78,19 @@
       >
         Merge
       </Button>
+    {:else if pullRequest.pushable}
+      <Button
+        variant="secondary"
+        size="sm"
+        class={cn(PILL_BUTTON_CLASS, UTILITY_BUTTON_CLASS)}
+        {disabled}
+        title="Commit changes and push to the remote"
+        loading={pullRequest.pushing}
+        onclick={() => void pullRequest.push()}
+      >
+        <Icon name="git" />
+        Push
+      </Button>
     {:else}
       <Button
         variant={pullRequestOpen ? 'default' : 'secondary'}

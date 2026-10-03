@@ -5,6 +5,7 @@
   export type AttachmentSource = {
     pick: () => Promise<Attachment | null>;
     text: (text: string) => Promise<Attachment>;
+    file: (path: string) => Promise<Attachment>;
   };
 </script>
 
@@ -46,6 +47,7 @@
     attach = {
       pick: () => window.bonfire.assistant.pickAttachment(paneId),
       text: (text) => window.bonfire.assistant.attachText(paneId, text),
+      file: (path) => window.bonfire.assistant.attachFile(paneId, path),
     },
     allowEmpty = false,
     submitLabel = 'Send message',
@@ -116,6 +118,40 @@
       toast(errorMessage(cause), { variant: 'error' });
     }
   }
+
+  /** Attaches dropped files, up to the limit. */
+  export async function addFiles(files: File[]) {
+    for (const file of files) {
+      if (!canAttach) {
+        toast(`You can attach up to ${MAX_ATTACHMENTS} files.`);
+        return;
+      }
+      try {
+        attachments.push(
+          await attach.file(window.bonfire.app.pathForFile(file)),
+        );
+      } catch (cause) {
+        toast(errorMessage(cause), { variant: 'error' });
+      }
+    }
+  }
+
+  const MAX_LINES = 10;
+  let textarea = $state<HTMLTextAreaElement>();
+  /** Grows the box with its content up to `MAX_LINES`, then lets it scroll. */
+  function resize() {
+    if (!textarea) return;
+    textarea.style.height = 'auto';
+    const style = getComputedStyle(textarea);
+    const line = parseFloat(style.lineHeight) || 20;
+    const max = line * MAX_LINES;
+    textarea.style.height = `${Math.min(textarea.scrollHeight, max)}px`;
+    textarea.style.overflowY = textarea.scrollHeight > max ? 'auto' : 'hidden';
+  }
+  $effect(() => {
+    void prompt;
+    resize();
+  });
 
   function removeAttachment(id: string) {
     attachments = attachments.filter((attachment) => attachment.id !== id);
@@ -210,6 +246,7 @@
     {autofocus}
     placeholder={placeholder ??
       (running ? FOLLOW_UP_PLACEHOLDERS[followUp] : 'Ask for changes')}
+    bind:this={textarea}
     bind:value={prompt}
     onkeydown={handleKeydown}
     onpaste={handlePaste}></textarea>

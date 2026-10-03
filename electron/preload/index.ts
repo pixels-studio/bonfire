@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
+import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from 'electron';
 import { events, requests, type API } from '../../shared/contracts';
 
 const api: Record<string, Record<string, unknown>> = {};
@@ -17,6 +17,7 @@ function subscribe(channel: string) {
   };
 }
 
+api.app.pathForFile = (file: File) => webUtils.getPathForFile(file);
 api.terminal.onData = subscribe(events.terminalData);
 api.assistant.onEvent = subscribe(events.assistantEvent);
 api.filesystem.onChange = subscribe(events.fileChange);

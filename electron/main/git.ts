@@ -302,6 +302,15 @@ export async function commitAll(cwd: Place, message: string) {
   await git(cwd, ['commit', '--message', message]);
 }
 
+/** How many commits the checked-out branch has that its upstream lacks; all of them with no upstream. */
+export async function unpushedCount(cwd: Place) {
+  const count = (args: string[]) =>
+    git(cwd, ['rev-list', '--count', ...args]).then((out) => Number(out.trim()));
+  return count(['@{upstream}..HEAD']).catch(() =>
+    count(['HEAD', '--not', '--remotes']).catch(() => 0),
+  );
+}
+
 /** Pushes the checked-out branch to a branch of the same name on origin and tracks it. */
 export async function pushBranch(cwd: Place) {
   await git(cwd, ['push', '--set-upstream', 'origin', 'HEAD']);

@@ -221,6 +221,7 @@
                   DOT_CLASS,
                   style.ring,
                   pane.inView ? style.dot : 'bg-transparent',
+                  pane.status === 'working' && 'dot-working',
                 )}
               ></span>
             </button>

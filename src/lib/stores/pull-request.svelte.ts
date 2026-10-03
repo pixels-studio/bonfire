@@ -1,4 +1,8 @@
-import type { PullRequest, PullRequestInput } from '$shared/contracts';
+import type {
+  PullRequest,
+  PullRequestDraft,
+  PullRequestInput,
+} from '$shared/contracts';
 import { errorMessage } from '$shared/domain';
 import { branch } from './branch.svelte';
 import { toast } from './toast.svelte';
@@ -10,6 +14,15 @@ class PullRequestStore {
   /** `undefined` until looked up; `null` when the branch has none. */
   current = $state<PullRequest | null>();
   merging = $state(false);
+  pushing = $state(false);
+  /** What the checked-out branch holds, looked up while it has no open pull request. */
+  draft = $state<PullRequestDraft>();
+  /** On the base branch with work to push, where a pull request makes no sense. */
+  readonly pushable = $derived(
+    !!this.draft &&
+      this.draft.branch === this.draft.base &&
+      this.draft.uncommitted + this.draft.unpushed > 0,
+  );
   /** Whether a pull request is being written and opened for the branch. */
   creating = $state(false);
   private projectId?: string;
@@ -22,6 +35,7 @@ class PullRequestStore {
   watch(projectId: string | undefined) {
     this.projectId = projectId;
     this.current = undefined;
+    this.draft = undefined;
     if (!projectId) return;
     void this.reload();
     const timer = setInterval(() => void this.reload(), POLL_INTERVAL_MS);
@@ -39,7 +53,16 @@ class PullRequestStore {
     const token = ++this.generation;
     try {
       const pull = await window.bonfire.github.pullRequest(projectId);
-      if (token === this.generation) this.current = pull;
+      const draft =
+        pull?.state === 'open'
+          ? undefined
+          : await window.bonfire.github
+              .pullRequestDraft(projectId)
+              .catch(() => undefined);
+      if (token === this.generation) {
+        this.current = pull;
+        this.draft = draft;
+      }
     } catch {
       // gh missing, signed out, or offline: keep what was last known, or no pull request.
       if (token === this.generation) this.current ??= null;
@@ -81,6 +104,22 @@ class PullRequestStore {
       toast(errorMessage(cause), { variant: 'error', duration: 0 });
     } finally {
       this.creating = false;
+      await this.reload();
+    }
+  }
+
+  /** Commits and pushes the base branch's changes, which can't go through a pull request. */
+  async push() {
+    const projectId = this.projectId;
+    if (!projectId || this.pushing) return;
+    this.pushing = true;
+    try {
+      await window.bonfire.github.push(projectId);
+      toast('Pushed to the remote.');
+    } catch (cause) {
+      toast(errorMessage(cause), { variant: 'error', duration: 0 });
+    } finally {
+      this.pushing = false;
       await this.reload();
     }
   }

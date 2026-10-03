@@ -368,6 +368,10 @@
 
   function togglePullRequest() {
     if (!project || pullRequest.current === undefined) return;
+    if (pullRequest.pushable) {
+      void pullRequest.push();
+      return;
+    }
     if (
       pullRequest.current === null ||
       pullRequest.current.state === 'closed'

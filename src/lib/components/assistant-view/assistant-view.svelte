@@ -59,6 +59,14 @@
   let announcement = $state('');
   let error = $state('');
   let feed = $state<HTMLDivElement>();
+  let composer = $state<ReturnType<typeof Composer>>();
+  let dragging = $state(false);
+
+  function dragOver(event: DragEvent) {
+    if (!event.dataTransfer?.types.includes('Files')) return;
+    event.preventDefault();
+    dragging = true;
+  }
   let title = $state(
     untrack(() => (isDefaultTitle(pane.title) ? DEFAULT_TITLE : pane.title)),
   );
@@ -291,6 +299,30 @@
   });
 </script>
 
+<!-- Dropping files anywhere on the pane attaches them. -->
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<div
+  class="relative h-full min-w-0"
+  ondragenter={dragOver}
+  ondragover={dragOver}
+  ondragleave={(event) => {
+    if (!event.currentTarget.contains(event.relatedTarget as Node | null))
+      dragging = false;
+  }}
+  ondrop={(event) => {
+    if (!event.dataTransfer?.files.length) return;
+    event.preventDefault();
+    dragging = false;
+    void composer?.addFiles([...event.dataTransfer.files]);
+  }}
+>
+{#if dragging}
+  <div
+    class="pointer-events-none absolute inset-0 z-50 grid place-items-center rounded-lg border-2 border-dashed border-brand bg-background/80 text-sm"
+  >
+    Drop to attach
+  </div>
+{/if}
 <Card.Root class="h-full min-w-0">
   <PaneHeader
     {title}
@@ -370,6 +402,7 @@
         />
       {/if}
       <Composer
+        bind:this={composer}
         paneId={pane.id}
         label={`Message ${providerLabel}`}
         {running}
@@ -388,3 +421,4 @@
     </div>
   </div>
 </Card.Root>
+</div>
