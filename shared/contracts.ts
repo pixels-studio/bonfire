@@ -467,6 +467,7 @@ export const requests = {
   'github.pullRequest': z.tuple([id]),
   'github.pullRequestDraft': z.tuple([id]),
   'github.createPullRequest': z.tuple([id, pullRequestInput]),
+  'github.createPullRequestForMe': z.tuple([id]),
   'github.mergePullRequest': z.tuple([id]),
   'github.openPullRequest': z.tuple([id]),
   'projects.chooseFolder': z.tuple([]),
@@ -571,6 +572,11 @@ export type API = {
       projectId: string,
       input: PullRequestInput,
     ): Promise<PullRequest>;
+    /**
+     * Has the text model write the title and description, commits what is uncommitted,
+     * pushes, and opens the pull request.
+     */
+    createPullRequestForMe(projectId: string): Promise<PullRequest>;
     /** Squash-merges the open pull request of the checked-out branch. */
     mergePullRequest(projectId: string): Promise<void>;
     openPullRequest(projectId: string): Promise<void>;

@@ -10,6 +10,8 @@ class PullRequestStore {
   /** `undefined` until looked up; `null` when the branch has none. */
   current = $state<PullRequest | null>();
   merging = $state(false);
+  /** Whether a pull request is being written and opened for the branch. */
+  creating = $state(false);
   private projectId?: string;
   private generation = 0;
 
@@ -52,6 +54,35 @@ class PullRequestStore {
       input,
     );
     if (projectId === this.projectId) this.current = pull;
+  }
+
+  /** Has the text model write and open a pull request for the branch on screen. */
+  async createForMe() {
+    const projectId = this.projectId;
+    if (!projectId || this.creating) return;
+    this.creating = true;
+    try {
+      const pull =
+        await window.bonfire.github.createPullRequestForMe(projectId);
+      if (projectId === this.projectId) this.current = pull;
+      toast(`Opened pull request #${pull.number}.`, {
+        duration: 10_000,
+        action: {
+          label: 'View on GitHub',
+          run: () =>
+            void window.bonfire.github
+              .openPullRequest(projectId)
+              .catch((cause) =>
+                toast(errorMessage(cause), { variant: 'error' }),
+              ),
+        },
+      });
+    } catch (cause) {
+      toast(errorMessage(cause), { variant: 'error', duration: 0 });
+    } finally {
+      this.creating = false;
+      await this.reload();
+    }
   }
 
   async merge() {

@@ -1,0 +1,66 @@
+// Packages Bonfire as a standalone macOS app: `npm run package` (add --install to copy it to /Applications).
+// Reuses the installed Electron.app as the shell and puts the built app inside it, unpacked, so
+// node-pty and the bundled agent CLIs stay ordinary files that can be executed.
+import { execFileSync } from 'node:child_process';
+import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { join, relative, resolve } from 'node:path';
+
+const root = resolve(import.meta.dirname, '..');
+const out = join(root, 'release', 'Bonfire.app');
+const run = (command, args, options = {}) => execFileSync(command, args, { stdio: 'inherit', cwd: root, ...options });
+
+run('npm', ['run', 'build']);
+
+rmSync(out, { recursive: true, force: true });
+mkdirSync(join(root, 'release'), { recursive: true });
+cpSync(join(root, 'node_modules/electron/dist/Electron.app'), out, { recursive: true, verbatimSymlinks: true });
+
+const resources = join(out, 'Contents/Resources');
+const app = join(resources, 'app');
+rmSync(join(resources, 'default_app.asar'), { force: true });
+
+const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
+mkdirSync(app, { recursive: true });
+writeFileSync(
+  join(app, 'package.json'),
+  JSON.stringify({ name: pkg.name, version: pkg.version, main: pkg.main, type: pkg.type }, null, 2),
+);
+for (const dir of ['dist', 'build', 'static']) cpSync(join(root, dir), join(app, dir), { recursive: true });
+
+// Only what the main process loads at runtime: the production dependency tree.
+const tree = execFileSync('npm', ['ls', '--omit=dev', '--all', '--parseable'], { cwd: root, encoding: 'utf8' });
+for (const path of tree.split('\n').filter((line) => line.includes('/node_modules/'))) {
+  cpSync(path, join(app, relative(root, path)), { recursive: true, verbatimSymlinks: true });
+}
+
+// Icon: static/icon.png -> icns.
+const iconset = join(root, 'release', 'icon.iconset');
+rmSync(iconset, { recursive: true, force: true });
+mkdirSync(iconset);
+for (const size of [16, 32, 128, 256, 512]) {
+  run('sips', ['-z', size, size, 'static/icon.png', '--out', join(iconset, `icon_${size}x${size}.png`)], { stdio: 'ignore' });
+  run('sips', ['-z', size * 2, size * 2, 'static/icon.png', '--out', join(iconset, `icon_${size}x${size}@2x.png`)], { stdio: 'ignore' });
+}
+run('iconutil', ['-c', 'icns', iconset, '-o', join(resources, 'bonfire.icns')]);
+rmSync(iconset, { recursive: true, force: true });
+
+const plist = join(out, 'Contents/Info.plist');
+const set = (key, value) => run('plutil', ['-replace', key, '-string', value, plist]);
+set('CFBundleName', 'Bonfire');
+set('CFBundleDisplayName', 'Bonfire');
+set('CFBundleIdentifier', 'dev.webuildproducts.bonfire');
+set('CFBundleIconFile', 'bonfire.icns');
+set('CFBundleShortVersionString', pkg.version);
+set('CFBundleVersion', pkg.version);
+
+// Renaming the executable would need every helper renamed too, so it keeps Electron's name.
+// Ad-hoc signing is enough for an app that never leaves this machine.
+run('codesign', ['--force', '--deep', '--sign', '-', out], { stdio: 'ignore' });
+console.log(`Packaged ${relative(root, out)}`);
+
+if (process.argv.includes('--install')) {
+  const target = '/Applications/Bonfire.app';
+  if (existsSync(target)) rmSync(target, { recursive: true, force: true });
+  run('ditto', [out, target]);
+  console.log(`Installed ${target}`);
+}
