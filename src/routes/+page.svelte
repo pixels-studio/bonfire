@@ -206,9 +206,12 @@
   }
 
   const HIGHLIGHT_MS = 1200;
-  /** An inset overlay: the strip clips anything drawn outside the card. */
+  /**
+   * An inset overlay: the strip clips anything drawn outside the card. It sits
+   * above sticky content, like the file search, which would otherwise cover it.
+   */
   const HIGHLIGHT_CLASS =
-    'relative after:pointer-events-none after:absolute after:inset-x-1 after:inset-y-0 after:rounded-lg after:opacity-0 after:ring-2 after:ring-brand after:transition-opacity after:duration-500 after:ease-out after:ring-inset motion-reduce:after:transition-none';
+    'relative after:pointer-events-none after:absolute after:z-20 after:inset-x-1 after:inset-y-0 after:rounded-lg after:opacity-0 after:ring-2 after:ring-brand after:transition-opacity after:duration-500 after:ease-out after:ring-inset motion-reduce:after:transition-none';
   const HIGHLIGHTED_CLASS = 'after:opacity-100 after:duration-150';
   /** The pane or panel just scrolled to, outlined briefly so it's found at a glance. */
   let highlightedId = $state<string>();

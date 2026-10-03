@@ -113,7 +113,7 @@
           aria-label="Search files"
           autocomplete="off"
           spellcheck="false"
-          class="rounded-full pl-8 [&::-webkit-search-cancel-button]:appearance-none"
+          class="rounded-lg border-transparent bg-composer pl-8 focus-visible:border-transparent dark:bg-composer [&::-webkit-search-cancel-button]:appearance-none"
           bind:value={query}
           onkeydown={(event) => {
             if (event.key === 'Escape') query = '';
