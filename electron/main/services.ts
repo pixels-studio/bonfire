@@ -50,6 +50,7 @@ import { MergeWatcher } from './merge-watcher';
 import { TurnNotifier, type Notice } from './notifier';
 import { Store } from './persistence';
 import { Terminals } from './terminal';
+import { parsePullRequestText, pullRequestPrompt } from './pull-request-text';
 import { cleanTitle, titlePrompt } from './titles';
 import { TokenUsage } from './token-usage';
 
@@ -164,6 +165,27 @@ export function services(options: ServiceOptions) {
     else if (!commits.length && !uncommitted)
       draft.blocked = `This branch has no changes beyond ${base} yet.`;
     return draft;
+  }
+
+  /** Writes the pull request's text with the text model, falling back to the draft's. */
+  async function writePullRequest(cwd: Place, draft: PullRequestDraft) {
+    const { provider, model } = store.preferences.textModel;
+    if (!store.preferences.providers[provider]) return draft;
+    try {
+      const reply = await assistants[provider].generate(
+        pullRequestPrompt({
+          branch: draft.branch,
+          base: draft.base,
+          commits: draft.commits,
+          diff: await git.changesBeyond(cwd, draft.base),
+        }),
+        model,
+      );
+      return parsePullRequestText(reply) ?? draft;
+    } catch (cause) {
+      console.warn(`Could not write a pull request: ${errorMessage(cause)}`);
+      return draft;
+    }
   }
 
   const hasStarted = (pane: Pane) => pane.messages.length > 0;
@@ -520,6 +542,15 @@ export function services(options: ServiceOptions) {
         const draft = await pullRequestDraft(projectId);
         if (draft.blocked) throw Error(draft.blocked);
         if (commit && draft.uncommitted) await git.commitAll(cwd, title);
+        await git.pushBranch(cwd);
+        return github.createPullRequest(cwd, { title, body, base: draft.base });
+      },
+      createPullRequestForMe: async (projectId) => {
+        const cwd = folder(projectId);
+        const draft = await pullRequestDraft(projectId);
+        if (draft.blocked) throw Error(draft.blocked);
+        const { title, body } = await writePullRequest(cwd, draft);
+        if (draft.uncommitted) await git.commitAll(cwd, title);
         await git.pushBranch(cwd);
         return github.createPullRequest(cwd, { title, body, base: draft.base });
       },

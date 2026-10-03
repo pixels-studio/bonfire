@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { parsePullRequest, parseRepositories } from '../electron/main/github';
+import {
+  parsePullRequestText,
+  pullRequestPrompt,
+} from '../electron/main/pull-request-text';
 
 function pull(overrides: Record<string, unknown> = {}) {
   return JSON.stringify({
@@ -96,4 +100,36 @@ test('repositories keep what the picker shows', () => {
   });
   assert.equal(empty.description, undefined);
   assert.equal(empty.pushedAt, 0);
+});
+
+test('a pull request reply splits into a title and a description', () => {
+  assert.deepEqual(
+    parsePullRequestText(
+      'Add dark mode\n\nSwitches themes.\n\n- Adds a toggle',
+    ),
+    { title: 'Add dark mode', body: 'Switches themes.\n\n- Adds a toggle' },
+  );
+});
+
+test('a wrapped pull request reply is unwrapped', () => {
+  assert.deepEqual(
+    parsePullRequestText(
+      '```markdown\nTitle: "Fix the build."\n\nIt broke.\n```',
+    ),
+    { title: 'Fix the build', body: 'It broke.' },
+  );
+  assert.equal(parsePullRequestText('  \n'), undefined);
+});
+
+test('the pull request prompt trims long diffs', () => {
+  const prompt = pullRequestPrompt({
+    branch: 'fix',
+    base: 'main',
+    commits: ['two', 'one'],
+    diff: 'x'.repeat(30_000),
+  });
+  assert.match(prompt, /from `fix` into `main`/);
+  assert.match(prompt, /<commits>\none\ntwo\n<\/commits>/);
+  assert.match(prompt, /\(truncated\)/);
+  assert.ok(prompt.length < 26_000);
 });

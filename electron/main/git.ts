@@ -276,6 +276,21 @@ export async function commitsAhead(cwd: Place, base: string) {
   return output.split('\n').filter(Boolean);
 }
 
+/** What `HEAD` and the working tree change beyond `base`: committed work and uncommitted work. */
+export async function changesBeyond(cwd: Place, base: string) {
+  const refs = [`origin/${base}`, base];
+  let committed = '';
+  for (const ref of refs)
+    try {
+      committed = await git(cwd, ['diff', `${ref}...HEAD`]);
+      break;
+    } catch {
+      // The ref isn't known here; try the next.
+    }
+  const uncommitted = await git(cwd, ['diff', 'HEAD']).catch(() => '');
+  return [committed, uncommitted].filter(Boolean).join('\n');
+}
+
 /** The first commit message's body beyond its subject, for a pull request description. */
 export async function lastCommitBody(cwd: Place) {
   return (await git(cwd, ['log', '-1', '--format=%b'])).trim();

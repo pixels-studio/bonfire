@@ -47,7 +47,7 @@
   );
   const label = $derived(
     !head
-      ? 'Loading…'
+      ? undefined
       : !head.isGit
         ? 'Not a repository'
         : (head.branch ?? 'Detached HEAD'),
@@ -87,7 +87,15 @@
       : `Switch branch (${shortcutText('switchBranch', isMac())})`}
   >
     <Icon name="branch" class="size-4 shrink-0 text-muted-foreground" />
-    <span class="max-w-64 truncate">{label}</span>
+    {#if label}
+      <span class="max-w-64 truncate">{label}</span>
+    {:else}
+      <span
+        class="h-3.5 w-16 animate-pulse rounded-sm bg-foreground/10 motion-reduce:animate-none"
+        role="status"
+        aria-label="Loading branch"
+      ></span>
+    {/if}
     <ChevronDown class="size-3.5 shrink-0 text-muted-foreground" />
   </DropdownMenu.Trigger>
   <DropdownMenu.Content align="start" class="max-h-[70vh] w-96">
@@ -99,7 +107,27 @@
     {#if error}
       <p class="px-1.5 py-1.5 text-destructive">{error}</p>
     {:else if loading && !ordered.length}
-      <p class="px-1.5 py-1.5 text-muted-foreground">Loading branches…</p>
+      <div
+        class="flex flex-col gap-3 px-1.5 py-1.5"
+        role="status"
+        aria-label="Loading branches"
+      >
+        {#each [0, 1, 2] as row (row)}
+          <span class="flex items-center gap-2">
+            <span
+              class="size-4 shrink-0 animate-pulse rounded-sm bg-foreground/10 motion-reduce:animate-none"
+            ></span>
+            <span class="flex flex-1 flex-col gap-1.5">
+              <span
+                class="h-3.5 w-1/3 animate-pulse rounded-sm bg-foreground/10 motion-reduce:animate-none"
+              ></span>
+              <span
+                class="h-3 w-2/3 animate-pulse rounded-sm bg-foreground/10 motion-reduce:animate-none"
+              ></span>
+            </span>
+          </span>
+        {/each}
+      </div>
     {/if}
     {#each ordered as item (item.name)}
       {@const current = item.name === head?.branch}

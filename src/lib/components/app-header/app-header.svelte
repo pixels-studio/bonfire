@@ -36,6 +36,11 @@
     pullRequestOpen = !pullRequestOpen;
   }
 
+  /** A branch with no open or merged pull request gets one written and opened for it. */
+  const createsPullRequest = $derived(
+    pull === null || pull?.state === 'closed',
+  );
+
   const pullRequestHint = `(${shortcutText('pullRequest', isMac())})`;
   const UTILITY_BUTTON_CLASS = 'text-muted-foreground hover:text-foreground';
   const PILL_BUTTON_CLASS = 'rounded-full px-3';
@@ -81,7 +86,10 @@
         aria-pressed={pullRequestOpen}
         disabled={disabled || pull === undefined}
         title={`Create pull request ${pullRequestHint}`}
-        onclick={togglePullRequest}
+        loading={pullRequest.creating}
+        onclick={createsPullRequest
+          ? () => void pullRequest.createForMe()
+          : togglePullRequest}
       >
         <Icon name={pull?.state === 'merged' ? 'check' : 'git'} />
         {pull?.state === 'merged' ? 'Merged' : 'Create PR'}

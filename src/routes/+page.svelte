@@ -6,6 +6,7 @@
   import AppRail, {
     type AppPanel,
   } from '$lib/components/app-rail/app-rail.svelte';
+  import Logo from '$lib/components/logo/logo.svelte';
   import BranchPicker from '$lib/components/workspace/branch-picker.svelte';
   import CreateProjectDialog from '$lib/components/workspace/create-project-dialog.svelte';
   import Icon from '$lib/components/icon/icon.svelte';
@@ -66,6 +67,8 @@
   /** The open panels, newest first, ahead of the panes. */
   let panels = $state<AppPanel[]>([]);
   let creatingBranch = $state(false);
+  /** Whether the pointer is over the empty state's flame, which lights it. */
+  let stirred = $state(false);
   let creatingProject = $state(false);
   let projectMenuOpen = $state(false);
   let branchMenuOpen = $state(false);
@@ -83,6 +86,11 @@
   const project = $derived(
     workspace.projects.find(({ id }) => id === workspace.lastProjectId),
   );
+  /**
+   * Every refresh replaces the project object, so anything that should restart only when
+   * another project opens follows this instead.
+   */
+  const projectId = $derived(project?.id);
   /** The open panes of the project on screen, agents and tools alike, in layout order. */
   const panes = $derived(
     workspace.layout.paneIds
@@ -329,14 +337,14 @@
 
   $effect(() => {
     if (!loaded) return;
-    const id = project?.id;
+    const id = projectId;
     return untrack(() => branch.watch(id));
   });
 
   // The header's pull request button follows the branch on screen.
   $effect(() => {
     if (!loaded) return;
-    const id = branch.head?.branch ? project?.id : undefined;
+    const id = branch.head?.branch ? projectId : undefined;
     void branch.head;
     return untrack(() => pullRequest.watch(id));
   });
@@ -360,6 +368,13 @@
 
   function togglePullRequest() {
     if (!project || pullRequest.current === undefined) return;
+    if (
+      pullRequest.current === null ||
+      pullRequest.current.state === 'closed'
+    ) {
+      void pullRequest.createForMe();
+      return;
+    }
     pullRequestOpen = !pullRequestOpen;
   }
 
@@ -627,7 +642,13 @@
     <Card.Root
       class="grid h-full place-content-center justify-items-center text-center text-muted-foreground"
     >
-      <Icon name="bot" class="size-7" />
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <div
+        onpointerenter={() => (stirred = true)}
+        onpointerleave={() => (stirred = false)}
+      >
+        <Logo active={stirred} idle={!stirred} warm class="size-10" />
+      </div>
       <h1 class="mt-6 font-medium text-foreground">Start a conversation</h1>
       <p class="mb-6 max-w-90 text-pretty">
         {#if branch.head?.branch}
