@@ -15,12 +15,14 @@
   import PullRequestView from '$lib/components/pull-request/pull-request-view.svelte';
   import NewBranchDialog from '$lib/components/workspace/new-branch-dialog.svelte';
   import ProjectPicker from '$lib/components/workspace/project-picker.svelte';
+  import ShortcutsPane from '$lib/components/shortcuts/shortcuts-pane.svelte';
   import {
     PANE_SIZES,
     defaultPaneSize,
     paneWidth,
     type PaneSize,
   } from '$lib/panes';
+  import { digitOf, matchShortcut, type ShortcutId } from '$lib/shortcuts';
   import { PaneDrag } from '$lib/pane-drag.svelte';
   import { PaneStatuses } from '$lib/pane-status.svelte';
   import { playCompletionSound } from '$lib/sounds';
@@ -61,6 +63,12 @@
   let panels = $state<AppPanel[]>([]);
   let creatingBranch = $state(false);
   let creatingProject = $state(false);
+  let projectMenuOpen = $state(false);
+  let branchMenuOpen = $state(false);
+  /** The tab the insights panel is on, which the usage shortcut switches. */
+  let insightsTab = $state('tokens');
+  /** The pane last clicked, focused or navigated to, which the pane shortcuts act on. */
+  let currentPaneId = $state<string>();
 
   const project = $derived(
     workspace.projects.find(({ id }) => id === workspace.lastProjectId),
@@ -75,6 +83,12 @@
       ),
   );
   const assistantPanes = $derived(panes.filter(isAssistantPane));
+  /** The pane the pane shortcuts act on: the current one, else the first in sight. */
+  const activePane = $derived(
+    panes.find(({ id }) => id === currentPaneId) ??
+      panes.find(({ id }) => inView[id]) ??
+      panes[0],
+  );
   /** Whether an agent is mid-turn, which keeps the branch where it is. */
   const agentsWorking = $derived(
     assistantPanes.some(({ id }) =>
@@ -152,9 +166,11 @@
       toast(`A project can have up to ${MAX_PANES} panes open.`);
       return;
     }
+    const count = panes.length;
     await runAction(() => window.bonfire.panes.add(type));
     await tick();
     paneStrip?.scrollTo({ left: 0, behavior: scrollBehavior() });
+    if (panes.length > count) void focusPane(panes[0].id);
   }
 
   function sizeClass(size: PaneSize) {
@@ -215,7 +231,27 @@
   }
 
   function scrollToPane(paneId: string) {
+    currentPaneId = paneId;
     scrollToSection(`[data-pane-id="${CSS.escape(paneId)}"]`, paneId);
+  }
+
+  /** Scrolls to a pane and puts the cursor in it, in its message box, search or terminal. */
+  async function focusPane(paneId: string) {
+    scrollToPane(paneId);
+    await tick();
+    paneStrip
+      ?.querySelector<HTMLElement>(
+        `[data-pane-id="${CSS.escape(paneId)}"] :is(textarea, input[type="search"])`,
+      )
+      ?.focus({ preventScroll: true });
+  }
+
+  /** Remembers the pane that was clicked or focused. */
+  function trackPane(event: Event) {
+    const paneId = (event.target as Element).closest<HTMLElement>(
+      '[data-pane-id]',
+    )?.dataset.paneId;
+    if (paneId) currentPaneId = paneId;
   }
 
   /** Panel names can't clash with pane ids, which are UUIDs. */
@@ -239,6 +275,18 @@
     void runAction(() => window.bonfire.panes.reorder(ids));
   }
 
+  /** Moves a pane along the strip, one place at a time, and keeps it in sight. */
+  function movePane(paneId: string, step: number) {
+    const ids = panes.map(({ id }) => id);
+    const index = ids.indexOf(paneId);
+    const target = index + step;
+    if (index < 0 || target < 0 || target >= ids.length) return;
+    ids.splice(index, 1);
+    ids.splice(target, 0, paneId);
+    reorder(ids);
+    void tick().then(() => scrollToPane(paneId));
+  }
+
   function dragHandle(pane: Pane): HTMLButtonAttributes {
     return {
       onpointerdown: (event) =>
@@ -251,12 +299,7 @@
         const step = { ArrowLeft: -1, ArrowRight: 1 }[event.key];
         if (!step || drag.active) return;
         event.preventDefault();
-        const index = panes.findIndex(({ id }) => id === pane.id) + step;
-        if (index < 0 || index >= panes.length) return;
-        const ids = panes.map(({ id }) => id).filter((id) => id !== pane.id);
-        ids.splice(index, 0, pane.id);
-        reorder(ids);
-        void tick().then(() => scrollToPane(pane.id));
+        movePane(pane.id, step);
       },
     };
   }
@@ -285,12 +328,124 @@
     return untrack(() => pullRequest.watch(id));
   });
 
-  function handleKeydown(event: KeyboardEvent) {
-    const modifier = isMac() ? event.metaKey : event.ctrlKey;
-    if (modifier && event.shiftKey && event.key.toLowerCase() === 'n') {
-      event.preventDefault();
-      newBranch();
+  /** Goes to the pane `step` places from the active one, wrapping around the ends. */
+  function stepPane(step: number) {
+    if (!panes.length) return;
+    const index = panes.findIndex(({ id }) => id === activePane?.id);
+    void focusPane(panes[(index + step + panes.length) % panes.length].id);
+  }
+
+  function cyclePaneSize() {
+    if (!activePane) return;
+    const sizes = PANE_SIZES.map(({ value }) => value);
+    const current = sizeOverrides[activePane.id] ?? defaultPaneSize(stripCount);
+    sizeOverrides[activePane.id] =
+      sizes[(sizes.indexOf(current) + 1) % sizes.length];
+    const { id } = activePane;
+    void tick().then(() => scrollToPane(id));
+  }
+
+  function togglePullRequest() {
+    if (!project || pullRequest.current === undefined) return;
+    pullRequestOpen = !pullRequestOpen;
+  }
+
+  /** Opens insights on `tab`, or switches to it; pressed again on that tab, closes it. */
+  function showInsights(tab: 'tokens' | 'usage') {
+    const open = panels.includes('insights');
+    if (open && insightsTab === tab) {
+      togglePanel('insights');
+      return;
     }
+    insightsTab = tab;
+    if (open) scrollToPanel('insights');
+    else togglePanel('insights');
+  }
+
+  function runShortcut(id: ShortcutId, event: KeyboardEvent) {
+    const digit = digitOf(event) ?? 0;
+    switch (id) {
+      case 'shortcuts':
+      case 'settings':
+        togglePanel(id);
+        break;
+      case 'insights':
+        showInsights('tokens');
+        break;
+      case 'usage':
+        showInsights('usage');
+        break;
+      case 'addProject':
+        addProject();
+        break;
+      case 'switchProject':
+        projectMenuOpen = true;
+        break;
+      case 'openProject': {
+        const target = workspace.projects[digit - 1];
+        if (target) openProject(target.id);
+        break;
+      }
+      case 'switchBranch':
+        if (project && isRepository) branchMenuOpen = true;
+        break;
+      case 'newBranch':
+        newBranch();
+        break;
+      case 'pullRequest':
+        togglePullRequest();
+        break;
+      case 'newConversation':
+        void addPane();
+        break;
+      case 'newTerminal':
+        void addPane('terminal');
+        break;
+      case 'newFiles':
+        void addPane('files');
+        break;
+      case 'newDiff':
+        void addPane('diff');
+        break;
+      case 'closePane': {
+        const target = activePane;
+        if (target)
+          void runAction(() => window.bonfire.panes.archive(target.id));
+        break;
+      }
+      case 'goToPane':
+        if (panes[digit - 1]) void focusPane(panes[digit - 1].id);
+        break;
+      case 'previousPane':
+        stepPane(-1);
+        break;
+      case 'nextPane':
+        stepPane(1);
+        break;
+      case 'movePaneLeft':
+      case 'movePaneRight':
+        if (activePane) movePane(activePane.id, id === 'movePaneLeft' ? -1 : 1);
+        break;
+      case 'resizePane':
+        cyclePaneSize();
+        break;
+      case 'focusComposer':
+        if (activePane) void focusPane(activePane.id);
+        break;
+    }
+  }
+
+  function handleKeydown(event: KeyboardEvent) {
+    if (event.isComposing) return;
+    const id = matchShortcut(event, isMac(), 'global');
+    if (!id) return;
+    // Elsewhere the shortcuts are Ctrl chords, which a terminal's programs use.
+    if (!isMac() && (event.target as Element).closest?.('.xterm')) return;
+    // An open dialog or menu owns the keyboard.
+    if (document.querySelector('[role="dialog"], [role="menu"]')) return;
+    event.preventDefault();
+    event.stopPropagation();
+    runShortcut(id, event);
   }
 
   // Tracks which panes and panels are in view so the rail can mark them.
@@ -393,7 +548,7 @@
 </script>
 
 <svelte:head><title>Bonfire</title></svelte:head>
-<svelte:window onkeydown={handleKeydown} />
+<svelte:window onkeydowncapture={handleKeydown} />
 
 {#snippet placeholder()}
   {#if !workspace.projects.length}
@@ -453,6 +608,7 @@
         <ProjectPicker
           projects={workspace.projects}
           active={project}
+          bind:open={projectMenuOpen}
           onselect={openProject}
           onadd={addProject}
           onremove={removeProject}
@@ -462,6 +618,7 @@
             projectId={project.id}
             head={branch.head}
             locked={agentsWorking}
+            bind:open={branchMenuOpen}
             onswitch={switchBranch}
             onnew={newBranch}
           />
@@ -485,6 +642,8 @@
           {:else}
             <div
               bind:this={paneStrip}
+              onfocusin={trackPane}
+              onpointerdowncapture={trackPane}
               class={cn(
                 '-mx-1 flex h-full snap-x snap-mandatory overflow-x-auto overscroll-x-contain scrollbar-none',
                 drag.active && 'snap-none select-none',
@@ -504,8 +663,10 @@
                 >
                   {#if panel === 'settings'}
                     <SettingsPane />
+                  {:else if panel === 'shortcuts'}
+                    <ShortcutsPane />
                   {:else}
-                    <InsightsPane />
+                    <InsightsPane bind:tab={insightsTab} />
                   {/if}
                 </section>
               {/each}

@@ -1,10 +1,31 @@
 <script lang="ts" module>
   /** A pane of app-wide tools, opened from the rail ahead of the conversation panes. */
-  export type AppPanel = 'insights' | 'settings';
+  export type AppPanel = 'shortcuts' | 'insights' | 'settings';
 
-  const PANELS: { panel: AppPanel; icon: string; label: string }[] = [
-    { panel: 'insights', icon: 'insights', label: 'Insights' },
-    { panel: 'settings', icon: 'settings', label: 'Settings' },
+  const PANELS: {
+    panel: AppPanel;
+    icon: string;
+    label: string;
+    shortcut: ShortcutId;
+  }[] = [
+    {
+      panel: 'shortcuts',
+      icon: 'keyboard',
+      label: 'Keyboard shortcuts',
+      shortcut: 'shortcuts',
+    },
+    {
+      panel: 'insights',
+      icon: 'insights',
+      label: 'Insights',
+      shortcut: 'insights',
+    },
+    {
+      panel: 'settings',
+      icon: 'settings',
+      label: 'Settings',
+      shortcut: 'settings',
+    },
   ];
 </script>
 
@@ -13,8 +34,11 @@
   import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
   import * as Tooltip from '$lib/components/ui/tooltip';
   import Icon from '$lib/components/icon/icon.svelte';
+  import Logo from '$lib/components/logo/logo.svelte';
   import type { PaneStatus } from '$lib/pane-status.svelte';
+  import ShortcutKeys from '$lib/components/shortcuts/shortcut-keys.svelte';
   import { TOOL_PANES } from '$lib/panes';
+  import type { ShortcutId } from '$lib/shortcuts';
   import { preferences } from '$lib/stores/preferences.svelte';
   import { cn } from '$lib/utils';
   import { PROVIDER_LABELS } from '$shared/domain';
@@ -81,11 +105,21 @@
     trafficLightInset?: boolean;
   } = $props();
 
+  /** The shortcut a tool pane's menu item shows. */
+  const TOOL_SHORTCUTS: Record<string, ShortcutId> = {
+    files: 'newFiles',
+    terminal: 'newTerminal',
+    diff: 'newDiff',
+  };
+
   const BUTTON_CLASS = 'text-muted-foreground hover:text-foreground';
   const DOT_BUTTON_CLASS =
     'grid size-6 place-content-center rounded-full outline-none transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-ring/60';
   const DOT_CLASS =
     'size-2.5 rounded-full border-2 bg-clip-padding transition-colors duration-150';
+
+  let logoHovered = $state(false);
+  const working = $derived(panes.some(({ status }) => status === 'working'));
 
   const openPanels = $derived(
     panels.flatMap((panel) => PANELS.filter((item) => item.panel === panel)),
@@ -98,12 +132,18 @@
 >
   <div class="flex w-full flex-col items-center">
     <div class="app-drag grid h-13 w-full place-content-center">
-      <img
-        src="/logo.svg"
-        alt="Bonfire"
-        class={cn('size-6', trafficLightInset && 'translate-y-[55px]')}
-        draggable="false"
-      />
+      <!-- Opts out of the drag region so the hover reaches it. -->
+      <div
+        role="presentation"
+        class={cn(
+          'app-no-drag grid size-8 place-content-center',
+          trafficLightInset && 'translate-y-[55px]',
+        )}
+        onpointerenter={() => (logoHovered = true)}
+        onpointerleave={() => (logoHovered = false)}
+      >
+        <Logo class="size-7"active={logoHovered || working} />
+      </div>
     </div>
     <div
       class={cn(
@@ -128,7 +168,7 @@
             </Button>
           {/snippet}
         </DropdownMenu.Trigger>
-        <DropdownMenu.Content side="right" align="start" class="w-44">
+        <DropdownMenu.Content side="right" align="start" class="w-56">
           <DropdownMenu.Label>Agents</DropdownMenu.Label>
           {#each preferences.enabledProviders as provider (provider)}
             <DropdownMenu.Item onclick={() => onaddPane(provider)}>
@@ -141,6 +181,7 @@
             <DropdownMenu.Item onclick={() => onaddPane(pane.type)}>
               <Icon name={pane.icon} />
               {pane.label}
+              <ShortcutKeys id={TOOL_SHORTCUTS[pane.type]} class="ml-auto" />
             </DropdownMenu.Item>
           {/each}
         </DropdownMenu.Content>
@@ -209,16 +250,27 @@
     </Tooltip.Root>
     {#each PANELS as item (item.panel)}
       {@const open = panels.includes(item.panel)}
-      <Button
-        variant={open ? 'default' : 'secondary'}
-        size="icon"
-        class={cn(!open && BUTTON_CLASS)}
-        aria-label={item.label}
-        aria-pressed={open}
-        onclick={() => ontogglePanel(item.panel)}
-      >
-        <Icon name={item.icon} />
-      </Button>
+      <Tooltip.Root>
+        <Tooltip.Trigger>
+          {#snippet child({ props })}
+            <Button
+              {...props}
+              variant={open ? 'default' : 'secondary'}
+              size="icon"
+              class={cn(!open && BUTTON_CLASS)}
+              aria-label={item.label}
+              aria-pressed={open}
+              onclick={() => ontogglePanel(item.panel)}
+            >
+              <Icon name={item.icon} />
+            </Button>
+          {/snippet}
+        </Tooltip.Trigger>
+        <Tooltip.Content side="right">
+          {item.label}
+          <ShortcutKeys id={item.shortcut} inverse />
+        </Tooltip.Content>
+      </Tooltip.Root>
     {/each}
   </div>
 </nav>

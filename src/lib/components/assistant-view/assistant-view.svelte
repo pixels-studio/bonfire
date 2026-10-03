@@ -7,8 +7,7 @@
   import PaneHeader from '$lib/components/pane-header/pane-header.svelte';
   import Composer from './composer.svelte';
   import ContextUsage from './context-usage.svelte';
-  import EffortPicker from './effort-picker.svelte';
-  import ModelSelect from './model-select.svelte';
+  import ModelPicker from './model-picker.svelte';
   import QueuedPrompts from './queued-prompts.svelte';
   import { DEFAULT_CONTEXT_WINDOWS } from '$lib/models';
   import { catalog } from '$lib/stores/models.svelte';
@@ -64,6 +63,7 @@
     untrack(() => (isDefaultTitle(pane.title) ? DEFAULT_TITLE : pane.title)),
   );
   let effort = $state<ReasoningEffort>(untrack(() => pane.reasoningEffort));
+  let fast = $state(untrack(() => pane.fastMode));
   let model = $state(
     untrack(() => {
       const available = catalog.for(provider);
@@ -78,6 +78,7 @@
     if (!available.some((item) => item.value === model))
       model = available[0].value;
   });
+  const fastSupported = $derived(!!catalog.find(model)?.supportsFast);
   /** The feed's vertical padding (`pt-6` + `pb-7`), excluded from the latest turn's height. */
   const FEED_PADDING = 52;
   /** Space kept above a new prompt when it is scrolled to the top (`scroll-mt-6`). */
@@ -220,6 +221,7 @@
       attachmentIds,
       model,
       reasoningEffort: effort,
+      fastMode: fast && fastSupported,
       approvals: preferences.current.approvals,
     };
     if (followUp) {
@@ -257,6 +259,8 @@
   function changeModel(next: string) {
     if (next === model) return;
     model = next;
+    // Once the model is known not to support it, fast mode is off rather than quietly remembered.
+    if (catalog.find(next)?.supportsFast === false) fast = false;
     if (messages.length)
       toast(
         'FYI: When you switch models mid-chat, your next response will be slower and use more tokens.',
@@ -371,8 +375,14 @@
         {running}
         onsend={send}
       >
-        <ModelSelect {provider} value={model} onchange={changeModel} />
-        <EffortPicker bind:value={effort} />
+        <ModelPicker
+          {provider}
+          {model}
+          bind:effort
+          bind:fast
+          {fastSupported}
+          onmodel={changeModel}
+        />
         <ContextUsage {usage} {contextWindow} />
       </Composer>
     </div>

@@ -10,6 +10,8 @@ export type Model = {
   label: string;
   contextWindow: number;
   provider: AssistantProvider;
+  /** Known only once the provider reports its models. */
+  supportsFast?: boolean;
 };
 
 export const PROVIDERS = Object.keys(PROVIDER_LABELS) as AssistantProvider[];

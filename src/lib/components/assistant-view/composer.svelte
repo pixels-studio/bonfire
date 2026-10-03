@@ -15,10 +15,12 @@
   import { Button } from '$lib/components/ui/button';
   import * as Tooltip from '$lib/components/ui/tooltip';
   import Icon from '$lib/components/icon/icon.svelte';
+  import ShortcutKeys from '$lib/components/shortcuts/shortcut-keys.svelte';
   import AttachmentView from '../conversation/attachment-view.svelte';
   import { preferences } from '$lib/stores/preferences.svelte';
   import { toast } from '$lib/stores/toast.svelte';
-  import { cn } from '$lib/utils';
+  import { matchShortcut } from '$lib/shortcuts';
+  import { cn, isMac } from '$lib/utils';
   import { LONG_TEXT_THRESHOLD, errorMessage } from '$shared/domain';
   import {
     MAX_TEXT_ATTACHMENT_LENGTH,
@@ -125,6 +127,19 @@
     void send(event.metaKey || event.ctrlKey);
   }
 
+  /** Handles the shortcuts that work anywhere in the composer, not only in the text box. */
+  function handleShortcut(event: KeyboardEvent) {
+    if (event.isComposing) return;
+    const shortcut = matchShortcut(event, isMac(), 'composer');
+    if (shortcut === 'attach' && canAttach) {
+      event.preventDefault();
+      void pickAttachment();
+    } else if (shortcut === 'stop' && running) {
+      event.preventDefault();
+      void window.bonfire.assistant.cancel(paneId);
+    }
+  }
+
   /** Turns a long paste into an attachment, so the message itself stays readable. */
   async function handlePaste(event: ClipboardEvent) {
     const text = event.clipboardData?.getData('text/plain') ?? '';
@@ -150,8 +165,11 @@
   }
 </script>
 
+<!-- The form only listens for keys bubbling up from the controls inside it. -->
+<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 <form
   class="rounded-lg bg-composer px-4 py-3"
+  onkeydown={handleShortcut}
   onsubmit={(event) => {
     event.preventDefault();
     void send();
@@ -215,17 +233,29 @@
             </Button>
           {/snippet}
         </Tooltip.Trigger>
-        <Tooltip.Content>Add attachment</Tooltip.Content>
+        <Tooltip.Content>
+          Add attachment <ShortcutKeys id="attach" inverse />
+        </Tooltip.Content>
       </Tooltip.Root>
       {#if running}
-        <Button
-          variant="secondary"
-          size="icon"
-          aria-label="Stop response"
-          onclick={() => window.bonfire.assistant.cancel(paneId)}
-        >
-          <Icon name="stop" />
-        </Button>
+        <Tooltip.Root>
+          <Tooltip.Trigger>
+            {#snippet child({ props })}
+              <Button
+                {...props}
+                variant="secondary"
+                size="icon"
+                aria-label="Stop response"
+                onclick={() => window.bonfire.assistant.cancel(paneId)}
+              >
+                <Icon name="stop" />
+              </Button>
+            {/snippet}
+          </Tooltip.Trigger>
+          <Tooltip.Content>
+            Stop response <ShortcutKeys id="stop" inverse />
+          </Tooltip.Content>
+        </Tooltip.Root>
       {/if}
       {#if !running || prompt.trim()}
         <Button

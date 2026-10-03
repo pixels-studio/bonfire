@@ -22,6 +22,7 @@ export function fakeStore(type: 'claude' | 'codex') {
     messages: [],
     model: '',
     reasoningEffort: 'medium',
+    fastMode: false,
     approvals: 'auto',
     archived: false,
   };
@@ -50,6 +51,7 @@ export function sendInput(text = 'hi') {
     attachmentIds: [],
     model: '',
     reasoningEffort: 'medium' as const,
+    fastMode: false,
     approvals: 'auto' as const,
   };
 }
@@ -71,7 +73,10 @@ export class ScriptedAssistant extends ChatAssistant {
     return this.script(this, turn);
   }
   protected async listModels(): Promise<ModelOption[]> {
-    return [{ value: 'a', label: 'A' }];
+    return [
+      { value: 'a', label: 'A', supportsFast: true },
+      { value: 'b', label: 'B', supportsFast: false },
+    ];
   }
   protected async readLimits(): Promise<ProviderLimits> {
     return { provider: 'claude', windows: [] };

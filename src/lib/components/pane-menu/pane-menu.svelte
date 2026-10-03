@@ -2,6 +2,7 @@
   import { Button } from '$lib/components/ui/button';
   import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
   import Icon from '$lib/components/icon/icon.svelte';
+  import ShortcutKeys from '$lib/components/shortcuts/shortcut-keys.svelte';
   import { PANE_SIZES, type PaneSize } from '$lib/panes';
 
   let {
@@ -41,6 +42,7 @@
     <DropdownMenu.Separator />
     <DropdownMenu.Item variant="destructive" onclick={onclose}>
       <Icon name="close" /> Close
+      <ShortcutKeys id="closePane" class="ml-auto" />
     </DropdownMenu.Item>
   </DropdownMenu.Content>
 </DropdownMenu.Root>
