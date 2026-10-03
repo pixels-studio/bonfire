@@ -1,6 +1,7 @@
 <script lang="ts">
   import { buttonVariants } from '$lib/components/ui/button';
-  import { cn } from '$lib/utils';
+  import { shortcutText } from '$lib/shortcuts';
+  import { cn, isMac } from '$lib/utils';
   import ChevronDown from '@lucide/svelte/icons/chevron-down';
   import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
   import Icon from '$lib/components/icon/icon.svelte';
@@ -12,6 +13,7 @@
     projects,
     active,
     side = 'bottom',
+    open = $bindable(false),
     onselect,
     onadd,
     onremove,
@@ -19,6 +21,7 @@
     projects: Project[];
     active?: Project;
     side?: 'top' | 'bottom';
+    open?: boolean;
     onselect: (id: string) => void;
     onadd: () => void;
     /** Shows per-project actions when given; without it the picker only picks. */
@@ -32,7 +35,6 @@
     return `color: oklch(0.72 0.15 ${hash % 360})`;
   }
 
-  let menuOpen = $state(false);
   let favicons = $state<Record<string, string | null>>({});
   const requestedFavicons = new Set<string>();
 
@@ -66,12 +68,13 @@
   {/if}
 {/snippet}
 
-<DropdownMenu.Root bind:open={menuOpen}>
+<DropdownMenu.Root bind:open>
   <DropdownMenu.Trigger
     class={cn(
       buttonVariants({ variant: 'secondary' }),
       'h-7.5 max-w-56 min-w-0 gap-2 py-0 pr-2.5 pl-2',
     )}
+    title={`Switch project (${shortcutText('switchProject', isMac())})`}
   >
     {@render favicon(active)}
     <span class="truncate">{active?.name || 'Select project'}</span>
@@ -113,7 +116,7 @@
                 <DropdownMenu.Item
                   variant="destructive"
                   onclick={() => {
-                    menuOpen = false;
+                    open = false;
                     onremove(project.id);
                   }}
                 >

@@ -195,3 +195,44 @@
     @apply bg-brand/40;
   }
 }
+
+/* The top thinking effort: the accent fill gives way to a spectrum. */
+.effort-max-gradient {
+  background: linear-gradient(
+    90deg,
+    #0a9cf0 0%,
+    #5b7cff 20%,
+    #b863d6 40%,
+    #de5f87 60%,
+    #d5750f 78%,
+    #7f9a12 100%
+  );
+}
+
+.effort-track {
+  container-type: inline-size;
+}
+
+/* A star streaking left to right across the track, brighter at its head. */
+@keyframes effort-star {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(100cqw);
+  }
+}
+
+.effort-star {
+  position: absolute;
+  left: 0;
+  height: 1.5px;
+  border-radius: 9999px;
+  background: linear-gradient(90deg, transparent, rgb(255 255 255 / 85%));
+  animation: effort-star linear infinite;
+
+  @media (prefers-reduced-motion: reduce) {
+    animation: none;
+    transform: translateX(40cqw);
+  }
+}

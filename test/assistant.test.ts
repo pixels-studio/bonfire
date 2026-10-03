@@ -340,3 +340,20 @@ test('model lists are cached and a failed refresh serves the stale list', async 
   }
   assert.equal(calls, 2);
 });
+
+test('fast mode is kept for a model that supports it and dropped for one that does not', async () => {
+  for (const [model, expected] of [
+    ['a', true],
+    ['b', false],
+    ['unlisted', false],
+  ] as const) {
+    const { assistant, pane } = scripted();
+    let ran: boolean | undefined;
+    assistant.script = async (_, turn) => {
+      ran = turn.input.fastMode;
+    };
+    await assistant.send({ ...sendInput(), model, fastMode: true });
+    assert.equal(ran, expected, model);
+    assert.equal(pane.fastMode, expected, model);
+  }
+});

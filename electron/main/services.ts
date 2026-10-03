@@ -308,6 +308,7 @@ export function services(options: ServiceOptions) {
       messages: [],
       model: agent ? modelFor(paneType, starting) : '',
       reasoningEffort: 'medium',
+      fastMode: false,
       approvals: store.preferences.approvals,
       archived: false,
     };

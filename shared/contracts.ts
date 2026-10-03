@@ -107,6 +107,8 @@ export const paneSchema = z.object({
   usage: usageSchema.optional(),
   model: z.string().default(''),
   reasoningEffort: reasoningEffort.default('medium'),
+  /** Claude's faster, pricier output; other agents ignore it. */
+  fastMode: z.boolean().default(false),
   /** Panes from before permissions were configurable ran unattended. */
   approvals: approvalMode.default('auto'),
   /** The branch the conversation last worked on, and since when, to spot its pull request merging. */
@@ -173,6 +175,7 @@ export const assistantSendInput = z.object({
   attachmentIds: z.array(id).max(8).default([]),
   model: z.string().max(100),
   reasoningEffort,
+  fastMode: z.boolean().default(false),
   approvals: approvalMode,
   /** How to deliver the message if a turn is already running; without it the send is refused. */
   followUp: followUpMode.optional(),
@@ -339,6 +342,8 @@ export type ModelOption = {
   value: string;
   label: string;
   contextWindow?: number;
+  /** Whether the model can run in fast mode. */
+  supportsFast?: boolean;
 };
 /** One rate-limit window of a provider's plan, such as the weekly limit. */
 export type LimitWindow = {

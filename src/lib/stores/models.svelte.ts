@@ -34,10 +34,11 @@ class ModelCatalog {
         .then((options) => {
           if (!options.length) return;
           this.#reported[provider] = options.map(
-            ({ value, label, contextWindow }) => ({
+            ({ value, label, contextWindow, supportsFast }) => ({
               value,
               label,
               provider,
+              supportsFast,
               contextWindow:
                 contextWindow ??
                 MODELS.find((model) => model.value === value)?.contextWindow ??

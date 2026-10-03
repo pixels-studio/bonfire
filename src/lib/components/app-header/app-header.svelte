@@ -2,8 +2,9 @@
   import type { Snippet } from 'svelte';
   import { Button } from '$lib/components/ui/button';
   import Icon from '$lib/components/icon/icon.svelte';
+  import { shortcutText } from '$lib/shortcuts';
   import { pullRequest } from '$lib/stores/pull-request.svelte';
-  import { cn } from '$lib/utils';
+  import { cn, isMac } from '$lib/utils';
 
   let {
     pullRequestOpen = $bindable(false),
@@ -35,6 +36,7 @@
     pullRequestOpen = !pullRequestOpen;
   }
 
+  const pullRequestHint = `(${shortcutText('pullRequest', isMac())})`;
   const UTILITY_BUTTON_CLASS = 'text-muted-foreground hover:text-foreground';
   const PILL_BUTTON_CLASS = 'rounded-full px-3';
 </script>
@@ -55,7 +57,7 @@
         size="sm"
         class={cn(PILL_BUTTON_CLASS, !pullRequestOpen && UTILITY_BUTTON_CLASS)}
         aria-pressed={pullRequestOpen}
-        title="Pull request"
+        title={`Pull request ${pullRequestHint}`}
         onclick={togglePullRequest}
       >
         <Icon name="git" />
@@ -78,6 +80,7 @@
         class={cn(PILL_BUTTON_CLASS, !pullRequestOpen && UTILITY_BUTTON_CLASS)}
         aria-pressed={pullRequestOpen}
         disabled={disabled || pull === undefined}
+        title={`Create pull request ${pullRequestHint}`}
         onclick={togglePullRequest}
       >
         <Icon name={pull?.state === 'merged' ? 'check' : 'git'} />

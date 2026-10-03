@@ -103,10 +103,12 @@ export class ClaudeAssistant extends ChatAssistant {
       resume: pane.threadId || undefined,
       ...modelOptions(input.model),
       thinking: THINKING[input.reasoningEffort],
-      settings:
-        claudeOutputStyle === DEFAULT_OUTPUT_STYLE
-          ? undefined
-          : { outputStyle: claudeOutputStyle },
+      settings: {
+        ...(claudeOutputStyle !== DEFAULT_OUTPUT_STYLE && {
+          outputStyle: claudeOutputStyle,
+        }),
+        ...(input.fastMode && { fastMode: true }),
+      },
       // Unattended runs approve in `canUseTool` rather than bypassing permissions, because
       // bypassing would also skip the callback that carries the model's questions to the user.
       permissionMode: 'default',
@@ -591,13 +593,18 @@ const LOCAL_ONLY_VARIABLES = new Set([
 export function modelList(models: ModelInfo[]): ModelOption[] {
   const options: ModelOption[] = models
     .filter(({ value }) => value !== 'default' && !value.startsWith('claude-'))
-    .map(({ value, displayName }) => ({ value, label: displayName }));
+    .map(({ value, displayName, supportsFastMode }) => ({
+      value,
+      label: displayName,
+      supportsFast: !!supportsFastMode,
+    }));
   const sonnet = options.find(({ value }) => value === 'sonnet');
   if (!sonnet) return options;
   options.splice(options.indexOf(sonnet) + 1, 0, {
     value: EXTENDED_CONTEXT_MODEL,
     label: `${sonnet.label} (1M)`,
     contextWindow: 1_000_000,
+    supportsFast: sonnet.supportsFast,
   });
   return options;
 }

@@ -341,6 +341,7 @@ export abstract class ChatAssistant {
 
     pane.model = input.model;
     pane.reasoningEffort = input.reasoningEffort;
+    pane.fastMode = input.fastMode;
     pane.approvals = input.approvals;
     if (isDefaultTitle(pane.title)) pane.title = titleFrom(input.text);
     const { settings } = this.store.state;
@@ -368,6 +369,7 @@ export abstract class ChatAssistant {
     this.notify({ paneId: pane.id, type: 'status', status: 'running' });
 
     try {
+      await this.settleFastMode(turn);
       await this.run(turn);
     } catch (cause) {
       // A stop isn't a failure, and a failure the provider already showed isn't repeated.
@@ -388,6 +390,21 @@ export abstract class ChatAssistant {
       // After a stop or a failure the queue waits, so the user decides what runs next.
       if (!turn.errored && !turn.cancelled) this.startNext(pane);
     }
+  }
+
+  /**
+   * Fast mode only applies to models that support it, so a request for it on any
+   * other is dropped here, before the run, and what the pane remembers matches.
+   */
+  private async settleFastMode(turn: ActiveTurn) {
+    if (!turn.input.fastMode) return;
+    const models = await this.modelList.get().catch(() => []);
+    const supported = models.find(
+      ({ value }) => value === turn.input.model,
+    )?.supportsFast;
+    if (supported) return;
+    turn.input = { ...turn.input, fastMode: false };
+    turn.pane.fastMode = false;
   }
 
   private async steerTurn(

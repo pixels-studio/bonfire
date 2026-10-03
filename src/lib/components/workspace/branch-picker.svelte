@@ -1,9 +1,12 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import { buttonVariants } from '$lib/components/ui/button';
   import Check from '@lucide/svelte/icons/check';
   import ChevronDown from '@lucide/svelte/icons/chevron-down';
   import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
   import Icon from '$lib/components/icon/icon.svelte';
+  import ShortcutKeys from '$lib/components/shortcuts/shortcut-keys.svelte';
+  import { shortcutText } from '$lib/shortcuts';
   import { cn, formatAge, isMac } from '$lib/utils';
   import type { Branch, GitHead } from '$shared/contracts';
   import { errorMessage } from '$shared/domain';
@@ -12,6 +15,7 @@
     projectId,
     head,
     locked,
+    open = $bindable(false),
     onswitch,
     onnew,
   }: {
@@ -20,6 +24,7 @@
     head?: GitHead;
     /** Whether an agent is working, which rules out switching. */
     locked: boolean;
+    open?: boolean;
     onswitch: (name: string) => void;
     onnew: () => void;
   } = $props();
@@ -47,7 +52,11 @@
         ? 'Not a repository'
         : (head.branch ?? 'Detached HEAD'),
   );
-  const shortcut = isMac() ? '⇧⌘N' : 'Ctrl+Shift+N';
+
+  // Lists the branches each time the menu opens.
+  $effect(() => {
+    if (open) untrack(() => void load());
+  });
 
   async function load() {
     const id = projectId;
@@ -66,7 +75,7 @@
   }
 </script>
 
-<DropdownMenu.Root onOpenChange={(open) => open && void load()}>
+<DropdownMenu.Root bind:open>
   <DropdownMenu.Trigger
     class={cn(
       buttonVariants({ variant: 'secondary' }),
@@ -75,7 +84,7 @@
     disabled={head && !head.isGit}
     title={head && !head.isGit
       ? 'This folder isn’t a git repository'
-      : undefined}
+      : `Switch branch (${shortcutText('switchBranch', isMac())})`}
   >
     <Icon name="branch" class="size-4 shrink-0 text-muted-foreground" />
     <span class="max-w-64 truncate">{label}</span>
@@ -118,7 +127,7 @@
     {/if}
     <DropdownMenu.Item class="gap-2" disabled={locked} onclick={onnew}>
       <Icon name="plus" class="size-4" /> Branch
-      <span class="ml-auto text-xs text-muted-foreground">{shortcut}</span>
+      <ShortcutKeys id="newBranch" class="ml-auto" />
     </DropdownMenu.Item>
   </DropdownMenu.Content>
 </DropdownMenu.Root>

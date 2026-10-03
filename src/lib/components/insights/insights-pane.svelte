@@ -13,7 +13,7 @@
     { value: 'usage', label: 'Usage' },
   ];
 
-  let tab = $state(TABS[0].value);
+  let { tab = $bindable('tokens') }: { tab?: string } = $props();
 
   onMount(() => void limits.refresh());
 </script>

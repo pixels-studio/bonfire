@@ -14,6 +14,7 @@ function pane(id: string, branch: string, since: number): Pane {
     messages: [],
     model: '',
     reasoningEffort: 'medium',
+    fastMode: false,
     approvals: 'auto',
     archived: false,
     workBranch: { name: branch, since },
