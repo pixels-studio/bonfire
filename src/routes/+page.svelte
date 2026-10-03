@@ -734,28 +734,13 @@
         <Logo active={stirred} idle={!stirred} warm class="size-10" />
       </div>
       <h1 class="mt-6 font-medium text-foreground">Start a conversation</h1>
-      <p class="mb-6 max-w-90 text-pretty">
+      <p class="max-w-90 text-pretty">
         {#if branch.head?.branch}
           Conversations work on {branch.head.branch}.
         {:else}
           Conversations work in {project?.name}.
         {/if}
       </p>
-      {@const agents = startingAgents()}
-      {#if agents.length === 2 && agents[0] !== agents[1]}
-        <div class="flex gap-2">
-          <Button disabled={!loaded || busy} onclick={() => addPane('claude')}>
-            Claude
-          </Button>
-          <Button disabled={!loaded || busy} onclick={() => addPane('codex')}>
-            Codex
-          </Button>
-        </div>
-      {:else}
-        <Button disabled={!loaded || busy} onclick={() => addPane()}>
-          New conversation
-        </Button>
-      {/if}
     </Card.Root>
   {/if}
 {/snippet}
