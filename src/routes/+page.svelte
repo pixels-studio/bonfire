@@ -737,10 +737,10 @@
       {#if agents.length === 2 && agents[0] !== agents[1]}
         <div class="flex gap-2">
           <Button disabled={!loaded || busy} onclick={() => addPane('claude')}>
-            Claude Session
+            Claude
           </Button>
           <Button disabled={!loaded || busy} onclick={() => addPane('codex')}>
-            Codex Session
+            Codex
           </Button>
         </div>
       {:else}
