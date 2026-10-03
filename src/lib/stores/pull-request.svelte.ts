@@ -17,11 +17,13 @@ class PullRequestStore {
   pushing = $state(false);
   /** What the checked-out branch holds, looked up while it has no open pull request. */
   draft = $state<PullRequestDraft>();
-  /** On the base branch with work to push, where a pull request makes no sense. */
+  /** On the base branch, where a pull request makes no sense. */
+  readonly onBase = $derived(
+    !!this.draft && this.draft.branch === this.draft.base,
+  );
+  /** On the base branch with work to push. */
   readonly pushable = $derived(
-    !!this.draft &&
-      this.draft.branch === this.draft.base &&
-      this.draft.uncommitted + this.draft.unpushed > 0,
+    this.onBase && this.draft!.uncommitted + this.draft!.unpushed > 0,
   );
   /** Whether a pull request is being written and opened for the branch. */
   creating = $state(false);

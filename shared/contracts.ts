@@ -693,11 +693,11 @@ export type API = {
   };
 };
 
-/** The request/response half of the API that main implements (no push subscriptions). */
+/** The request/response half of the API that main implements (no push subscriptions or preload-only helpers). */
 export type Backend = {
   [Group in keyof API]: {
     [
-      Method in keyof API[Group] as Method extends `on${string}`
+      Method in keyof API[Group] as Method extends `on${string}` | 'pathForFile'
         ? never
         : Method
     ]: API[Group][Method];
