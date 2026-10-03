@@ -64,11 +64,6 @@ export type ServiceOptions = AssistantHost & {
   send: (channel: string, data: unknown) => void;
   openHelp: () => Promise<void>;
   isFullscreen: () => boolean;
-  windowControls: {
-    minimize: () => void;
-    toggleFullscreen: () => void;
-    close: () => void;
-  };
   copyText: (text: string) => void;
   /** Shows a system notification; the shell decides whether it is worth interrupting for. */
   notify: (notice: Notice) => void;
@@ -741,11 +736,6 @@ export function services(options: ServiceOptions) {
     limits: { get: async (provider) => assistants[provider].limits() },
     navigation: { help: options.openHelp },
     app: { isFullscreen: async () => options.isFullscreen() },
-    window: {
-      minimize: async () => options.windowControls.minimize(),
-      toggleFullscreen: async () => options.windowControls.toggleFullscreen(),
-      close: async () => options.windowControls.close(),
-    },
     terminal: {
       create: async (input) => terminals.create(input),
       write: async (id, data) => terminals.write(id, data),

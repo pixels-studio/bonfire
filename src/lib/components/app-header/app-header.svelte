@@ -1,7 +1,6 @@
 <script lang="ts">
   import type { Snippet } from 'svelte';
   import { Button } from '$lib/components/ui/button';
-  import WindowControls from './window-controls.svelte';
   import Icon from '$lib/components/icon/icon.svelte';
   import {
     WORKSPACE_VIEWS,
@@ -57,6 +56,7 @@
     view = $bindable(),
     viewsDisabled,
     location,
+    trafficLightInset = false,
   }: {
     onaddPane: () => void;
     panes: { id: string; status: PaneStatus; inView: boolean }[];
@@ -67,6 +67,8 @@
     viewsDisabled: boolean;
     /** The project and workspace pickers. */
     location: Snippet;
+    /** Keeps the pickers clear of the native window controls. */
+    trafficLightInset?: boolean;
   } = $props();
 
   const paneActions = $derived<HeaderAction[]>([
@@ -96,7 +98,10 @@
 {/snippet}
 
 <header
-  class="sticky top-0 z-20 flex min-h-13 shrink-0 items-center justify-between bg-background py-2 pr-4 app-drag"
+  class={cn(
+    'sticky top-0 z-20 flex min-h-13 shrink-0 items-center justify-between bg-background py-2 pr-4 app-drag',
+    trafficLightInset && 'pl-11',
+  )}
 >
   <div class="flex min-w-0 items-center gap-2 app-no-drag">
     <div class="flex min-w-0 items-center gap-2">
@@ -152,11 +157,5 @@
         <Icon name={item.icon} />
       </Button>
     {/each}
-    <div
-      class="h-4 w-0.5 rounded-full bg-foreground/20"
-      role="separator"
-      aria-orientation="vertical"
-    ></div>
-    <WindowControls />
   </div>
 </header>

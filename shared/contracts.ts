@@ -458,9 +458,6 @@ export const requests = {
   'tokens.get': z.tuple([tokenRange]),
   'navigation.help': z.tuple([]),
   'app.isFullscreen': z.tuple([]),
-  'window.minimize': z.tuple([]),
-  'window.toggleFullscreen': z.tuple([]),
-  'window.close': z.tuple([]),
   'terminal.create': z.tuple([terminalCreateInput]),
   'terminal.write': z.tuple([id, z.string().max(1_048_576)]),
   'terminal.resize': z.tuple([
@@ -589,12 +586,6 @@ export type API = {
     get(range: TokenRange): Promise<TokenStats>;
   };
   navigation: { help(): Promise<void> };
-  /** Controls for the frameless main window. */
-  window: {
-    minimize(): Promise<void>;
-    toggleFullscreen(): Promise<void>;
-    close(): Promise<void>;
-  };
   app: {
     isFullscreen(): Promise<boolean>;
     onFullscreenChange(listener: (fullscreen: boolean) => void): Unsubscribe;
