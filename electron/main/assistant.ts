@@ -11,6 +11,7 @@ import type {
   ConversationMessage,
   ModelOption,
   Pane,
+  ProviderLimits,
   Session,
   Usage,
 } from '../../shared/contracts';
@@ -116,6 +117,8 @@ export abstract class ChatAssistant {
   private flushTimer?: NodeJS.Timeout;
   private modelCache?: { at: number; models: ModelOption[] };
   private modelRequest?: Promise<ModelOption[]>;
+  private limitsCache?: { at: number; limits: ProviderLimits };
+  private limitsRequest?: Promise<ProviderLimits>;
 
   constructor(
     private readonly store: Store,
@@ -125,6 +128,7 @@ export abstract class ChatAssistant {
 
   protected abstract run(turn: Turn): Promise<void>;
   protected abstract listModels(): Promise<ModelOption[]>;
+  protected abstract readLimits(): Promise<ProviderLimits>;
 
   async pickAttachment(paneId: string): Promise<Attachment | null> {
     this.paneFor(paneId);
@@ -270,6 +274,20 @@ export abstract class ChatAssistant {
       })
       .finally(() => (this.modelRequest = undefined));
     return this.modelRequest;
+  }
+
+  /** Plan limits of the signed-in account. Cached briefly so reopening the popover is cheap. */
+  limits(): Promise<ProviderLimits> {
+    const LIMITS_TTL_MS = 30_000;
+    if (this.limitsCache && Date.now() - this.limitsCache.at < LIMITS_TTL_MS)
+      return Promise.resolve(this.limitsCache.limits);
+    this.limitsRequest ??= this.readLimits()
+      .then((limits) => {
+        this.limitsCache = { at: Date.now(), limits };
+        return limits;
+      })
+      .finally(() => (this.limitsRequest = undefined));
+    return this.limitsRequest;
   }
 
   close() {

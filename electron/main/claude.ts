@@ -4,6 +4,7 @@ import type {
   ModelInfo,
   Options,
   PermissionResult,
+  Query,
   SDKAssistantMessage,
   SDKMessage,
   SDKUserMessage,
@@ -12,6 +13,7 @@ import type {
   ConversationMessage,
   ModelOption,
   Pane,
+  ProviderLimits,
   Question,
   ReasoningEffort,
   Usage,
@@ -22,6 +24,7 @@ import {
   type PendingAttachment,
   type Turn,
 } from './assistant';
+import { claudeLimits } from './limits';
 import { clipOutput, partialToolInput, toolInput } from './tool-text';
 
 type ContentBlock = SDKAssistantMessage['message']['content'][number];
@@ -51,7 +54,7 @@ type StreamState = {
 
 const EXTENDED_CONTEXT_MODEL = 'sonnet-1m';
 const EXTENDED_CONTEXT_BETA = 'context-1m-2025-08-07';
-const MODEL_LIST_TIMEOUT_MS = 20_000;
+const SESSION_TIMEOUT_MS = 20_000;
 
 // Newer models omit thinking text unless a summarized display is requested.
 const THINKING: Record<ReasoningEffort, Options['thinking']> = {
@@ -99,10 +102,28 @@ export class ClaudeAssistant extends ChatAssistant {
     for await (const event of run) this.handle(turn, event, state);
   }
 
-  protected async listModels(): Promise<ModelOption[]> {
+  protected listModels(): Promise<ModelOption[]> {
+    return this.withIdleSession(async (run) =>
+      modelOptions(await run.supportedModels()),
+    );
+  }
+
+  protected readLimits(): Promise<ProviderLimits> {
+    return this.withIdleSession(async (run) =>
+      claudeLimits(
+        await run.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET({
+          skipBehaviors: true,
+        }),
+      ),
+    );
+  }
+
+  /** Runs `use` against a session that never receives a message, as the handshake alone answers it. */
+  private async withIdleSession<Result>(
+    use: (run: Query) => Promise<Result>,
+  ): Promise<Result> {
     const { query } = await import('@anthropic-ai/claude-agent-sdk');
     const controller = new AbortController();
-    // The model list comes with the session handshake, so no message is ever sent.
     const idle = (async function* (): AsyncGenerator<SDKUserMessage> {
       await new Promise((resolve) =>
         controller.signal.addEventListener('abort', resolve),
@@ -112,9 +133,9 @@ export class ClaudeAssistant extends ChatAssistant {
       prompt: idle,
       options: { abortController: controller, tools: [], settingSources: [] },
     });
-    const timeout = setTimeout(() => controller.abort(), MODEL_LIST_TIMEOUT_MS);
+    const timeout = setTimeout(() => controller.abort(), SESSION_TIMEOUT_MS);
     try {
-      return modelOptions(await run.supportedModels());
+      return await use(run);
     } finally {
       clearTimeout(timeout);
       controller.abort();

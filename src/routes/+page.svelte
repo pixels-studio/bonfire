@@ -92,14 +92,22 @@
     return PANE_SIZES.find(({ value }) => value === size)?.class;
   }
 
+  /**
+   * Scrolls only the strip. `scrollIntoView` would also scroll the page
+   * itself, pushing the header off-screen.
+   */
   function scrollToPane(paneId: string) {
-    paneStrip
-      ?.querySelector<HTMLElement>(`[data-pane-id="${CSS.escape(paneId)}"]`)
-      ?.scrollIntoView({
-        behavior: scrollBehavior(),
-        block: 'nearest',
-        inline: 'start',
-      });
+    const pane = paneStrip?.querySelector<HTMLElement>(
+      `[data-pane-id="${CSS.escape(paneId)}"]`,
+    );
+    if (!paneStrip || !pane) return;
+    const offset =
+      pane.getBoundingClientRect().left -
+      paneStrip.getBoundingClientRect().left;
+    paneStrip.scrollTo({
+      left: paneStrip.scrollLeft + offset,
+      behavior: scrollBehavior(),
+    });
   }
 
   /** Applies a new visible pane order locally, then saves it. */

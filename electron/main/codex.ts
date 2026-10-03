@@ -1,6 +1,7 @@
 import type {
   AssistantEvent,
   ModelOption,
+  ProviderLimits,
   Question,
 } from '../../shared/contracts';
 import { errorMessage } from '../../shared/domain';
@@ -20,6 +21,7 @@ import type {
   TurnStatus,
   UserInputQuestion,
 } from './codex-protocol';
+import { codexLimits, type CodexRateLimits } from './limits';
 import { CodexRpc, codexCommand, type CodexCommand } from './codex-rpc';
 import type { Store } from './persistence';
 
@@ -143,6 +145,13 @@ export class CodexAssistant extends ChatAssistant {
       cursor = page.nextCursor;
     } while (cursor);
     return models;
+  }
+
+  protected async readLimits(): Promise<ProviderLimits> {
+    const rpc = await this.connect();
+    return codexLimits(
+      await rpc.request<CodexRateLimits>('account/rateLimits/read', undefined),
+    );
   }
 
   close() {

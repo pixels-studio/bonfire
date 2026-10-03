@@ -18,6 +18,7 @@ import { Filesystem } from './filesystem';
 import * as git from './git';
 import { Store } from './persistence';
 import { Terminals } from './terminal';
+import { TokenUsage } from './token-usage';
 
 export type ServiceOptions = {
   dataDirectory: string;
@@ -31,6 +32,7 @@ export type ServiceOptions = {
 export function services(options: ServiceOptions) {
   const store = new Store(options.dataDirectory);
   const files = new Filesystem();
+  const tokenUsage = new TokenUsage();
   const terminals = new Terminals(store, (event) =>
     options.send(events.terminalData, event),
   );
@@ -213,6 +215,8 @@ export function services(options: ServiceOptions) {
       pickAttachment: async (paneId) =>
         assistantFor(paneId).pickAttachment(paneId),
     },
+    tokens: { get: async (range) => tokenUsage.stats(range) },
+    limits: { get: async (provider) => assistants[provider].limits() },
     navigation: { help: options.openHelp },
     app: { isFullscreen: async () => options.isFullscreen() },
     terminal: {

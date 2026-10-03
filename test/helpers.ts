@@ -1,4 +1,9 @@
-import type { AssistantEvent, ModelOption, Pane } from '../shared/contracts';
+import type {
+  AssistantEvent,
+  ModelOption,
+  Pane,
+  ProviderLimits,
+} from '../shared/contracts';
 import { ChatAssistant, type Turn } from '../electron/main/assistant';
 import type { Store } from '../electron/main/persistence';
 
@@ -54,6 +59,9 @@ export class ScriptedAssistant extends ChatAssistant {
   }
   protected async listModels(): Promise<ModelOption[]> {
     return [{ value: 'a', label: 'A' }];
+  }
+  protected async readLimits(): Promise<ProviderLimits> {
+    return { provider: 'claude', windows: [] };
   }
   // Exposes the protected helpers a provider would use.
   tools = {
