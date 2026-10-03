@@ -5,7 +5,7 @@ import {
   renameSync,
   writeFileSync,
 } from 'node:fs';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import {
   stateSchema,
   type Preferences,
@@ -32,6 +32,7 @@ export class Store {
       ? stateSchema.parse(migrate(JSON.parse(readFileSync(this.file, 'utf8'))))
       : emptyState();
     settleInterrupted(this.state);
+    settleWorkspaces(this.state);
   }
 
   /** Schedules a write; changes made before it fires share it. */
@@ -73,6 +74,56 @@ function settleInterrupted(state: State) {
     for (const message of pane.messages)
       if (message.status === 'streaming')
         message.status = message.kind === 'tool' ? 'failed' : 'complete';
+}
+
+/**
+ * Brings state from before workspaces in line: each project gets a single default
+ * workspace on its folder, panes that never picked a project are dropped, and a
+ * workspace is chosen to show.
+ */
+export function settleWorkspaces(state: State) {
+  for (const project of state.projects) {
+    const defaults = state.sessions
+      .filter(
+        (session) =>
+          session.projectId === project.id &&
+          session.name === undefined &&
+          session.worktreePath === project.path,
+      )
+      .sort((first, second) => second.lastOpenedAt - first.lastOpenedAt);
+    const [kept, ...extra] = defaults;
+    const merged = new Set(extra.map(({ id }) => id));
+    for (const pane of state.panes)
+      if (pane.sessionId && merged.has(pane.sessionId))
+        pane.sessionId = kept.id;
+    state.sessions = state.sessions.filter(({ id }) => !merged.has(id));
+  }
+  // Worktrees made before workspaces had names are named after their folder.
+  for (const session of state.sessions) {
+    const project = state.projects.find(({ id }) => id === session.projectId);
+    if (session.name === undefined && session.worktreePath !== project?.path)
+      session.name = basename(session.worktreePath).slice(0, 8);
+  }
+  const orphans = new Set(
+    state.panes
+      .filter((pane) => !pane.sessionId && !pane.messages.length)
+      .map(({ id }) => id),
+  );
+  state.panes = state.panes.filter(({ id }) => !orphans.has(id));
+  state.layout.paneIds = state.layout.paneIds.filter((id) => !orphans.has(id));
+  for (const pane of state.panes) if (!pane.sessionId) pane.archived = true;
+
+  const current = state.sessions.find(
+    ({ id }) => id === state.currentSessionId,
+  );
+  if (current && !current.archived) return;
+  const open = state.sessions
+    .filter((session) => !session.archived)
+    .sort((first, second) => second.lastOpenedAt - first.lastOpenedAt);
+  const next =
+    open.find(({ projectId }) => projectId === state.lastProjectId) ?? open[0];
+  state.currentSessionId = next?.id;
+  if (next) state.lastProjectId = next.projectId;
 }
 
 /** Layout used to live on each session; the last-open session's panes become the workspace. */

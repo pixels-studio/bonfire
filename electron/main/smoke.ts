@@ -86,14 +86,13 @@ export async function smoke(
     path: repository,
     createdAt: Date.now(),
     lastOpenedAt: Date.now(),
+    settings: {},
   };
   backend.store.state.projects.push(project);
   backend.store.save();
 
-  const session = await api.sessions.create({
-    projectId: project.id,
-    title: 'Implement Meeting Link',
-  });
+  await api.workspaces.openProject(project.id);
+  const session = backend.store.session(backend.store.state.currentSessionId!);
   assert.equal(session.worktreePath, repository);
   assert.equal(
     await readFile(join(session.worktreePath, 'hello.txt'), 'utf8'),
@@ -143,6 +142,27 @@ export async function smoke(
   assert.notEqual(secondTerminalId, firstTerminalId);
   assert.equal(
     (await api.terminal.snapshot(firstTerminalId)).exitCode,
+    undefined,
+  );
+
+  const tabTerminalId = await api.terminal.create({
+    sessionId: session.id,
+    type: 'shell',
+  });
+  const secondTabTerminalId = await api.terminal.create({
+    sessionId: session.id,
+    type: 'shell',
+    tab: 1,
+  });
+  assert.notEqual(secondTabTerminalId, tabTerminalId);
+  assert.equal(
+    await api.terminal.create({ sessionId: session.id, type: 'shell', tab: 1 }),
+    secondTabTerminalId,
+  );
+  await api.terminal.close(session.id, 1);
+  await assert.rejects(() => api.terminal.snapshot(secondTabTerminalId));
+  assert.equal(
+    (await api.terminal.snapshot(tabTerminalId)).exitCode,
     undefined,
   );
 

@@ -2,33 +2,23 @@
   import { Button } from '$lib/components/ui/button';
   import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
   import Icon from '$lib/components/icon/icon.svelte';
-  import { PANE_SIZES, type PaneSize, type PaneView } from '$lib/panes';
+  import { PANE_SIZES, type PaneSize } from '$lib/panes';
   import type { HTMLButtonAttributes } from 'svelte/elements';
-
-  const TOOL_VIEWS: { view: PaneView; icon: string; label: string }[] = [
-    { view: 'files', icon: 'folder', label: 'Open file preview' },
-    { view: 'terminal', icon: 'terminal', label: 'Open terminal' },
-    { view: 'diff', icon: 'code', label: 'Open code diff' },
-  ];
 
   let {
     title,
-    view = $bindable(),
-    toolsDisabled,
     dragHandle,
     onresize,
-    onarchive,
+    onclose,
   }: {
     title: string;
-    view: PaneView;
-    toolsDisabled: boolean;
     dragHandle: HTMLButtonAttributes;
     onresize: (size: PaneSize) => void;
-    onarchive: () => void;
+    onclose: () => void;
   } = $props();
 </script>
 
-<header class="flex shrink-0 items-center justify-between gap-3 px-4 py-3">
+<header class="flex shrink-0 items-center justify-between gap-3 py-3 pr-2 pl-4">
   <div class="flex min-w-0 items-center gap-1">
     <button
       type="button"
@@ -39,30 +29,17 @@
     >
       <Icon name="drag" class="size-5" />
     </button>
-    <span class="truncate text-sm" {title}>{title}</span>
+    <span class="truncate text-sm font-semibold" {title}>{title}</span>
   </div>
-  <div class="flex items-center gap-2">
-    {#each TOOL_VIEWS as tool (tool.view)}
-      <Button
-        variant="ghost"
-        size="icon"
-        class="text-muted-foreground aria-pressed:bg-muted aria-pressed:text-foreground"
-        aria-label={tool.label}
-        aria-pressed={view === tool.view}
-        disabled={toolsDisabled}
-        onclick={() => (view = view === tool.view ? 'chat' : tool.view)}
-      >
-        <Icon name={tool.icon} />
-      </Button>
-    {/each}
+  <div class="flex items-center gap-3">
     <DropdownMenu.Root>
       <DropdownMenu.Trigger>
         {#snippet child({ props })}
           <Button
             {...props}
-            variant="ghost"
+            variant="secondary"
             size="icon"
-            class="text-muted-foreground"
+            class="text-muted-foreground hover:text-foreground"
             aria-label="Conversation options"
           >
             <Icon name="dots" />
@@ -78,8 +55,8 @@
           </DropdownMenu.Item>
         {/each}
         <DropdownMenu.Separator />
-        <DropdownMenu.Item variant="destructive" onclick={onarchive}>
-          <Icon name="archive" /> Archive
+        <DropdownMenu.Item variant="destructive" onclick={onclose}>
+          <Icon name="close" /> Close
         </DropdownMenu.Item>
       </DropdownMenu.Content>
     </DropdownMenu.Root>

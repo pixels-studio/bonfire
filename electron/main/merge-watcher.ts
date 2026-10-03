@@ -10,6 +10,8 @@ export type MergeWatcherOptions = {
   github: Pick<GitHub, 'lastMerge'>;
   /** Whether the pane is mid-turn; those are left alone until they finish. */
   isBusy: (paneId: string) => boolean;
+  /** Whether the pane's project archives on merge; the app-wide preference by default. */
+  enabled?: (pane: Pane) => boolean;
   archive: (paneIds: string[]) => void;
 };
 
@@ -30,8 +32,8 @@ export class MergeWatcher {
   }
 
   async check() {
-    const { store, github, isBusy, archive } = this.options;
-    if (!store.preferences.archiveOnMerge || this.checking) return;
+    const { github, isBusy, archive } = this.options;
+    if (this.checking) return;
     this.checking = true;
     try {
       const merged: string[] = [];
@@ -54,7 +56,11 @@ export class MergeWatcher {
 
   /** Open conversations grouped by repository and branch, leaving out default branches. */
   private async watchedBranches() {
-    const { store, isBusy } = this.options;
+    const {
+      store,
+      isBusy,
+      enabled = () => store.preferences.archiveOnMerge,
+    } = this.options;
     const groups = new Map<
       string,
       { cwd: string; branch: string; panes: Pane[] }
@@ -64,7 +70,8 @@ export class MergeWatcher {
         pane.archived ||
         !pane.workBranch ||
         !pane.sessionId ||
-        isBusy(pane.id)
+        isBusy(pane.id) ||
+        !enabled(pane)
       )
         continue;
       const cwd = store.session(pane.sessionId).worktreePath;

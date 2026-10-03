@@ -23,7 +23,7 @@ import {
   isDefaultTitle,
   titleFrom,
 } from '../../shared/domain';
-import { readImage, type ImageMimeType } from './attachments';
+import { PendingAttachments, type PendingAttachment } from './attachments';
 import { Cached } from './cached';
 import type { Store } from './persistence';
 import { MAX_TOOL_OUTPUT } from './tool-text';
@@ -37,12 +37,11 @@ export type AssistantHost = {
   chooseImage: ChooseImage;
   /** Opens a URL in the user's browser, such as a sign-in page. */
   openUrl: (url: string) => Promise<void>;
+  /** Shared between providers, so a draft's attachments can go to either; each has its own otherwise. */
+  attachments?: PendingAttachments;
 };
 
-export type PendingAttachment = Attachment & { paneId: string } & (
-    | { kind: 'image'; path: string; mimeType: ImageMimeType; base64: string }
-    | { kind: 'text'; text: string }
-  );
+export type { PendingAttachment };
 
 /** A message from the user, as handed to a provider. */
 export type Prompt = { text: string; attachments: PendingAttachment[] };
@@ -96,7 +95,6 @@ const INTERRUPT_GRACE_MS = 5_000;
 const LOGIN_TIMEOUT_MS = 3 * 60_000;
 /** How long generating a short text, such as a title, may take. */
 const GENERATE_TIMEOUT_MS = 60_000;
-const PASTED_TEXT_NAME = 'Pasted text.txt';
 
 export function assistantMessage(
   id: string,
@@ -131,7 +129,6 @@ export abstract class ChatAssistant {
   protected abstract readonly provider: AssistantProvider;
   private readonly turns = new Map<string, ActiveTurn>();
   private readonly queues = new Map<string, Queued[]>();
-  private readonly attachments = new Map<string, PendingAttachment>();
   private readonly requests = new Map<
     string,
     {
@@ -156,12 +153,15 @@ export abstract class ChatAssistant {
     60_000,
   );
   private login?: AbortController;
+  private readonly attachments: PendingAttachments;
 
   constructor(
     protected readonly store: Store,
     private readonly emit: (event: AssistantEvent) => void,
     protected readonly host: AssistantHost,
-  ) {}
+  ) {
+    this.attachments = host.attachments ?? new PendingAttachments();
+  }
 
   protected abstract run(turn: Turn): Promise<void>;
   protected abstract listModels(): Promise<ModelOption[]>;
@@ -179,35 +179,13 @@ export abstract class ChatAssistant {
   async pickAttachment(paneId: string): Promise<Attachment | null> {
     this.paneFor(paneId);
     const file = await this.host.chooseImage();
-    if (!file) return null;
-    const { size, previewUrl, mimeType, base64 } = await readImage(file.path);
-    const attachment = { id: randomUUID(), name: file.name, size, previewUrl };
-    this.attachments.set(attachment.id, {
-      ...attachment,
-      paneId,
-      kind: 'image',
-      path: file.path,
-      mimeType,
-      base64,
-    });
-    return attachment;
+    return file ? this.attachments.addImage(paneId, file) : null;
   }
 
   /** Holds pasted text as an attachment, so a long paste doesn't flood the message. */
   attachText(paneId: string, text: string): Attachment {
     this.paneFor(paneId);
-    const attachment = {
-      id: randomUUID(),
-      name: PASTED_TEXT_NAME,
-      size: Buffer.byteLength(text),
-    };
-    this.attachments.set(attachment.id, {
-      ...attachment,
-      paneId,
-      kind: 'text',
-      text,
-    });
-    return attachment;
+    return this.attachments.addText(paneId, text);
   }
 
   /**
@@ -237,7 +215,7 @@ export abstract class ChatAssistant {
 
   unqueue(paneId: string, queuedId: string) {
     const input = this.takeQueued(paneId, queuedId);
-    for (const id of input.attachmentIds) this.attachments.delete(id);
+    this.attachments.delete(input.attachmentIds);
   }
 
   /** Stops the turn: interrupts the provider if it can, otherwise kills it. Queued messages stay. */
@@ -258,8 +236,7 @@ export abstract class ChatAssistant {
   discard(paneId: string) {
     this.cancel(paneId);
     this.queues.delete(paneId);
-    for (const [id, attachment] of this.attachments)
-      if (attachment.paneId === paneId) this.attachments.delete(id);
+    this.attachments.discard(paneId);
   }
 
   /** Whether a turn is running in the pane. */
@@ -394,7 +371,7 @@ export abstract class ChatAssistant {
       clearTimeout(turn.graceTimer);
       this.denyRequests(pane.id);
       this.settle(pane, turn.errored);
-      for (const { id } of attachments) this.attachments.delete(id);
+      this.attachments.delete(attachments.map(({ id }) => id));
       this.turns.delete(pane.id);
       this.store.save();
       if (turn.errored)
@@ -416,7 +393,7 @@ export abstract class ChatAssistant {
     const prompt = { text: input.text, attachments };
     await steer(prompt);
     this.publishPrompt(turn.pane, prompt);
-    for (const { id } of attachments) this.attachments.delete(id);
+    this.attachments.delete(attachments.map(({ id }) => id));
   }
 
   private enqueue(pane: Pane, input: AssistantSendInput) {
@@ -461,12 +438,7 @@ export abstract class ChatAssistant {
   }
 
   private attachmentsFor(pane: Pane, ids: string[]) {
-    return ids.map((id) => {
-      const attachment = this.attachments.get(id);
-      if (attachment?.paneId !== pane.id)
-        throw Error('Attachment is no longer available');
-      return attachment;
-    });
+    return this.attachments.get(pane.id, ids);
   }
 
   private publishPrompt(pane: Pane, { text, attachments }: Prompt) {

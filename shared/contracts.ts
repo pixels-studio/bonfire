@@ -62,8 +62,12 @@ export const preferencesSchema = z.object({
   providers: z.object({ claude: z.boolean(), codex: z.boolean() }),
   claudeOutputStyle: z.string().min(1).max(100),
   codexPersonality,
-  /** Archives a pane once the pull request for its branch is merged, through the `gh` CLI. */
+  /** Archives a workspace once the pull request for its branch is merged, through the `gh` CLI. */
   archiveOnMerge: z.boolean(),
+  /** Prefix for the branches new workspaces get, such as `bonfire/`. */
+  branchPrefix: z.string().max(100),
+  /** Deletes a workspace's branch along with its folder when it is archived. */
+  deleteBranchOnArchive: z.boolean(),
   /** Keeps the system awake while a turn runs. */
   caffeinate: z.boolean(),
 });
@@ -93,7 +97,7 @@ export const attachmentSchema = z.object({
 
 export const paneSchema = z.object({
   id,
-  /** Unset until a project is chosen; locked once the conversation starts. */
+  /** The workspace the pane works in. Only panes saved before workspaces existed lack one. */
   sessionId: id.optional(),
   type: paneType,
   title: z.string(),
@@ -109,14 +113,43 @@ export const paneSchema = z.object({
   archived: z.boolean().default(false),
 });
 
+/**
+ * A workspace: one folder and branch that any number of panes share. Each project has one
+ * default workspace on the project folder itself; every other workspace is a git worktree.
+ */
 export const sessionSchema = z.object({
   id,
   projectId: id,
+  /** What the workspace is about, from its first conversation; empty until then. */
   title: z.string(),
+  /** The worktree's short name, such as `europa`. Unset for the default workspace. */
+  name: z.string().optional(),
   branch: z.string().optional(),
+  /** The branch or ref the workspace started from. */
+  baseBranch: z.string().optional(),
   worktreePath: z.string(),
+  /** First of the ten ports set aside for the workspace's servers. */
+  port: z.number().int().optional(),
   createdAt: z.number(),
   lastOpenedAt: z.number(),
+  archived: z.boolean().default(false),
+  /** Panes that were open when the workspace was archived, reopened if it is restored. */
+  archivedPaneIds: z.array(id).optional(),
+});
+
+/** Per-project settings. Unset overrides follow the app-wide preference of the same name. */
+export const projectSettingsSchema = z.object({
+  /** The branch new workspaces start from; empty picks the remote's default branch. */
+  baseBranch: z.string().max(200),
+  /** Runs in a new workspace's folder once it is created, such as `npm ci`. */
+  setupScript: z.string().max(20_000),
+  /** Runs in a workspace's folder before it is archived. */
+  archiveScript: z.string().max(20_000),
+  /** Gitignore-style patterns of ignored files copied into new workspaces; empty means `.env*`. */
+  filesToCopy: z.string().max(5_000),
+  branchPrefix: z.string().max(100).optional(),
+  archiveOnMerge: z.boolean().optional(),
+  deleteBranchOnArchive: z.boolean().optional(),
 });
 
 export const projectSchema = z.object({
@@ -125,6 +158,7 @@ export const projectSchema = z.object({
   path: z.string(),
   createdAt: z.number(),
   lastOpenedAt: z.number(),
+  settings: projectSettingsSchema.partial().default({}),
 });
 
 export const stateSchema = z.object({
@@ -135,6 +169,8 @@ export const stateSchema = z.object({
   layout: z.object({ paneIds: z.array(id) }),
   /** Default project for new panes. */
   lastProjectId: id.optional(),
+  /** The workspace on screen. */
+  currentSessionId: id.optional(),
   settings: z.object({
     lastProvider: assistantProvider.optional(),
     lastModels: z
@@ -171,13 +207,42 @@ export const assistantRespondInput = z.object({
     .optional(),
 });
 
+export const MAX_SHELL_TABS = 5;
+
+/**
+ * Terminals belong to a workspace, and optionally to one of its panes. `setup` attaches to
+ * the output of the workspace's setup script rather than starting anything. A workspace's
+ * own shells are told apart by `tab`, which defaults to the first.
+ */
 export const terminalCreateInput = z.object({
   sessionId: id,
-  paneId: id,
-  type: z.enum(['claude', 'codex', 'shell']),
+  paneId: id.optional(),
+  type: z.enum(['claude', 'codex', 'shell', 'setup']),
+  tab: z
+    .number()
+    .int()
+    .min(0)
+    .max(MAX_SHELL_TABS - 1)
+    .optional(),
+});
+
+export const workspaceCreateInput = z.object({
+  /** Owns the attachments picked before the workspace and its first pane exist. */
+  draftId: id,
+  projectId: id,
+  /** The branch or ref to start from. */
+  base: z.string().trim().min(1).max(200),
+  /** The first message; empty creates the workspace without starting a conversation. */
+  text: z.string().trim().max(100_000),
+  attachmentIds: z.array(id).max(8).default([]),
+  provider: assistantProvider,
+  model: z.string().max(100),
+  reasoningEffort,
 });
 
 export type Project = z.infer<typeof projectSchema>;
+export type ProjectSettings = z.infer<typeof projectSettingsSchema>;
+export type WorkspaceCreateInput = z.infer<typeof workspaceCreateInput>;
 export type Session = z.infer<typeof sessionSchema>;
 export type Pane = z.infer<typeof paneSchema>;
 export type PaneType = z.infer<typeof paneType>;
@@ -326,6 +391,16 @@ export type TerminalEvent = {
 export type FileChangeEvent = { sessionId: string; path: string };
 /** Panes the app archived on its own, such as when their pull request merged. */
 export type PanesClosedEvent = { paneIds: string[]; reason: 'merged' };
+/** How a workspace's setup script is getting on. */
+export type SetupStatus = 'running' | 'succeeded' | 'failed';
+export type SetupEvent = { sessionId: string; status: SetupStatus };
+/** What archiving a workspace left behind. */
+export type ArchiveResult = {
+  /** The folder had uncommitted changes, so it was kept rather than deleted. */
+  keptFolder: boolean;
+  /** Why the archive script failed, when it did. */
+  scriptError?: string;
+};
 
 /** IPC argument schemas, keyed by `group.method`. Every channel is validated in main. */
 export const requests = {
@@ -342,11 +417,21 @@ export const requests = {
   'projects.add': z.tuple([]),
   'projects.remove': z.tuple([id]),
   'projects.favicon': z.tuple([id]),
-  'sessions.create': z.tuple([
-    z.object({ projectId: id, title: z.string().trim().min(1).max(120) }),
+  'projects.updateSettings': z.tuple([id, projectSettingsSchema.partial()]),
+  'projects.defaultBase': z.tuple([id]),
+  'workspaces.create': z.tuple([workspaceCreateInput]),
+  'workspaces.open': z.tuple([id]),
+  'workspaces.openProject': z.tuple([id]),
+  'workspaces.archive': z.tuple([id]),
+  'workspaces.restore': z.tuple([id]),
+  'workspaces.pickAttachment': z.tuple([id]),
+  'workspaces.attachText': z.tuple([
+    id,
+    z.string().min(1).max(MAX_TEXT_ATTACHMENT_LENGTH),
   ]),
+  'workspaces.discardDraft': z.tuple([id]),
+  'workspaces.setupStatus': z.tuple([]),
   'panes.add': z.tuple([paneType.optional(), z.string().max(100).optional()]),
-  'panes.setProject': z.tuple([id, id]),
   'panes.retype': z.tuple([id, assistantProvider, z.string().max(100)]),
   'panes.archive': z.tuple([id]),
   'panes.reorder': z.tuple([z.array(id).max(100)]),
@@ -366,6 +451,9 @@ export const requests = {
   'tokens.get': z.tuple([tokenRange]),
   'navigation.help': z.tuple([]),
   'app.isFullscreen': z.tuple([]),
+  'window.minimize': z.tuple([]),
+  'window.toggleFullscreen': z.tuple([]),
+  'window.close': z.tuple([]),
   'terminal.create': z.tuple([terminalCreateInput]),
   'terminal.write': z.tuple([id, z.string().max(1_048_576)]),
   'terminal.resize': z.tuple([
@@ -374,10 +462,17 @@ export const requests = {
     z.number().int().min(1).max(300),
   ]),
   'terminal.snapshot': z.tuple([id]),
+  'terminal.close': z.tuple([
+    id,
+    z
+      .number()
+      .int()
+      .min(0)
+      .max(MAX_SHELL_TABS - 1),
+  ]),
   'git.status': z.tuple([id]),
   'git.branches': z.tuple([id]),
   'git.diff': z.tuple([id, filePath]),
-  'git.checkout': z.tuple([id, z.string().trim().min(1).max(200)]),
   'filesystem.list': z.tuple([id, filePath]),
   'filesystem.readFile': z.tuple([id, filePath]),
   'filesystem.watch': z.tuple([id]),
@@ -393,6 +488,9 @@ export const events = {
   focusPane: 'window:focus-pane',
   notificationsBlocked: 'window:notifications-blocked',
   panesClosed: 'panes:closed',
+  workspaceSetup: 'workspaces:setup',
+  /** Main changed workspaces on its own, such as renaming a branch; the renderer reloads state. */
+  workspacesChanged: 'workspaces:changed',
   githubSignInEnd: 'github:sign-in-end',
 } as const;
 
@@ -424,17 +522,38 @@ export type API = {
     onSignInEnd(listener: (end: GithubSignInEnd) => void): Unsubscribe;
   };
   projects: {
+    /** Adds a folder and opens its default workspace. */
     add(): Promise<Project | null>;
     remove(id: string): Promise<void>;
     favicon(id: string): Promise<string | null>;
+    updateSettings(
+      id: string,
+      patch: Partial<ProjectSettings>,
+    ): Promise<Project>;
+    /** The branch new workspaces start from unless another is picked. */
+    defaultBase(id: string): Promise<string>;
   };
-  sessions: {
-    create(input: { projectId: string; title: string }): Promise<Session>;
+  workspaces: {
+    /** Creates a worktree on a new branch with one pane, opens it, and sends `text` if given. */
+    create(input: WorkspaceCreateInput): Promise<Session>;
+    open(id: string): Promise<void>;
+    /** Opens the project's most recent workspace. */
+    openProject(projectId: string): Promise<void>;
+    archive(id: string): Promise<ArchiveResult>;
+    restore(id: string): Promise<void>;
+    /** Attachments for a workspace that doesn't exist yet, owned by the dialog's draft id. */
+    pickAttachment(draftId: string): Promise<Attachment | null>;
+    attachText(draftId: string, text: string): Promise<Attachment>;
+    discardDraft(draftId: string): Promise<void>;
+    /** Setup scripts that ran since the app started, by workspace. */
+    setupStatus(): Promise<Record<string, SetupStatus>>;
+    onSetup(listener: (event: SetupEvent) => void): Unsubscribe;
+    onChanged(listener: () => void): Unsubscribe;
   };
   panes: {
+    /** Adds a pane to the open workspace. */
     add(type?: PaneType, model?: string): Promise<Pane>;
     onClosed(listener: (event: PanesClosedEvent) => void): Unsubscribe;
-    setProject(id: string, projectId: string): Promise<Pane>;
     retype(id: string, type: AssistantProvider, model: string): Promise<Pane>;
     archive(id: string): Promise<void>;
     /** Reorders the given panes among the layout slots they already occupy. */
@@ -462,6 +581,12 @@ export type API = {
     get(range: TokenRange): Promise<TokenStats>;
   };
   navigation: { help(): Promise<void> };
+  /** Controls for the frameless main window. */
+  window: {
+    minimize(): Promise<void>;
+    toggleFullscreen(): Promise<void>;
+    close(): Promise<void>;
+  };
   app: {
     isFullscreen(): Promise<boolean>;
     onFullscreenChange(listener: (fullscreen: boolean) => void): Unsubscribe;
@@ -475,13 +600,15 @@ export type API = {
     write(id: string, data: string): Promise<void>;
     resize(id: string, cols: number, rows: number): Promise<void>;
     snapshot(id: string): Promise<TerminalSnapshot>;
+    /** Ends the workspace's shell in this tab. */
+    close(sessionId: string, tab: number): Promise<void>;
     onData(listener: (event: TerminalEvent) => void): Unsubscribe;
   };
   git: {
     status(sessionId: string): Promise<GitStatus>;
+    /** Local and remote-tracking branches, to start a workspace from. */
     branches(projectId: string): Promise<string[]>;
     diff(sessionId: string, path: string): Promise<string>;
-    checkout(sessionId: string, branch: string): Promise<void>;
   };
   filesystem: {
     list(sessionId: string, path: string): Promise<Entry[]>;

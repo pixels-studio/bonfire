@@ -1,6 +1,15 @@
+<script lang="ts" module>
+  import type { Attachment } from '$shared/contracts';
+
+  /** Where picked and pasted attachments are held until the message is sent. */
+  export type AttachmentSource = {
+    pick: () => Promise<Attachment | null>;
+    text: (text: string) => Promise<Attachment>;
+  };
+</script>
+
 <script lang="ts">
   import ArrowUp from '@lucide/svelte/icons/arrow-up';
-  import Square from '@lucide/svelte/icons/square';
   import X from '@lucide/svelte/icons/x';
   import type { Snippet } from 'svelte';
   import { Button } from '$lib/components/ui/button';
@@ -9,10 +18,10 @@
   import AttachmentView from '../conversation/attachment-view.svelte';
   import { preferences } from '$lib/stores/preferences.svelte';
   import { toast } from '$lib/stores/toast.svelte';
+  import { cn } from '$lib/utils';
   import { LONG_TEXT_THRESHOLD, errorMessage } from '$shared/domain';
   import {
     MAX_TEXT_ATTACHMENT_LENGTH,
-    type Attachment,
     type FollowUpMode,
   } from '$shared/contracts';
 
@@ -27,18 +36,35 @@
   };
 
   let {
-    paneId,
+    paneId = '',
     label,
-    running,
-    disabled,
+    running = false,
+    disabled = false,
+    placeholder,
+    attach = {
+      pick: () => window.bonfire.assistant.pickAttachment(paneId),
+      text: (text) => window.bonfire.assistant.attachText(paneId, text),
+    },
+    allowEmpty = false,
+    submitLabel = 'Send message',
+    textareaClass,
+    autofocus = false,
     onsend,
     children,
   }: {
-    paneId: string;
+    /** The pane the composer sends to; unset when it starts something new. */
+    paneId?: string;
     label: string;
-    running: boolean;
+    running?: boolean;
     /** Blocks sending, e.g. until a project is chosen. */
-    disabled: boolean;
+    disabled?: boolean;
+    placeholder?: string;
+    attach?: AttachmentSource;
+    /** Lets an empty message be sent, for a composer that starts something rather than chats. */
+    allowEmpty?: boolean;
+    submitLabel?: string;
+    textareaClass?: string;
+    autofocus?: boolean;
     /**
      * Sends the message; `followUp` says how, when a turn is already running. A
      * rejection hands the draft back to the composer.
@@ -59,7 +85,7 @@
   /** Sends the draft. While a turn runs, `invert` swaps queueing and steering for this message. */
   async function send(invert = false) {
     const text = prompt.trim();
-    if (!text || disabled) return;
+    if ((!text && !allowEmpty) || disabled) return;
     const draft = { prompt, attachments };
     prompt = '';
     attachments = [];
@@ -82,7 +108,7 @@
 
   async function pickAttachment() {
     try {
-      const attachment = await window.bonfire.assistant.pickAttachment(paneId);
+      const attachment = await attach.pick();
       if (attachment) attachments.push(attachment);
     } catch (cause) {
       toast(errorMessage(cause), { variant: 'error' });
@@ -117,7 +143,7 @@
       return;
     }
     try {
-      attachments.push(await window.bonfire.assistant.attachText(paneId, text));
+      attachments.push(await attach.text(text));
     } catch (cause) {
       toast(errorMessage(cause), { variant: 'error' });
     }
@@ -156,14 +182,16 @@
       {/each}
     </div>
   {/if}
+  <!-- svelte-ignore a11y_autofocus -->
   <textarea
-    class="block min-h-15 w-full resize-none bg-transparent text-sm outline-none placeholder:text-muted-foreground"
+    class={cn(
+      'block min-h-15 w-full resize-none bg-transparent text-sm outline-none placeholder:text-muted-foreground',
+      textareaClass,
+    )}
     aria-label={label}
-    placeholder={disabled
-      ? 'Select a project to start'
-      : running
-        ? FOLLOW_UP_PLACEHOLDERS[followUp]
-        : 'Ask for changes'}
+    {autofocus}
+    placeholder={placeholder ??
+      (running ? FOLLOW_UP_PLACEHOLDERS[followUp] : 'Ask for changes')}
     bind:value={prompt}
     onkeydown={handleKeydown}
     onpaste={handlePaste}></textarea>
@@ -196,7 +224,7 @@
           aria-label="Stop response"
           onclick={() => window.bonfire.assistant.cancel(paneId)}
         >
-          <Square />
+          <Icon name="stop" />
         </Button>
       {/if}
       {#if !running || prompt.trim()}
@@ -204,8 +232,8 @@
           type="submit"
           size="icon"
           class="bg-brand text-white hover:bg-brand/80"
-          aria-label={running ? FOLLOW_UP_ACTIONS[followUp] : 'Send message'}
-          disabled={disabled || !prompt.trim()}
+          aria-label={running ? FOLLOW_UP_ACTIONS[followUp] : submitLabel}
+          disabled={disabled || (!prompt.trim() && !allowEmpty)}
         >
           <ArrowUp />
         </Button>
