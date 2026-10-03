@@ -31,7 +31,7 @@
       </Button>
     {/snippet}
   </DropdownMenu.Trigger>
-  <DropdownMenu.Content align="end">
+  <DropdownMenu.Content align="end" class="w-56">
     <DropdownMenu.Label>Pane size</DropdownMenu.Label>
     {#each PANE_SIZES as size (size.value)}
       <DropdownMenu.Item onclick={() => onresize(size.value)}>
