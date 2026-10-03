@@ -39,3 +39,30 @@ export function formatBytes(bytes: number) {
 export function formatTokens(tokens: number) {
   return tokens >= 1000 ? `${(tokens / 1000).toFixed(1)}k` : String(tokens);
 }
+
+/** When a limit resets: "in 42m" or "in 5h 9m" within a day, otherwise the day and time. */
+export function formatReset(resetsAt: number, now = Date.now()) {
+  const minutes = Math.max(0, Math.round((resetsAt - now) / 60_000));
+  if (minutes < 60) return `in ${minutes}m`;
+  if (minutes < 24 * 60)
+    return `in ${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+  return new Date(resetsAt).toLocaleString(undefined, {
+    weekday: 'short',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
+
+const COMPACT = new Intl.NumberFormat('en', {
+  notation: 'compact',
+  maximumSignificantDigits: 3,
+});
+
+/** A count in three significant digits: 933M, 504K, 3.21M. */
+export function formatCompact(count: number) {
+  return COMPACT.format(count);
+}
+
+export function formatUsd(amount: number) {
+  return amount.toLocaleString('en-US', { style: 'currency', currency: 'USD' });
+}

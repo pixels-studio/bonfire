@@ -53,7 +53,7 @@ async function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 820,
-    minWidth: 850,
+    minWidth: 1280,
     minHeight: 550,
     backgroundColor: '#111111',
     title: 'Bonfire',

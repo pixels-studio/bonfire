@@ -99,6 +99,15 @@
   }
 }
 
+/* Diagonal hatching laid over a solid fill, for a technical look. */
+@utility bar-stripes {
+  background-image: repeating-linear-gradient(
+    -45deg,
+    rgb(0 0 0 / 22%) 0 3px,
+    transparent 3px 6px
+  );
+}
+
 @utility scrollbar-none {
   scrollbar-width: none;
 }
@@ -109,7 +118,7 @@
   }
 
   body {
-    @apply min-h-135 min-w-190 overflow-hidden bg-background font-sans text-foreground antialiased;
+    @apply min-h-135 min-w-320 overflow-hidden bg-background font-sans text-foreground antialiased;
   }
 
   button:not(:disabled) {

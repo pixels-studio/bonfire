@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { Button } from '$lib/components/ui/button';
   import Icon from '$lib/components/icon/icon.svelte';
+  import InsightsPopover from '$lib/components/insights/insights-popover.svelte';
   import type { PaneStatus } from '$lib/pane-status.svelte';
   import { cn } from '$lib/utils';
 
@@ -69,11 +70,13 @@
       onclick: () => onaddPane(),
     },
   ]);
-  const utilityActions: HeaderAction[] = [
-    { icon: 'help', label: 'Help', onclick: () => onhelp() },
-    { icon: 'insights', label: 'Insights' },
-    { icon: 'settings', label: 'Settings' },
-  ];
+  const UTILITY_BUTTON_CLASS = 'text-muted-foreground hover:text-foreground';
+  const helpAction: HeaderAction = {
+    icon: 'help',
+    label: 'Help',
+    onclick: () => onhelp(),
+  };
+  const settingsAction: HeaderAction = { icon: 'settings', label: 'Settings' };
 
   onMount(() => {
     window.bonfire.app.isFullscreen().then((value) => (fullscreen = value));
@@ -135,9 +138,8 @@
     {/if}
   </div>
   <div class="flex items-center gap-3 app-no-drag">
-    {@render actionButtons(
-      utilityActions,
-      'text-muted-foreground hover:text-foreground',
-    )}
+    {@render actionButtons([helpAction], UTILITY_BUTTON_CLASS)}
+    <InsightsPopover class={UTILITY_BUTTON_CLASS} />
+    {@render actionButtons([settingsAction], UTILITY_BUTTON_CLASS)}
   </div>
 </header>

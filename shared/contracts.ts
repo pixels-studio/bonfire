@@ -190,6 +190,49 @@ export type ModelOption = {
   label: string;
   contextWindow?: number;
 };
+/** One rate-limit window of a provider's plan, such as the weekly limit. */
+export type LimitWindow = {
+  id: string;
+  label: string;
+  /** Share of the window already used, 0-100. */
+  usedPercent: number;
+  /** When the window resets, in milliseconds since the epoch. */
+  resetsAt?: number;
+};
+export type ProviderLimits = {
+  provider: AssistantProvider;
+  /** Subscription plan, such as "max" or "pro". */
+  plan?: string;
+  windows: LimitWindow[];
+};
+export const tokenRange = z.enum(['today', '7d', '30d']);
+export type TokenRange = z.infer<typeof tokenRange>;
+/** One line of a token breakdown: a model, or a day. */
+export type TokenRow = {
+  /** The model name, or the day as `YYYY-MM-DD`. */
+  key: string;
+  provider?: AssistantProvider;
+  tokens: number;
+  /** USD; null when no price is known. */
+  cost: number | null;
+};
+export type TokenStats = {
+  range: TokenRange;
+  totals: {
+    /** Every token sent or produced, including those written to the cache. */
+    processed: number;
+    cachedInput: number;
+    /** Input that was neither read from nor written to the cache. */
+    uncachedInput: number;
+    output: number;
+    /** USD saved by reading input from cache instead of paying the full input price. */
+    cacheSavings: number;
+  };
+  /** Processed tokens per provider and bucket: one per hour for today, one per day otherwise. `at` is in milliseconds. */
+  series: ({ at: number } & Record<AssistantProvider, number>)[];
+  models: TokenRow[];
+  days: TokenRow[];
+};
 export type Change = { path: string; index: string; worktree: string };
 export type GitStatus = { isGit: boolean; branch: string; changes: Change[] };
 export type Entry = { name: string; directory: boolean };
@@ -226,6 +269,8 @@ export const requests = {
   'assistant.respond': z.tuple([assistantRespondInput]),
   'assistant.snapshot': z.tuple([id]),
   'assistant.models': z.tuple([assistantProvider]),
+  'limits.get': z.tuple([assistantProvider]),
+  'tokens.get': z.tuple([tokenRange]),
   'navigation.help': z.tuple([]),
   'app.isFullscreen': z.tuple([]),
   'terminal.create': z.tuple([terminalCreateInput]),
@@ -282,6 +327,14 @@ export type API = {
     snapshot(paneId: string): Promise<AssistantSnapshot>;
     models(provider: AssistantProvider): Promise<ModelOption[]>;
     onEvent(listener: (event: AssistantEvent) => void): Unsubscribe;
+  };
+  limits: {
+    /** Plan limits for a provider; rejects when signed out or on an API key. */
+    get(provider: AssistantProvider): Promise<ProviderLimits>;
+  };
+  tokens: {
+    /** Token usage read from the Claude and Codex session logs on this machine. */
+    get(range: TokenRange): Promise<TokenStats>;
   };
   navigation: { help(): Promise<void> };
   app: {
