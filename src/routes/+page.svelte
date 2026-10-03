@@ -55,6 +55,7 @@
   const statuses = new PaneStatuses();
   let inView = $state<Record<string, boolean>>({});
   let sizeOverrides = $state<Record<string, PaneSize>>({});
+  let viewSizes = $state<Partial<Record<WorkspaceView, PaneSize>>>({});
   const drag = new PaneDrag(() => paneStrip, reorder);
   let view = $state<WorkspaceView>();
   let panel = $state<AppPanel>();
@@ -534,7 +535,12 @@
               {/each}
               {#if session && trailingView}
                 <section
-                  class={cn(SECTION_CLASS, autoSizeClass)}
+                  class={cn(
+                    SECTION_CLASS,
+                    viewSizes[trailingView]
+                      ? sizeClass(viewSizes[trailingView])
+                      : autoSizeClass,
+                  )}
                   in:paneWidth
                   out:paneWidth
                   onintroend={() => void revealEdge('end')}
@@ -543,6 +549,8 @@
                     {session}
                     view={trailingView}
                     setup={setupStatuses[session.id]}
+                    onresize={(size) => (viewSizes[trailingView] = size)}
+                    onclose={() => (view = undefined)}
                   />
                 </section>
               {/if}

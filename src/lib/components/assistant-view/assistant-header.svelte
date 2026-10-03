@@ -1,8 +1,7 @@
 <script lang="ts">
-  import { Button } from '$lib/components/ui/button';
-  import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
   import Icon from '$lib/components/icon/icon.svelte';
-  import { PANE_SIZES, type PaneSize } from '$lib/panes';
+  import PaneMenu from '$lib/components/pane-menu/pane-menu.svelte';
+  import type { PaneSize } from '$lib/panes';
   import type { HTMLButtonAttributes } from 'svelte/elements';
 
   let {
@@ -31,34 +30,5 @@
     </button>
     <span class="truncate text-sm font-semibold" {title}>{title}</span>
   </div>
-  <div class="flex items-center gap-3">
-    <DropdownMenu.Root>
-      <DropdownMenu.Trigger>
-        {#snippet child({ props })}
-          <Button
-            {...props}
-            variant="secondary"
-            size="icon"
-            class="text-muted-foreground hover:text-foreground"
-            aria-label="Conversation options"
-          >
-            <Icon name="dots" />
-          </Button>
-        {/snippet}
-      </DropdownMenu.Trigger>
-      <DropdownMenu.Content align="end">
-        <DropdownMenu.Label>Pane size</DropdownMenu.Label>
-        {#each PANE_SIZES as size (size.value)}
-          <DropdownMenu.Item onclick={() => onresize(size.value)}>
-            <Icon name={size.icon} />
-            {size.label}
-          </DropdownMenu.Item>
-        {/each}
-        <DropdownMenu.Separator />
-        <DropdownMenu.Item variant="destructive" onclick={onclose}>
-          <Icon name="close" /> Close
-        </DropdownMenu.Item>
-      </DropdownMenu.Content>
-    </DropdownMenu.Root>
-  </div>
+  <PaneMenu label="Conversation options" {onresize} {onclose} />
 </header>

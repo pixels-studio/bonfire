@@ -1,5 +1,7 @@
 <script lang="ts">
   import { Button } from '$lib/components/ui/button';
+  import { Checkbox } from '$lib/components/ui/checkbox';
+  import * as RadioGroup from '$lib/components/ui/radio-group';
   import type { AssistantRequest, Question } from '$shared/contracts';
 
   let {
@@ -16,12 +18,20 @@
 
   let selected = $state<Record<string, string[]>>({});
   let typed = $state<Record<string, string>>({});
+  /** Questions whose "Other" row is picked; a question without options is always answering in its own words. */
+  let other = $state<Record<string, boolean>>({});
+
+  /** Stands in for the "Other" row as a radio value, which an option label can't collide with. */
+  const OTHER = '\0other';
+
+  const isOther = ({ id, options }: Question) => !options.length || !!other[id];
 
   /** What the user chose for a question; typed text replaces a single choice and joins multiple. */
-  function answerTo({ id, multiple }: Question) {
+  function answerTo(question: Question) {
+    const { id, multiple } = question;
     const text = typed[id]?.trim();
     const chosen = selected[id] ?? [];
-    if (!text) return chosen;
+    if (!text || !isOther(question)) return chosen;
     return multiple ? [...chosen, text] : [text];
   }
 
@@ -32,7 +42,12 @@
         ? [...chosen, label]
         : chosen.filter((item) => item !== label)
       : [label];
-    if (!multiple) typed[id] = '';
+    if (!multiple) other[id] = false;
+  }
+
+  function chooseOther({ id, multiple }: Question, on: boolean) {
+    other[id] = on;
+    if (!multiple) selected[id] = [];
   }
 
   const answered = $derived(
@@ -50,25 +65,39 @@
   }
 </script>
 
+{#snippet tag(label: string)}
+  <span
+    class="shrink-0 rounded-md bg-muted px-1.5 py-0.5 text-xs text-muted-foreground"
+    >{label}</span
+  >
+{/snippet}
+
+{#snippet choice(label: string, description?: string)}
+  <span class="flex min-w-0 flex-col">
+    <span>{label}</span>
+    {#if description}
+      <span class="text-muted-foreground">{description}</span>
+    {/if}
+  </span>
+{/snippet}
+
 <section
-  class="flex flex-col gap-3 rounded-xl border border-warning/40 bg-surface-raised p-4 text-sm"
+  class="flex min-w-0 flex-col gap-3 rounded-xl bg-composer wrap-anywhere p-4 text-sm"
   aria-labelledby={`request-${request.id}`}
 >
   {#if request.kind === 'approval'}
     <p id={`request-${request.id}`} class="font-medium">{request.title}</p>
     {#if request.detail}
       <pre
-        class="max-h-40 overflow-auto rounded-lg border border-border bg-background p-3 font-mono text-xs/5 whitespace-pre-wrap text-foreground/80 wrap-anywhere">{request.detail}</pre>
+        class="max-h-40 overflow-auto rounded-lg bg-foreground/8 px-2.5 py-2 font-mono text-xs/5 whitespace-pre-wrap text-foreground/80 wrap-anywhere">{request.detail}</pre>
     {/if}
     {#if request.reason}
       <p class="text-muted-foreground">{request.reason}</p>
     {/if}
-    <div class="flex flex-wrap gap-2">
-      <Button size="sm" onclick={() => onrespond({ decision: 'allow' })}>
-        Allow
-      </Button>
+    <div class="flex flex-wrap items-center justify-between gap-2">
       {#if request.canRemember}
         <Button
+          class="rounded-full"
           size="sm"
           variant="secondary"
           onclick={() => onrespond({ decision: 'allow-session' })}
@@ -76,13 +105,23 @@
           Allow for this session
         </Button>
       {/if}
-      <Button
-        size="sm"
-        variant="ghost"
-        onclick={() => onrespond({ decision: 'deny' })}
-      >
-        Deny
-      </Button>
+      <div class="ml-auto flex gap-2">
+        <Button
+          class="rounded-full"
+          size="sm"
+          variant="secondary"
+          onclick={() => onrespond({ decision: 'deny' })}
+        >
+          Deny
+        </Button>
+        <Button
+          class="rounded-full"
+          size="sm"
+          onclick={() => onrespond({ decision: 'allow' })}
+        >
+          Allow
+        </Button>
+      </div>
     </div>
   {:else}
     <form
@@ -93,60 +132,99 @@
         if (answered) submit();
       }}
     >
-      <p id={`request-${request.id}`} class="font-medium">Answer to continue</p>
+      <div class="flex items-baseline justify-between gap-2">
+        <p id={`request-${request.id}`} class="font-medium">
+          {request.questions.length === 1
+            ? request.questions[0].question
+            : 'Answer to continue'}
+        </p>
+        {#if request.questions.length === 1}
+          {@render tag(request.questions[0].header)}
+        {/if}
+      </div>
       {#each request.questions as question (question.id)}
         <fieldset class="flex min-w-0 flex-col gap-2">
-          <legend class="mb-1 flex items-baseline gap-2">
-            <span
-              class="rounded-md bg-muted px-1.5 py-0.5 text-xs text-muted-foreground"
-              >{question.header}</span
-            >
+          <legend
+            class={request.questions.length === 1
+              ? 'sr-only'
+              : 'mb-1 flex w-full items-baseline justify-between gap-2'}
+          >
             <span>{question.question}</span>
+            {#if request.questions.length > 1}
+              {@render tag(question.header)}
+            {/if}
           </legend>
-          {#each question.options as option (option.label)}
+          {#if question.multiple}
+            {#each question.options as option (option.label)}
+              <label class="flex cursor-pointer items-start gap-2">
+                <Checkbox
+                  class="mt-0.5"
+                  checked={!!selected[question.id]?.includes(option.label)}
+                  onCheckedChange={(on) => choose(question, option.label, on)}
+                />
+                {@render choice(option.label, option.description)}
+              </label>
+            {/each}
             <label class="flex cursor-pointer items-start gap-2">
-              <input
-                class="mt-1 accent-brand"
-                type={question.multiple ? 'checkbox' : 'radio'}
-                name={`${request.id}-${question.id}`}
-                checked={selected[question.id]?.includes(option.label) &&
-                  !(typed[question.id]?.trim() && !question.multiple)}
-                onchange={(event) =>
-                  choose(question, option.label, event.currentTarget.checked)}
+              <Checkbox
+                class="mt-0.5"
+                checked={!!other[question.id]}
+                onCheckedChange={(on) => chooseOther(question, on)}
               />
-              <span class="flex min-w-0 flex-col">
-                <span>{option.label}</span>
-                {#if option.description}
-                  <span class="text-muted-foreground">{option.description}</span
-                  >
-                {/if}
-              </span>
+              {@render choice('Other')}
             </label>
-          {/each}
-          <input
-            class="rounded-lg border border-border bg-background px-3 py-1.5 outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring/60"
-            type="text"
-            placeholder={question.options.length ? 'Other…' : 'Your answer'}
-            aria-label={`${question.header}: other answer`}
-            bind:value={typed[question.id]}
-            oninput={() => {
-              if (!question.multiple && typed[question.id]?.trim())
-                selected[question.id] = [];
-            }}
-          />
+          {:else if question.options.length}
+            <RadioGroup.Root
+              value={other[question.id]
+                ? OTHER
+                : (selected[question.id]?.[0] ?? '')}
+              onValueChange={(value) =>
+                value === OTHER
+                  ? chooseOther(question, true)
+                  : choose(question, value, true)}
+            >
+              {#each question.options as option (option.label)}
+                <label class="flex cursor-pointer items-start gap-2">
+                  <RadioGroup.Item class="mt-0.5" value={option.label} />
+                  {@render choice(option.label, option.description)}
+                </label>
+              {/each}
+              <label class="flex cursor-pointer items-start gap-2">
+                <RadioGroup.Item class="mt-0.5" value={OTHER} />
+                {@render choice('Other')}
+              </label>
+            </RadioGroup.Root>
+          {/if}
+          {#if isOther(question)}
+            <input
+              class="rounded-lg border border-border bg-transparent px-3 py-1.5 outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring/60"
+              type="text"
+              placeholder="Your answer"
+              aria-label={`${question.header}: your answer`}
+              bind:value={typed[question.id]}
+              {@attach (node) => {
+                if (question.options.length) node.focus();
+              }}
+            />
+          {/if}
         </fieldset>
       {/each}
-      <div class="flex gap-2">
-        <Button type="submit" size="sm" disabled={!answered}>Send answer</Button
-        >
+      <div class="flex justify-end gap-2">
         <Button
+          class="rounded-full"
           type="button"
           size="sm"
-          variant="ghost"
+          variant="secondary"
           onclick={() => onrespond({ answers: {} })}
         >
           Skip
         </Button>
+        <Button
+          class="rounded-full"
+          type="submit"
+          size="sm"
+          disabled={!answered}>Send answer</Button
+        >
       </div>
     </form>
   {/if}
