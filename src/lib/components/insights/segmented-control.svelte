@@ -6,6 +6,7 @@
     items,
     value = $bindable(),
     variant = 'pill',
+    compact = false,
     class: className,
     ...restProps
   }: {
@@ -13,6 +14,8 @@
     value: string;
     /** `pill` is a container with a sliding pill; `text` is bare labels, the active one brighter. */
     variant?: 'pill' | 'text';
+    /** For the `pill` variant: 28px tall, the height of an icon button. */
+    compact?: boolean;
     class?: string;
     'aria-label'?: string;
   } = $props();
@@ -36,6 +39,7 @@
     <Tabs.List
       class={cn(
         'relative inline-grid auto-cols-fr grid-flow-col rounded-full bg-secondary p-0.5',
+        compact && 'h-7',
         className,
       )}
       {...restProps}
@@ -50,7 +54,10 @@
       {#each items as item (item.value)}
         <Tabs.Trigger
           value={item.value}
-          class="relative rounded-full px-3 py-1 text-muted-foreground outline-none transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-ring/60 data-[state=active]:text-foreground"
+          class={cn(
+            'relative rounded-full px-3 py-1 text-muted-foreground outline-none transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-ring/60 data-[state=active]:text-foreground',
+            compact && 'py-0',
+          )}
         >
           {item.label}
         </Tabs.Trigger>

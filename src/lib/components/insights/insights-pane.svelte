@@ -6,7 +6,6 @@
   import type { PanelProps } from '$lib/panes';
   import { limits } from '$lib/stores/limits.svelte';
   import SegmentedControl from './segmented-control.svelte';
-  import TokenRangeSelect from './token-range-select.svelte';
   import TokensTab from './tokens-tab.svelte';
   import UsageTab from './usage-tab.svelte';
 
@@ -34,13 +33,10 @@
     {onclose}
   >
     {#snippet actions()}
-      {#if tab === 'tokens'}
-        <TokenRangeSelect />
-      {/if}
       <SegmentedControl
         items={TABS}
         bind:value={tab}
-        variant="text"
+        compact
         aria-label="Insights"
       />
     {/snippet}
