@@ -55,10 +55,10 @@ export class PaneDrag {
     const widths: Record<string, number> = {};
     const centers: Record<string, number> = {};
     for (const section of strip.querySelectorAll<HTMLElement>(
-      '[data-pane-id]',
+      '[data-pane-id], [data-panel]',
     )) {
       const rect = section.getBoundingClientRect();
-      const paneId = section.dataset.paneId!;
+      const paneId = (section.dataset.paneId ?? section.dataset.panel)!;
       widths[paneId] = rect.width;
       centers[paneId] = rect.left - base + rect.width / 2;
     }

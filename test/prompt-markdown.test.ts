@@ -146,3 +146,19 @@ test('attachment chips are sent as their markers, in place', () => {
     'see [[attachment:abc-1]] here\n\n- [[attachment:def]]',
   );
 });
+
+test('skills are sent as their markers, in place', () => {
+  const skill = (name: string): PromptNode => ({
+    type: 'skill',
+    attrs: { name },
+  });
+  assert.equal(
+    promptMarkdown(
+      doc(
+        p(text('use '), skill('review'), text(' on this')),
+        p(skill('plugin:plan'), text(' first')),
+      ),
+    ),
+    'use [[skill:review]] on this\n[[skill:plugin:plan]] first',
+  );
+});

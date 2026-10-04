@@ -3,7 +3,8 @@
   import Search from '@lucide/svelte/icons/search';
   import * as Card from '$lib/components/ui/card';
   import { Input } from '$lib/components/ui/input';
-  import Icon from '$lib/components/icon/icon.svelte';
+  import PaneHeader from '$lib/components/pane-header/pane-header.svelte';
+  import type { PanelProps } from '$lib/panes';
   import {
     SHORTCUTS,
     SHORTCUT_GROUPS,
@@ -12,6 +13,8 @@
   } from '$lib/shortcuts';
   import { isMac } from '$lib/utils';
   import ShortcutKeys from './shortcut-keys.svelte';
+
+  let { dragHandle, onresize, onclose }: PanelProps = $props();
 
   let query = $state('');
   let search = $state<HTMLInputElement | null>(null);
@@ -45,12 +48,13 @@
   role="region"
   aria-label="Keyboard shortcuts"
 >
-  <header class="flex h-13.5 shrink-0 items-center px-4">
-    <h2 class="flex items-center gap-2 text-sm font-semibold">
-      <Icon name="keyboard" class="text-muted-foreground" />
-      Keyboard shortcuts
-    </h2>
-  </header>
+  <PaneHeader
+    title="Keyboard shortcuts"
+    icon="keyboard"
+    {dragHandle}
+    {onresize}
+    {onclose}
+  />
   <div class="shrink-0 px-4 pb-4">
     <div class="relative">
       <Search

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { assistantMessage } from '../electron/main/assistant';
 import { skillText } from '../electron/main/claude';
+import { promptParts, promptText, withoutMarkers } from '../shared/domain';
 import { scripted, sendInput, sleep } from './helpers';
 
 const streaming = (id: string, text = '') =>
@@ -420,4 +421,30 @@ test('Claude runs the first skill as a command and is told about the rest', () =
     skillText('fix it', [{ name: 'a' }, { name: 'b' }, { name: 'c' }]),
     '/a fix it Also use the /b, /c skills.',
   );
+});
+
+test('skills placed in the text are sent as /name, with the first still leading', () => {
+  assert.equal(
+    skillText('use [[skill:a]] on this', [{ name: 'a' }]),
+    '/a use /a on this',
+  );
+  assert.equal(skillText('[[skill:a]] on this', [{ name: 'a' }]), '/a on this');
+  assert.equal(skillText('[[skill:ab]] x', [{ name: 'a' }]), '/a /ab x');
+});
+
+test('a prompt shows its skills where they were typed', () => {
+  assert.equal(
+    promptText('use [[skill:a]] on this', ['a', 'b']),
+    '/b use [[skill:a]] on this',
+  );
+  assert.equal(
+    withoutMarkers('use [[skill:a]] on [[attachment:x-1]] now'),
+    'use /a on now',
+  );
+  assert.deepEqual(promptParts('use [[skill:p:a]] on [[attachment:x]]'), [
+    { text: 'use ' },
+    { skill: 'p:a' },
+    { text: ' on ' },
+    { attachmentId: 'x' },
+  ]);
 });

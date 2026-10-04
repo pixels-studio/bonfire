@@ -5,7 +5,7 @@
   import ToolView from './tool-view.svelte';
   import WorkGroup from './work-group.svelte';
   import type { ConversationMessage } from '$shared/contracts';
-  import { splitPrompt } from '$shared/domain';
+  import { promptParts } from '$shared/domain';
 
   let {
     messages,
@@ -35,7 +35,7 @@
     new Set(
       prompt.flatMap((item) =>
         item.kind === 'text'
-          ? splitPrompt(item.text).flatMap((part) =>
+          ? promptParts(item.text).flatMap((part) =>
               'attachmentId' in part ? [part.attachmentId] : [],
             )
           : [],
@@ -81,13 +81,18 @@
         <AttachmentChip name={message.text} previewUrl={message.previewUrl} />
       </p>
     {/if}
-  {:else if message.kind === 'text' && message.role === 'user' && splitPrompt(message.text).some((part) => 'attachmentId' in part)}
-    <!-- The chips sit in the text where the user put them. -->
+  {:else if message.kind === 'text' && message.role === 'user' && promptParts(message.text).some((part) => !('text' in part))}
+    {@const parts = promptParts(message.text)}
+    <!-- Chips and skills sit in the text where the user put them. -->
     <p
-      class="w-fit max-w-4/5 self-end rounded-3xl bg-surface-raised px-4 py-2 text-sm leading-7 whitespace-pre-wrap text-foreground wrap-anywhere @lg:max-w-100"
+      class={[
+        'w-fit max-w-4/5 self-end rounded-3xl bg-surface-raised px-4 py-2 text-sm whitespace-pre-wrap text-foreground wrap-anywhere @lg:max-w-100',
+        parts.some((part) => 'attachmentId' in part) && 'leading-7',
+      ]}
     >
-      {#each splitPrompt(message.text) as part}
-        {#if 'attachmentId' in part}
+      {#each parts as part}
+        {#if 'skill' in part}<span class="text-brand">/{part.skill}</span
+          >{:else if 'attachmentId' in part}
           {@const attachment = promptAttachments.get(part.attachmentId)}
           {#if attachment}
             <AttachmentChip

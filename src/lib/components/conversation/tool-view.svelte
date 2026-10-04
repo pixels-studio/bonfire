@@ -1,11 +1,14 @@
 <script lang="ts">
-  import { toolCall, toolIcon } from '$lib/tools';
+  import { toolCall, toolColor, toolIcon } from '$lib/tools';
   import { cn } from '$lib/utils';
   import type { ConversationMessage } from '$shared/contracts';
 
   let { message }: { message: ConversationMessage } = $props();
   const tool = $derived(toolCall(message));
   const Glyph = $derived(toolIcon(tool.name));
+  const color = $derived(
+    message.status === 'failed' ? 'text-destructive' : toolColor(tool.name),
+  );
   const shell = $derived(tool.name === 'Bash');
   const streaming = $derived(message.status === 'streaming');
 </script>
@@ -14,12 +17,12 @@
   <summary
     class="flex w-full min-w-0 cursor-pointer list-none items-center gap-2 [&::-webkit-details-marker]:hidden"
   >
-    <Glyph class="size-4 shrink-0 text-muted-foreground" />
+    <Glyph class={cn('size-4 shrink-0', color)} />
     <span
       class={cn(
         'shrink-0',
+        color,
         streaming && 'shimmer-text',
-        message.status === 'failed' && 'text-destructive',
       )}
     >
       {tool.name}

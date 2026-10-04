@@ -26,6 +26,27 @@ const ICONS: Record<string, typeof Wrench | typeof ReadIcon | typeof EditIcon | 
   TodoWrite: ListTodo,
 };
 
+/** Full class names so Tailwind can see them; each tool family gets its own hue for icon and label. */
+const COLORS: Record<string, string> = {
+  Bash: 'text-emerald-600 dark:text-emerald-400',
+  Read: 'text-sky-600 dark:text-sky-400',
+  Edit: 'text-amber-600 dark:text-amber-400',
+  MultiEdit: 'text-amber-600 dark:text-amber-400',
+  Write: 'text-orange-600 dark:text-orange-400',
+  NotebookEdit: 'text-amber-600 dark:text-amber-400',
+  Grep: 'text-violet-600 dark:text-violet-400',
+  Glob: 'text-fuchsia-600 dark:text-fuchsia-400',
+  WebFetch: 'text-cyan-600 dark:text-cyan-400',
+  WebSearch: 'text-teal-600 dark:text-teal-400',
+  Task: 'text-pink-600 dark:text-pink-400',
+  Agent: 'text-pink-600 dark:text-pink-400',
+  TodoWrite: 'text-lime-600 dark:text-lime-400',
+};
+
+export function toolColor(name: string) {
+  return COLORS[name] ?? 'text-muted-foreground';
+}
+
 export function toolIcon(name: string) {
   return ICONS[name] ?? Wrench;
 }

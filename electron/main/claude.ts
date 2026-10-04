@@ -25,6 +25,7 @@ import type {
   Skill,
   Usage,
 } from '../../shared/contracts';
+import { withSkillNames } from '../../shared/domain';
 import {
   ChatAssistant,
   assistantMessage,
@@ -551,15 +552,19 @@ function stopped(): PermissionResult {
 
 /**
  * The message text with its skills. The CLI runs a skill named at the start of a message,
- * so the first leads; the model loads any others with its Skill tool.
+ * so the first leads (unless the user already typed it there); the model loads any others
+ * with its Skill tool. Skills placed in the text read as the `/name` they were typed as.
  */
 export function skillText(text: string, skills: Pick<Skill, 'name'>[]) {
+  const named = withSkillNames(text);
   const [first, ...rest] = skills;
-  if (!first) return text;
+  if (!first) return named;
+  const lead = `/${first.name}`;
+  const leads = named.startsWith(lead) && !named.charAt(lead.length).trim();
   const also = rest.length
     ? `Also use the ${rest.map(({ name }) => `/${name}`).join(', ')} skill${rest.length > 1 ? 's' : ''}.`
     : '';
-  return [`/${first.name}`, text, also].filter(Boolean).join(' ');
+  return [leads ? '' : lead, named, also].filter(Boolean).join(' ');
 }
 
 /** One block of a user message's content: text or an image. */

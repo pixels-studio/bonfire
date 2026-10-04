@@ -15,6 +15,9 @@ export type PaneProps = {
   onrename: (title: string) => void;
 };
 
+/** What every panel (activity, insights, settings, shortcuts) is given; it has a fixed title. */
+export type PanelProps = Omit<PaneProps, 'onrename'>;
+
 /** The tool panes, in the order the add menu lists them. */
 export const TOOL_PANES: { type: ToolPaneType; label: string; icon: string }[] =
   [
@@ -52,13 +55,16 @@ export function defaultPaneSize(paneCount: number): PaneSize {
 /**
  * Grows a strip item in from no width, or shrinks it away, so its neighbors
  * slide over at the same pace as they resize. Its content keeps its width
- * meanwhile, clipped rather than reflowed.
+ * meanwhile, clipped rather than reflowed. Its easing matches the strip's
+ * flex-basis transition, so the strip's total width holds steady as one item
+ * grows and the others shrink.
  */
 export function paneWidth(
   node: HTMLElement,
-  _params?: unknown,
+  { animate = true }: { animate?: boolean } = {},
   { direction }: { direction?: 'in' | 'out' | 'both' } = {},
 ): TransitionConfig {
+  if (!animate) return { duration: 0 };
   const width = node.getBoundingClientRect().width;
   const content = node.firstElementChild as HTMLElement | null;
   if (content) content.style.width = `${content.offsetWidth}px`;

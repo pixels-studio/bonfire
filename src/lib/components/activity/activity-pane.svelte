@@ -41,12 +41,19 @@
   import { Button } from '$lib/components/ui/button';
   import * as Tooltip from '$lib/components/ui/tooltip';
   import Icon from '$lib/components/icon/icon.svelte';
+  import PaneHeader from '$lib/components/pane-header/pane-header.svelte';
+  import type { PanelProps } from '$lib/panes';
   import { toast } from '$lib/stores/toast.svelte';
   import { cn } from '$lib/utils';
   import { errorMessage } from '$shared/domain';
   import type { Activity } from '$shared/contracts';
 
-  let { projectId }: { projectId?: string } = $props();
+  let {
+    projectId,
+    dragHandle,
+    onresize,
+    onclose,
+  }: { projectId?: string } & PanelProps = $props();
 
   let items = $state<Activity[]>();
   let error = $state<string>();
@@ -115,11 +122,14 @@
 </script>
 
 <Card.Root class="h-full min-w-0 gap-0" role="region" aria-label="Activity">
-  <header class="flex h-13.5 shrink-0 items-center justify-between gap-3 px-4">
-    <h2 class="flex items-center gap-2 text-sm font-semibold">
-      <Icon name="activity" class="text-muted-foreground" />
-      Activity
-    </h2>
+  <PaneHeader
+    title="Activity"
+    icon="activity"
+    {dragHandle}
+    {onresize}
+    {onclose}
+  >
+    {#snippet actions()}
     <Tooltip.Root>
       <Tooltip.Trigger>
         {#snippet child({ props })}
@@ -138,7 +148,8 @@
       </Tooltip.Trigger>
       <Tooltip.Content>Refresh</Tooltip.Content>
     </Tooltip.Root>
-  </header>
+    {/snippet}
+  </PaneHeader>
   <div class="min-h-0 flex-1 overflow-y-auto px-2 pb-6">
     {#if error}
       <p

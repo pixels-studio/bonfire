@@ -12,7 +12,7 @@ import { Fragment, Slice, type Schema } from '@tiptap/pm/model';
 import StarterKit from '@tiptap/starter-kit';
 import { mount, unmount } from 'svelte';
 import AttachmentChip from '$lib/components/conversation/attachment-chip.svelte';
-import { ATTACHMENT_NODE } from '$lib/prompt-markdown';
+import { ATTACHMENT_NODE, SKILL_NODE } from '$lib/prompt-markdown';
 
 /**
  * An attachment where it was put in the text, drawn as the same chip the conversation
@@ -68,6 +68,66 @@ const AttachmentNode = Node.create({
 });
 
 /**
+ * A skill picked from the `/` menu, where it was picked: its `/name` in the accent
+ * colour, one unit the caret steps over and Backspace or Delete takes out whole.
+ */
+const SkillNode = Node.create({
+  name: SKILL_NODE,
+  group: 'inline',
+  inline: true,
+  atom: true,
+  selectable: false,
+  draggable: false,
+
+  addAttributes() {
+    return {
+      name: { default: '' },
+      description: { default: '' },
+    };
+  },
+
+  renderHTML({ node }) {
+    return ['span', { 'data-skill': node.attrs.name }, `/${node.attrs.name}`];
+  },
+
+  renderText({ node }) {
+    return `/${node.attrs.name}`;
+  },
+
+  addNodeView() {
+    return ({ node }) => {
+      const dom = document.createElement('span');
+      dom.contentEditable = 'false';
+      dom.className = 'composer-skill';
+      dom.textContent = `/${node.attrs.name}`;
+      if (node.attrs.description) dom.title = node.attrs.description;
+      return {
+        dom,
+        update: (next) =>
+          next.type === node.type && next.attrs.name === node.attrs.name,
+        ignoreMutation: () => true,
+      };
+    };
+  },
+
+  addKeyboardShortcuts() {
+    const remove = (backward: boolean) => () => {
+      const { selection } = this.editor.state;
+      if (!selection.empty) return false;
+      const { $from } = selection;
+      const node = backward ? $from.nodeBefore : $from.nodeAfter;
+      if (node?.type !== this.type) return false;
+      const from = backward ? $from.pos - node.nodeSize : $from.pos;
+      return this.editor.commands.deleteRange({
+        from,
+        to: from + node.nodeSize,
+      });
+    };
+    return { Backspace: remove(true), Delete: remove(false) };
+  },
+});
+
+/**
  * The composer's formatting: lists, quotes, code and the usual marks, each of which has
  * a markdown form. Bold and italic only answer to `*`, so `__init__` or `snake_case_`
  * stays the text it was typed as. Underline has no markdown, and links only come from
@@ -100,6 +160,7 @@ export function composerExtensions(placeholder: () => string) {
     }),
     Placeholder.configure({ placeholder }),
     AttachmentNode,
+    SkillNode,
   ];
 }
 

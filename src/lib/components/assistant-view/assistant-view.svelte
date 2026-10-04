@@ -18,6 +18,7 @@
     errorMessage,
     isDefaultTitle,
     promptText,
+    withoutMarkers,
     titleFrom,
   } from '$shared/domain';
   import type { PaneProps } from '$lib/panes';
@@ -254,7 +255,8 @@
     error = '';
     running = true;
     following = true;
-    if (title === DEFAULT_TITLE) title = titleFrom(promptText(text, skills));
+    if (title === DEFAULT_TITLE)
+      title = titleFrom(withoutMarkers(promptText(text, skills)));
     try {
       // Resolves when the turn ends; a rejection means it never started.
       await window.bonfire.assistant.send(input);
@@ -325,121 +327,121 @@
     void composer?.addFiles([...event.dataTransfer.files]);
   }}
 >
-{#if dragging}
-  <div
-    class="pointer-events-none absolute inset-0 z-50 grid place-items-center rounded-lg border-2 border-dashed border-brand bg-background/80 text-sm"
-  >
-    Drop to attach
-  </div>
-{/if}
-<Card.Root class="h-full min-w-0">
-  <PaneHeader
-    {title}
-    icon={provider}
-    {badge}
-    menuLabel="Conversation options"
-    {dragHandle}
-    {onresize}
-    {onclose}
-    {onrename}
-  />
-
-  <p class="sr-only" role="status">{announcement}</p>
-
-  <div class="relative min-h-0 flex-1">
+  {#if dragging}
     <div
-      bind:this={feed}
-      bind:clientHeight={feedHeight}
-      class="absolute inset-0 flex flex-col overflow-y-auto px-4 pt-6 pb-7 motion-safe:scroll-smooth"
-      onscroll={trackFollowing}
+      class="pointer-events-none absolute inset-0 z-50 grid place-items-center rounded-lg border-2 border-dashed border-brand bg-background/80 text-sm"
     >
+      Drop to attach
+    </div>
+  {/if}
+  <Card.Root class="h-full min-w-0">
+    <PaneHeader
+      {title}
+      icon={provider}
+      {badge}
+      menuLabel="Conversation options"
+      {dragHandle}
+      {onresize}
+      {onclose}
+      {onrename}
+    />
+
+    <p class="sr-only" role="status">{announcement}</p>
+
+    <div class="relative min-h-0 flex-1">
       <div
-        class="@container mx-auto flex w-full max-w-3xl flex-1 flex-col gap-6"
+        bind:this={feed}
+        bind:clientHeight={feedHeight}
+        class="absolute inset-0 flex flex-col overflow-y-auto px-4 pt-6 pb-7 motion-safe:scroll-smooth"
+        onscroll={trackFollowing}
       >
-        {#each turns.slice(0, -1) as turn (turn[0].id)}
-          <TurnView messages={turn} expanded={!!watched[turn[0].id]} />
-        {/each}
-        {#if messages.length}
-          <!-- The latest turn fills the feed so a new prompt can sit at the top. -->
-          <div
-            bind:this={latest}
-            class="flex flex-col gap-6"
-            style:min-height={`${Math.max(0, feedHeight - FEED_PADDING)}px`}
-          >
-            <div bind:this={latestContent} class="flex flex-col gap-6">
-              <TurnView
-                messages={lastTurn}
-                expanded={!!watched[lastTurn[0].id]}
-              />
-              {#if running && !assistantStarted && !requests.length}
-                <p class="flex w-fit items-center gap-2 text-sm">
-                  <MatrixLoader />
-                  <span class="shimmer-text">Thinking</span>
-                </p>
-              {/if}
-              {#each requests as request (request.id)}
-                <RequestView
-                  {request}
-                  onrespond={(response) => respond(request, response)}
+        <div
+          class="@container mx-auto flex w-full max-w-3xl flex-1 flex-col gap-6"
+        >
+          {#each turns.slice(0, -1) as turn (turn[0].id)}
+            <TurnView messages={turn} expanded={!!watched[turn[0].id]} />
+          {/each}
+          {#if messages.length}
+            <!-- The latest turn fills the feed so a new prompt can sit at the top. -->
+            <div
+              bind:this={latest}
+              class="flex flex-col gap-6"
+              style:min-height={`${Math.max(0, feedHeight - FEED_PADDING)}px`}
+            >
+              <div bind:this={latestContent} class="flex flex-col gap-6">
+                <TurnView
+                  messages={lastTurn}
+                  expanded={!!watched[lastTurn[0].id]}
                 />
-              {/each}
+                {#if running && !assistantStarted && !requests.length}
+                  <p class="flex w-fit items-center gap-2 text-sm">
+                    <MatrixLoader />
+                    <span class="shimmer-text">Thinking</span>
+                  </p>
+                {/if}
+                {#each requests as request (request.id)}
+                  <RequestView
+                    {request}
+                    onrespond={(response) => respond(request, response)}
+                  />
+                {/each}
+                {#if error}<p class="text-sm text-destructive" role="alert">
+                    {error}
+                  </p>{/if}
+              </div>
+            </div>
+          {:else}
+            <div
+              class="grid flex-1 place-content-center justify-items-center gap-1 text-center text-muted-foreground"
+            >
+              <Icon name={provider} class="size-6" />
+              <p class="max-w-65 text-sm text-pretty">
+                Ask {providerLabel} to explore, explain, or change this project.
+              </p>
               {#if error}<p class="text-sm text-destructive" role="alert">
                   {error}
                 </p>{/if}
             </div>
-          </div>
-        {:else}
-          <div
-            class="grid flex-1 place-content-center justify-items-center gap-1 text-center text-muted-foreground"
-          >
-            <Icon name={provider} class="size-6" />
-            <p class="max-w-65 text-sm text-pretty">
-              Ask {providerLabel} to explore, explain, or change this project.
-            </p>
-            {#if error}<p class="text-sm text-destructive" role="alert">
-                {error}
-              </p>{/if}
-          </div>
-        {/if}
+          {/if}
+        </div>
       </div>
     </div>
-  </div>
 
-  <div class="shrink-0 px-4 pb-4">
-    <div class="mx-auto max-w-3xl">
-      {#if queue.length}
-        <QueuedPrompts
-          {queue}
+    <div class="shrink-0 px-4 pb-4">
+      <div class="mx-auto max-w-3xl">
+        {#if queue.length}
+          <QueuedPrompts
+            {queue}
+            {running}
+            onsend={(id) => runQueued('sendQueued', id)}
+            onremove={(id) => runQueued('unqueue', id)}
+          />
+        {/if}
+        <Composer
+          bind:this={composer}
+          paneId={pane.id}
+          label={`Message ${providerLabel}`}
           {running}
-          onsend={(id) => runQueued('sendQueued', id)}
-          onremove={(id) => runQueued('unqueue', id)}
-        />
-      {/if}
-      <Composer
-        bind:this={composer}
-        paneId={pane.id}
-        label={`Message ${providerLabel}`}
-        {running}
-        onsend={send}
-      >
-        <ModelPicker
-          {provider}
-          {model}
-          bind:effort
-          bind:fast
-          {fastSupported}
-          onmodel={changeModel}
-        />
-        <ContextUsage
-          {usage}
-          {contextWindow}
-          disabled={running || !usage}
-          oncompact={provider === 'claude'
-            ? () => send('/compact', [], []).catch(() => {})
-            : undefined}
-        />
-      </Composer>
+          onsend={send}
+        >
+          <ModelPicker
+            {provider}
+            {model}
+            bind:effort
+            bind:fast
+            {fastSupported}
+            onmodel={changeModel}
+          />
+          <ContextUsage
+            {usage}
+            {contextWindow}
+            disabled={running || !usage}
+            oncompact={provider === 'claude'
+              ? () => send('/compact', [], []).catch(() => {})
+              : undefined}
+          />
+        </Composer>
+      </div>
     </div>
-  </div>
-</Card.Root>
+  </Card.Root>
 </div>

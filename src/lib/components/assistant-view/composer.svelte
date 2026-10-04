@@ -12,7 +12,6 @@
 
 <script lang="ts">
   import ArrowUp from '@lucide/svelte/icons/arrow-up';
-  import X from '@lucide/svelte/icons/x';
   import { Editor, type JSONContent } from '@tiptap/core';
   import type { Node as PMNode } from '@tiptap/pm/model';
   import type { EditorView } from '@tiptap/pm/view';
@@ -26,7 +25,11 @@
   import { preferences } from '$lib/stores/preferences.svelte';
   import { toast } from '$lib/stores/toast.svelte';
   import { matchShortcut } from '$lib/shortcuts';
-  import { ATTACHMENT_NODE, promptMarkdown } from '$lib/prompt-markdown';
+  import {
+    ATTACHMENT_NODE,
+    SKILL_NODE,
+    promptMarkdown,
+  } from '$lib/prompt-markdown';
   import { cn, isMac } from '$lib/utils';
   import { LONG_TEXT_THRESHOLD, errorMessage } from '$shared/domain';
   import {
@@ -103,7 +106,7 @@
    */
   let prompt = $state('');
   let attachments = $state<Attachment[]>([]);
-  /** Skills attached with `/`, which run with the message. */
+  /** Skills picked with `/`, in the order they sit in the text; they run with the message. */
   let skills = $state<Skill[]>([]);
   const canAttach = $derived(attachments.length < MAX_ATTACHMENTS);
   const followUp = $derived(preferences.current.followUp);
@@ -179,9 +182,31 @@
     return ids;
   }
 
+  /** The skills the text holds, in order; deleting one's `/name` takes it out. */
+  function placedSkills(doc: PMNode) {
+    const placed: Skill[] = [];
+    doc.descendants((node) => {
+      if (
+        node.type.name === SKILL_NODE &&
+        !placed.some(({ name }) => name === node.attrs.name)
+      )
+        placed.push({
+          name: node.attrs.name,
+          description: node.attrs.description,
+        });
+    });
+    return placed;
+  }
+
   function sync() {
     if (!editor) return;
     prompt = promptMarkdown(editor.getJSON());
+    const placed = placedSkills(editor.state.doc);
+    if (
+      placed.length !== skills.length ||
+      placed.some(({ name }, index) => name !== skills[index].name)
+    )
+      skills = placed;
     const ids = placedIds(editor.state.doc);
     if (attachments.some(({ id }) => !ids.has(id)))
       attachments = attachments.filter(({ id }) => ids.has(id));
@@ -199,7 +224,6 @@
       skills: Skill[];
     } = { content: editor.getJSON(), attachments, skills };
     attachments = [];
-    skills = [];
     editor.commands.clearContent(true);
     try {
       await onsend(
@@ -213,7 +237,6 @@
       if (editor.isEmpty && !prompt && !attachments.length && !skills.length) {
         // The attachments go back first, so restoring their chips doesn't drop them.
         attachments = draft.attachments;
-        skills = draft.skills;
         editor.commands.setContent(draft.content);
       }
     }
@@ -266,7 +289,7 @@
     }
   }
 
-  /** Attaches the skill and takes the `/` and what was typed after it out of the text. */
+  /** Puts the skill in place of the `/` and what was typed after it, where the caret is. */
   function chooseSkill(skill: Skill) {
     if (!slash || !editor) return;
     if (skills.length >= MAX_SKILLS) {
@@ -275,28 +298,27 @@
     }
     const { doc, selection } = editor.state;
     const { start } = slash;
-    const blockStart = doc.resolve(start).start();
-    const blockEnd = doc.resolve(start).end();
     const caret = selection.from;
-    // Two spaces would be left where the `/word` was; one goes with it.
-    const spaceBefore =
-      start > blockStart && doc.textBetween(start - 1, start) === ' ';
+    const blockEnd = doc.resolve(start).end();
     const spaceAfter =
-      caret < blockEnd && doc.textBetween(caret, caret + 1) === ' ';
-    skills.push(skill);
+      caret < blockEnd && /\s/.test(doc.textBetween(caret, caret + 1));
     slash = null;
     editor
       .chain()
       .focus()
-      .deleteRange({
-        from: start,
-        to: spaceBefore && spaceAfter ? caret + 1 : caret,
-      })
+      .insertContentAt({ from: start, to: caret }, [
+        {
+          type: SKILL_NODE,
+          attrs: { name: skill.name, description: skill.description },
+        },
+        ...(spaceAfter ? [] : [{ type: 'text', text: ' ' }]),
+      ])
       .run();
-  }
-
-  function removeSkill(name: string) {
-    skills = skills.filter((skill) => skill.name !== name);
+    // The caret goes past the space that follows, ready for the next word.
+    if (spaceAfter) {
+      const after = editor.state.selection.from + 1;
+      editor.commands.setTextSelection(after);
+    }
   }
 
   /** Moves through and picks from the menu; returns whether the key was used. */
@@ -499,32 +521,8 @@
       onchoose={chooseSkill}
     />
   {/if}
-  <div class="flex flex-wrap items-start gap-x-2 gap-y-1.5">
-    {#each skills as skill (skill.name)}
-      <div
-        class="flex h-7 max-w-56 shrink-0 items-center gap-1 rounded-md bg-brand/15 py-1 pr-1 pl-2 text-xs font-medium text-brand"
-        title={skill.description}
-      >
-        <span class="truncate">/{skill.name}</span>
-        <button
-          type="button"
-          class="grid shrink-0 place-items-center rounded-full p-0.5 hover:bg-brand/20"
-          aria-label={`Remove the ${skill.name} skill`}
-          onclick={() => removeSkill(skill.name)}
-        >
-          <X class="size-3" />
-        </button>
-      </div>
-    {/each}
-    <!-- Grows with its content up to ten lines, then scrolls. -->
-    <div
-      class={cn(
-        'relative max-h-50 min-w-40 flex-1 overflow-y-auto',
-        skills.length && '[&_.composer-editor]:min-h-7',
-      )}
-      bind:this={element}
-    ></div>
-  </div>
+  <!-- Grows with its content up to ten lines, then scrolls. -->
+  <div class="relative max-h-50 overflow-y-auto" bind:this={element}></div>
   <div class="flex items-center justify-between gap-3 pt-3">
     <div class="flex min-w-0 items-center gap-6">
       {@render children()}
@@ -557,7 +555,7 @@
                 {...props}
                 variant="secondary"
                 size="icon"
-                class="bg-red-500/10 text-red-500 hover:bg-red-500/20"
+                class="bg-red-500 text-white hover:bg-red-500/90"
                 aria-label="Stop response"
                 onclick={() => window.bonfire.assistant.cancel(paneId)}
               >
@@ -663,6 +661,9 @@
   div :global(.composer-editor .composer-attachment.ProseMirror-selectednode) {
     border-radius: 0.375rem;
     outline: 2px solid var(--color-brand);
+  }
+  div :global(.composer-editor .composer-skill) {
+    color: var(--color-brand);
   }
   div :global(.composer-editor p.is-editor-empty:first-child::before) {
     content: attr(data-placeholder);

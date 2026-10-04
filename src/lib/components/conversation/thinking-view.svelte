@@ -26,7 +26,7 @@
   <summary
     class="flex w-fit cursor-pointer list-none items-center gap-1 hover:text-foreground [&::-webkit-details-marker]:hidden"
   >
-    {#if streaming}<MatrixLoader class="mr-1" />{/if}
+    {#if streaming}<MatrixLoader variant="twinkle" size="sm" class="mr-1" />{/if}
     <span class={streaming ? 'shimmer-text' : ''}>
       {label}
     </span>

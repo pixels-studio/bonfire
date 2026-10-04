@@ -8,7 +8,7 @@ import type {
   Question,
   Skill,
 } from '../../shared/contracts';
-import { errorMessage } from '../../shared/domain';
+import { errorMessage, withSkillNames } from '../../shared/domain';
 import {
   ChatAssistant,
   attachedText,
@@ -561,29 +561,31 @@ function userInput(
   machine: Machine = localMachine,
 ) {
   return [
-    ...inlineParts(text, attachments).flatMap((part): InputPart[] => {
-      if ('text' in part)
-        return part.text.trim()
-          ? [{ type: 'text', text: part.text, text_elements: [] }]
-          : [];
-      const attachment: PendingAttachment = part.attachment;
-      if (attachment.kind !== 'image')
+    ...inlineParts(withSkillNames(text), attachments).flatMap(
+      (part): InputPart[] => {
+        if ('text' in part)
+          return part.text.trim()
+            ? [{ type: 'text', text: part.text, text_elements: [] }]
+            : [];
+        const attachment: PendingAttachment = part.attachment;
+        if (attachment.kind !== 'image')
+          return [
+            {
+              type: 'text',
+              text: attachedText(attachment),
+              text_elements: [],
+            },
+          ];
         return [
-          {
-            type: 'text',
-            text: attachedText(attachment),
-            text_elements: [],
-          },
+          machine.remote
+            ? {
+                type: 'image',
+                url: `data:${attachment.mimeType};base64,${attachment.base64}`,
+              }
+            : { type: 'localImage', path: attachment.path },
         ];
-      return [
-        machine.remote
-          ? {
-              type: 'image',
-              url: `data:${attachment.mimeType};base64,${attachment.base64}`,
-            }
-          : { type: 'localImage', path: attachment.path },
-      ];
-    }),
+      },
+    ),
     ...skills
       .filter((skill) => skill.path)
       .map(({ name, path }) => ({ type: 'skill', name, path })),

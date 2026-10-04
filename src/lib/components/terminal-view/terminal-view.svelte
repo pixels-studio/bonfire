@@ -35,9 +35,9 @@
   {#if scriptId && known}
     {#if run?.running}
       <Button
-        size="xs"
+        size="default"
         variant="secondary"
-        class="text-foreground"
+        class="leading-4 text-foreground"
         loading={pending}
         title={`Stop ${title}`}
         onclick={() => void scripts.stop(scriptId)}
@@ -46,9 +46,9 @@
       </Button>
     {:else}
       <Button
-        size="xs"
+        size="default"
         variant="secondary"
-        class="text-foreground"
+        class="leading-4 text-foreground"
         loading={pending}
         title={`Run ${title}`}
         onclick={() => void scripts.run(scriptId)}
@@ -63,8 +63,7 @@
 <Card.Root class="h-full min-w-0">
   <PaneHeader
     {title}
-    icon={scriptId ? 'play' : toolPaneIcon('terminal')}
-    status={run?.running ? 'working' : 'idle'}
+    icon={toolPaneIcon('terminal')}
     actions={scriptId ? scriptActions : undefined}
     {dragHandle}
     {onresize}

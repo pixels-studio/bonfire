@@ -4,6 +4,7 @@
   import { FitAddon } from '@xterm/addon-fit';
   import '@xterm/xterm/css/xterm.css';
   import { Button } from '$lib/components/ui/button';
+  import TerminalScrollbar from './terminal-scrollbar.svelte';
   import { scripts } from '$lib/stores/scripts.svelte';
   import { errorMessage } from '$shared/domain';
   import type { TerminalEvent } from '$shared/contracts';
@@ -27,6 +28,9 @@
   let opened = $state(false);
 
   let term: Terminal;
+  /** The terminal once it is open, for the scroller. */
+  let openTerm = $state.raw<Terminal>();
+  let surface = $state<HTMLDivElement>();
   let fit: FitAddon;
   let terminalId: string | undefined;
   let mounted = false;
@@ -130,6 +134,7 @@
     fit = new FitAddon();
     term.loadAddon(fit);
     term.open(host);
+    openTerm = term;
 
     const unsubscribe = window.bonfire.terminal.onData((event) =>
       ready ? receive(event) : pendingEvents.push(event),
@@ -153,7 +158,7 @@
   });
 </script>
 
-<div class="absolute inset-0 flex flex-col px-5 py-4">
+<div class="absolute inset-0 flex flex-col px-5 py-4" bind:this={surface}>
   {#if error}<p class="pb-3 text-sm text-destructive">{error}</p>{/if}
   {#if scriptId}
     {#if !runTerminalId}
@@ -168,12 +173,18 @@
       </Button>
     </div>
   {/if}
-  <div class="min-h-0 flex-1" bind:this={host}></div>
+  <!-- xterm keeps a gutter for its scroller (hidden below); it takes the padding's place. -->
+  <div class="-mr-3.5 min-h-0 flex-1" bind:this={host}></div>
+  <TerminalScrollbar term={openTerm} {surface} />
 </div>
 
 <style>
   /* xterm paints its viewport black; let the pane's background show through instead. */
   :global(.xterm .xterm-viewport) {
     background-color: transparent !important;
+  }
+  /* Its always-there scroller gives way to the macOS-style overlay at the pane's edge. */
+  :global(.xterm .xterm-scrollable-element > .scrollbar) {
+    display: none !important;
   }
 </style>

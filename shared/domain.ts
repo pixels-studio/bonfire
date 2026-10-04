@@ -55,6 +55,48 @@ export function attachmentMarker(id: string) {
 
 const ATTACHMENT_MARKER = /\[\[attachment:([\w-]+)\]\]/g;
 
+/**
+ * Where a skill sits in a prompt: the composer writes this marker where the skill was
+ * picked, so the message is shown as it was typed. Providers get `/name` in its place.
+ */
+export function skillMarker(name: string) {
+  return `[[skill:${name}]]`;
+}
+
+const SKILL_MARKER = /\[\[skill:([^\]\s]+)\]\]/g;
+
+/** The skills a prompt names with markers, in order, each once. */
+export function markedSkills(text: string) {
+  return [
+    ...new Set([...text.matchAll(SKILL_MARKER)].map((match) => match[1])),
+  ];
+}
+
+/** The text with each skill marker written as the `/name` it was typed as. */
+export function withSkillNames(text: string) {
+  return text.replace(SKILL_MARKER, (_, name: string) => `/${name}`);
+}
+
+/** A prompt cut at its markers, for showing it: text, attachment ids and skill names, in order. */
+export type PromptPart =
+  { text: string } | { attachmentId: string } | { skill: string };
+
+export function promptParts(text: string): PromptPart[] {
+  return splitPrompt(text).flatMap((part): PromptPart[] => {
+    if (!('text' in part)) return [part];
+    const parts: PromptPart[] = [];
+    let last = 0;
+    for (const match of part.text.matchAll(SKILL_MARKER)) {
+      if (match.index > last)
+        parts.push({ text: part.text.slice(last, match.index) });
+      parts.push({ skill: match[1] });
+      last = match.index + match[0].length;
+    }
+    if (last < part.text.length) parts.push({ text: part.text.slice(last) });
+    return parts;
+  });
+}
+
 /** A prompt cut at its attachment markers: plain text, and attachment ids, in order. */
 export function splitPrompt(
   text: string,
@@ -70,18 +112,30 @@ export function splitPrompt(
   return parts;
 }
 
-/** The text with its attachment markers taken out, for titles and queue previews. */
+/**
+ * The text with its attachment markers taken out and its skills as `/name`, for titles
+ * and queue previews.
+ */
 export function withoutMarkers(text: string) {
-  return text.replace(ATTACHMENT_MARKER, ' ').replace(/ {2,}/g, ' ').trim();
+  return withSkillNames(text)
+    .replace(ATTACHMENT_MARKER, ' ')
+    .replace(/ {2,}/g, ' ')
+    .trim();
 }
 
-/** A message as the user sees it: its skills as `/name`, then the text. Skills are named once. */
+/**
+ * A message as the user sees it. Skills sit where they were typed; any the text doesn't
+ * place (from before skills were placed) lead as `/name`. Skills are named once.
+ */
 export function promptText(
   text: string,
   skills: (string | { name: string })[],
 ) {
+  const placed = new Set(markedSkills(text));
   const names = new Set(
-    skills.map((skill) => (typeof skill === 'string' ? skill : skill.name)),
+    skills
+      .map((skill) => (typeof skill === 'string' ? skill : skill.name))
+      .filter((name) => !placed.has(name)),
   );
   return [...[...names].map((name) => `/${name}`), text]
     .filter(Boolean)

@@ -40,6 +40,7 @@
     variant = 'scan',
     rounded = false,
     cycle = 1200,
+    size = 'md',
     class: className,
   }: {
     variant?: MatrixVariant;
@@ -47,6 +48,8 @@
     rounded?: boolean;
     /** One full pulse, in ms. */
     cycle?: number;
+    /** Dot scale: `sm` is one step down from the default `md`. */
+    size?: 'sm' | 'md';
     class?: string;
   } = $props();
 
@@ -60,7 +63,7 @@
 </script>
 
 <span
-  class={cn('matrix', className)}
+  class={cn('matrix', size === 'sm' && 'sm', className)}
   style:--matrix-cycle={`${cycle}ms`}
   aria-hidden="true"
 >
@@ -77,15 +80,20 @@
   .matrix {
     display: inline-grid;
     flex-shrink: 0;
-    grid-template-columns: repeat(4, 2px);
-    grid-auto-rows: 2px;
-    gap: 2px;
+    --matrix-dot: 2px;
+    grid-template-columns: repeat(4, var(--matrix-dot));
+    grid-auto-rows: var(--matrix-dot);
+    gap: var(--matrix-dot);
     --matrix-base: color-mix(
       in oklab,
       var(--color-muted-foreground) 30%,
       transparent
     );
     --matrix-active: var(--color-foreground);
+  }
+
+  .matrix.sm {
+    --matrix-dot: 1.5px;
   }
 
   i {

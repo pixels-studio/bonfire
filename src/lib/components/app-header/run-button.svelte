@@ -85,7 +85,7 @@
         <Icon name="play" class="size-3" />
       {/if}
       <span class="truncate">{label}</span>
-      {#if running}
+      {#if runningCount > 1}
         <span
           class="grid h-4 min-w-4 shrink-0 place-items-center rounded-full bg-foreground/15 px-1 text-[0.65rem] leading-none font-semibold tabular-nums"
           aria-label={`${runningCount} running`}

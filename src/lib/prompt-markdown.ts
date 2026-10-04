@@ -1,4 +1,4 @@
-import { attachmentMarker } from '../../shared/domain';
+import { attachmentMarker, skillMarker } from '../../shared/domain';
 
 /** The parts of a Tiptap/ProseMirror JSON node the serializer reads. */
 export type PromptNode = {
@@ -11,6 +11,9 @@ export type PromptNode = {
 
 /** The composer's attachment chip; it is sent as its marker. */
 export const ATTACHMENT_NODE = 'attachment';
+
+/** A skill picked from the `/` menu; it is sent as its marker, where it was picked. */
+export const SKILL_NODE = 'skill';
 
 /** Marks in the order they nest, outermost first; code is innermost, since nothing parses inside it. */
 const MARK_ORDER = ['link', 'bold', 'italic', 'strike', 'code'];
@@ -142,6 +145,8 @@ function inline(nodes: PromptNode[]): string {
     else if (node.type === 'hardBreak') text = '\n';
     else if (node.type === ATTACHMENT_NODE)
       text = attachmentMarker(String(node.attrs?.id ?? ''));
+    else if (node.type === SKILL_NODE)
+      text = skillMarker(String(node.attrs?.name ?? ''));
     else text = textOf(node);
 
     // How many of the open marks this node shares, from the outside in.

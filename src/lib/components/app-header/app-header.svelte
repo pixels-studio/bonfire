@@ -66,7 +66,6 @@
     class={cn(PILL_BUTTON_CLASS, PUSH_BUTTON_CLASS)}
     disabled={disabled || !!pullRequest.running}
     title="Have an agent commit the changes and push them to the remote"
-    loading={pullRequest.running === 'push'}
     onclick={() => void pullRequest.run('push')}
   >
     {ACTION_LABELS.push}
@@ -105,8 +104,7 @@
           class={cn(PILL_BUTTON_CLASS, CONFLICTS_BUTTON_CLASS)}
           disabled={disabled || !!pullRequest.running}
           title="Have an agent merge the target branch in and resolve the conflicts"
-          loading={pullRequest.running === 'resolveConflicts'}
-          onclick={() => void pullRequest.run('resolveConflicts')}
+            onclick={() => void pullRequest.run('resolveConflicts')}
         >
           {ACTION_LABELS.resolveConflicts}
         </Button>
@@ -116,8 +114,7 @@
           class={cn(PILL_BUTTON_CLASS, CHECKS_BUTTON_CLASS)}
           disabled={disabled || !!pullRequest.running}
           title="Have an agent fix the failing checks"
-          loading={pullRequest.running === 'fixChecks'}
-          onclick={() => void pullRequest.run('fixChecks')}
+            onclick={() => void pullRequest.run('fixChecks')}
         >
           {ACTION_LABELS.fixChecks}
         </Button>
@@ -163,7 +160,6 @@
         aria-pressed={createsPullRequest ? undefined : pullRequestOpen}
         disabled={disabled || pull === undefined}
         title={`Create pull request ${pullRequestHint}`}
-        loading={pullRequest.running === 'createPr'}
         onclick={createsPullRequest
           ? () => void pullRequest.run('createPr')
           : togglePullRequest}
@@ -172,15 +168,4 @@
       </Button>
     {/if}
   </div>
-  {#if pullRequest.running}
-    <div
-      class="pointer-events-none absolute inset-x-0 bottom-0 h-0.5 overflow-hidden bg-foreground/10"
-      role="progressbar"
-      aria-label="An agent is working on this"
-    >
-      <div
-        class="h-full w-1/3 animate-[header-progress_1.2s_ease-in-out_infinite] rounded-full bg-foreground/60 motion-reduce:animate-none motion-reduce:w-full motion-reduce:opacity-60"
-      ></div>
-    </div>
-  {/if}
 </header>
