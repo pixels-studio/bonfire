@@ -32,7 +32,10 @@
     {/snippet}
   </DropdownMenu.Trigger>
   <DropdownMenu.Content align="end" class="w-56">
-    <DropdownMenu.Label>Pane size</DropdownMenu.Label>
+    <DropdownMenu.Label class="flex items-center justify-between">
+      Pane size
+      <ShortcutKeys id="resizePane" />
+    </DropdownMenu.Label>
     {#each PANE_SIZES as size (size.value)}
       <DropdownMenu.Item onclick={() => onresize(size.value)}>
         <Icon name={size.icon} />

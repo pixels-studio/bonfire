@@ -17,6 +17,30 @@ export const PROVIDER_LABELS: Record<AssistantProvider, string> = {
   codex: 'Codex',
 };
 
+const PROVIDERS = Object.keys(PROVIDER_LABELS) as AssistantProvider[];
+
+/** The provider new panes start with: the chosen default, else the last used, else the first enabled. */
+export function startingProvider(
+  { defaultModel, providers }: Pick<Preferences, 'defaultModel' | 'providers'>,
+  lastProvider?: AssistantProvider,
+): AssistantProvider {
+  if (defaultModel && providers[defaultModel.provider])
+    return defaultModel.provider;
+  if (lastProvider && providers[lastProvider]) return lastProvider;
+  return PROVIDERS.find((option) => providers[option]) ?? 'claude';
+}
+
+/** The enabled provider other than `provider`; `provider` itself when it is the only one. */
+export function otherProvider(
+  provider: AssistantProvider,
+  providers: Preferences['providers'],
+) {
+  return (
+    PROVIDERS.find((option) => option !== provider && providers[option]) ??
+    provider
+  );
+}
+
 /** What tool panes are called; agent panes are named after their conversation. */
 export const TOOL_PANE_TITLES: Record<ToolPaneType, string> = {
   files: 'Files',

@@ -547,7 +547,8 @@
           Add attachment <ShortcutKeys id="attach" inverse />
         </Tooltip.Content>
       </Tooltip.Root>
-      {#if running}
+      <!-- One button: Stop while a turn runs with nothing typed; Send (queue/steer) once there's a draft. The stop shortcut still works either way. -->
+      {#if running && !hasMessage}
         <Tooltip.Root>
           <Tooltip.Trigger>
             {#snippet child({ props })}
@@ -567,8 +568,7 @@
             Stop response <ShortcutKeys id="stop" inverse />
           </Tooltip.Content>
         </Tooltip.Root>
-      {/if}
-      {#if !running || hasMessage}
+      {:else}
         <Button
           type="submit"
           size="icon"

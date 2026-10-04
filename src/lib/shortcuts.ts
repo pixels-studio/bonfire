@@ -8,6 +8,8 @@ export type Chord = {
   mod?: boolean;
   alt?: boolean;
   shift?: boolean;
+  /** The keycap to show instead of the key's own, e.g. "10–18" for ⇧ with the digits. */
+  label?: string;
 };
 
 export type ShortcutGroup = 'General' | 'Projects' | 'Panes' | 'Conversation';
@@ -60,13 +62,13 @@ export const SHORTCUTS = define({
     group: 'General',
     label: 'Activity',
     scope: 'global',
-    chords: [mod('a', { shift: true })],
+    chords: [mod('j')],
   },
-  usage: {
+  run: {
     group: 'General',
-    label: 'Usage',
+    label: 'Run or stop the project',
     scope: 'global',
-    chords: [mod('u', { shift: true })],
+    chords: [mod('r')],
   },
   addProject: {
     group: 'Projects',
@@ -80,12 +82,6 @@ export const SHORTCUTS = define({
     scope: 'global',
     chords: [mod('p')],
   },
-  openProject: {
-    group: 'Projects',
-    label: 'Open project',
-    scope: 'global',
-    chords: [mod(DIGITS, { alt: true })],
-  },
   switchBranch: {
     group: 'Projects',
     label: 'Switch branch',
@@ -96,7 +92,7 @@ export const SHORTCUTS = define({
     group: 'Projects',
     label: 'New branch',
     scope: 'global',
-    chords: [mod('n', { shift: true })],
+    chords: [mod('b', { shift: true })],
   },
   pullRequest: {
     group: 'Projects',
@@ -110,17 +106,11 @@ export const SHORTCUTS = define({
     scope: 'global',
     chords: [mod('n')],
   },
-  newClaude: {
+  newOtherAgent: {
     group: 'Panes',
-    label: 'New Claude agent',
+    label: 'New conversation with the other agent',
     scope: 'global',
-    chords: [mod('c', { alt: true })],
-  },
-  newCodex: {
-    group: 'Panes',
-    label: 'New Codex agent',
-    scope: 'global',
-    chords: [mod('o', { alt: true })],
+    chords: [mod('n', { shift: true })],
   },
   newTerminal: {
     group: 'Panes',
@@ -132,13 +122,13 @@ export const SHORTCUTS = define({
     group: 'Panes',
     label: 'Open files',
     scope: 'global',
-    chords: [mod('e', { shift: true })],
+    chords: [mod('e')],
   },
   newDiff: {
     group: 'Panes',
     label: 'Open code diff',
     scope: 'global',
-    chords: [mod('d', { shift: true })],
+    chords: [mod('d')],
   },
   closePane: {
     group: 'Panes',
@@ -148,33 +138,27 @@ export const SHORTCUTS = define({
   },
   goToPane: {
     group: 'Panes',
-    label: 'Go to pane',
+    label: 'Go to pane 1–9',
     scope: 'global',
     chords: [mod(DIGITS)],
+  },
+  goToFarPane: {
+    group: 'Panes',
+    label: 'Go to pane 10–18',
+    scope: 'global',
+    chords: [mod(DIGITS, { shift: true, label: '1–9' })],
   },
   previousPane: {
     group: 'Panes',
     label: 'Previous pane',
     scope: 'global',
-    chords: [mod('ArrowLeft', { alt: true }), mod('[')],
+    chords: [mod('[')],
   },
   nextPane: {
     group: 'Panes',
     label: 'Next pane',
     scope: 'global',
-    chords: [mod('ArrowRight', { alt: true }), mod(']')],
-  },
-  movePaneLeft: {
-    group: 'Panes',
-    label: 'Move pane left',
-    scope: 'global',
-    chords: [mod('ArrowLeft', { alt: true, shift: true })],
-  },
-  movePaneRight: {
-    group: 'Panes',
-    label: 'Move pane right',
-    scope: 'global',
-    chords: [mod('ArrowRight', { alt: true, shift: true })],
+    chords: [mod(']')],
   },
   resizePane: {
     group: 'Panes',
@@ -302,7 +286,7 @@ export function chordKeys(chord: Chord, mac: boolean) {
     ...(chord.mod ? [mac ? '⌘' : 'Ctrl'] : []),
     ...(chord.alt ? [mac ? '⌥' : 'Alt'] : []),
     ...(chord.shift ? [mac ? '⇧' : 'Shift'] : []),
-    KEY_LABELS[chord.key] ?? chord.key.toUpperCase(),
+    chord.label ?? KEY_LABELS[chord.key] ?? chord.key.toUpperCase(),
   ];
 }
 

@@ -36,7 +36,9 @@ import {
   repositoryName,
   ACTION_LABELS,
   actionPrompt,
+  otherProvider,
   resolvePreferences,
+  startingProvider,
   withoutMarkers,
   titleFrom,
 } from '../../shared/domain';
@@ -251,14 +253,10 @@ export function services(options: ServiceOptions) {
 
   /** The provider and model new panes start with: the chosen default, else the last used. */
   function startingModel() {
-    const { defaultModel, providers } = store.preferences;
-    if (defaultModel && providers[defaultModel.provider]) return defaultModel;
+    const { defaultModel } = store.preferences;
     const { lastProvider, lastModels } = store.state.settings;
-    const provider =
-      lastProvider && providers[lastProvider]
-        ? lastProvider
-        : (assistantProvider.options.find((option) => providers[option]) ??
-          'claude');
+    const provider = startingProvider(store.preferences, lastProvider);
+    if (defaultModel?.provider === provider) return defaultModel;
     return { provider, model: lastModels?.[provider] ?? '' };
   }
 
@@ -349,12 +347,17 @@ export function services(options: ServiceOptions) {
     project = store.state.lastProjectId
       ? store.project(store.state.lastProjectId)
       : undefined,
+    other = false,
   ) {
     if (!project) throw Error('Add a project first.');
     if (openPanesOf(project).length >= MAX_PANES)
       throw new Error(`A project can have up to ${MAX_PANES} panes open.`);
     const starting = startingModel();
-    const paneType = type ?? starting.provider;
+    const paneType =
+      type ??
+      (other
+        ? otherProvider(starting.provider, store.preferences.providers)
+        : starting.provider);
     const agent = paneType === 'claude' || paneType === 'codex';
     if (agent) requireEnabled(paneType);
     const pane: Pane = {
@@ -645,8 +648,8 @@ export function services(options: ServiceOptions) {
       browse: async (id, path) => browse(id, path),
     },
     panes: {
-      add: async (type) => {
-        const pane = addPane(type);
+      add: async (type, other) => {
+        const pane = addPane(type, undefined, other);
         store.save();
         return pane;
       },
@@ -696,7 +699,8 @@ export function services(options: ServiceOptions) {
       list: async (projectId) => scripts.list(projectId),
       detect: async (projectId) => scripts.detect(projectId),
       save: async (projectId, input) => scripts.save(projectId, input),
-      remove: async (projectId, scriptId) => scripts.remove(projectId, scriptId),
+      remove: async (projectId, scriptId) =>
+        scripts.remove(projectId, scriptId),
       run: async (projectId, scriptId) => scripts.run(projectId, scriptId),
       stop: async (projectId, scriptId) => scripts.stop(projectId, scriptId),
       runs: async (projectId) => scripts.activeRuns(projectId),

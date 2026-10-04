@@ -6,11 +6,19 @@ import Wrench from '@lucide/svelte/icons/wrench';
 import BashIcon from '$lib/components/icon/bash-icon.svelte';
 import EditIcon from '$lib/components/icon/edit-icon.svelte';
 import ReadIcon from '$lib/components/icon/read-icon.svelte';
+import WebFetchIcon from '$lib/components/icon/web-fetch-icon.svelte';
 import type { ConversationMessage } from '$shared/contracts';
 
 export type ToolCall = NonNullable<ConversationMessage['tool']>;
 
-const ICONS: Record<string, typeof Wrench | typeof ReadIcon | typeof EditIcon | typeof BashIcon> = {
+const ICONS: Record<
+  string,
+  | typeof Wrench
+  | typeof ReadIcon
+  | typeof EditIcon
+  | typeof BashIcon
+  | typeof WebFetchIcon
+> = {
   Bash: BashIcon,
   Read: ReadIcon,
   Edit: EditIcon,
@@ -19,7 +27,7 @@ const ICONS: Record<string, typeof Wrench | typeof ReadIcon | typeof EditIcon | 
   NotebookEdit: EditIcon,
   Grep: Search,
   Glob: Search,
-  WebFetch: Globe,
+  WebFetch: WebFetchIcon,
   WebSearch: Globe,
   Task: Bot,
   Agent: Bot,

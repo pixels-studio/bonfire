@@ -27,7 +27,7 @@ restart after main/preload edits.
 2. Every pane works in the project folder itself, on whichever branch it has checked out.
    The branch menu lists local branches, newest first, and switches between them; uncommitted
    changes come along unless they would conflict, in which case git's message says why.
-   **Branch** (⇧⌘N) creates a branch from the checked-out one or any other, fetching first
+   **Branch** (⇧⌘B) creates a branch from the checked-out one or any other, fetching first
    when the base is a remote branch. Switching waits until no agent in the project is working.
    Git owns the current branch, so switches made by agents or terminals show up too.
 3. Add Claude or Codex panes with **＋**; pick a model and thinking effort in the composer.

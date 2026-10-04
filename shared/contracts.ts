@@ -584,7 +584,7 @@ export const requests = {
   'connections.check': z.tuple([sshConnectionInput]),
   'connections.chooseIdentity': z.tuple([]),
   'connections.browse': z.tuple([id, filePath.optional()]),
-  'panes.add': z.tuple([paneType.optional()]),
+  'panes.add': z.tuple([paneType.optional(), z.boolean().optional()]),
   'panes.archive': z.tuple([id]),
   'panes.reorder': z.tuple([z.array(id).max(100)]),
   'panes.rename': z.tuple([id, z.string().trim().min(1).max(200)]),
@@ -738,8 +738,11 @@ export type API = {
     browse(id: string, path?: string): Promise<RemoteFolder>;
   };
   panes: {
-    /** Adds a pane at the front of the project on screen; an agent pane by default. */
-    add(type?: PaneType): Promise<Pane>;
+    /**
+     * Adds a pane at the front of the project on screen; an agent pane by default.
+     * With `other`, the agent is the enabled provider that new panes don't start with.
+     */
+    add(type?: PaneType, other?: boolean): Promise<Pane>;
     onClosed(listener: (event: PanesClosedEvent) => void): Unsubscribe;
     archive(id: string): Promise<void>;
     /** Reorders the given panes among the layout slots they already occupy. */

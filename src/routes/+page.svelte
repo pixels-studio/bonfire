@@ -53,6 +53,7 @@
     errorMessage,
     isAssistantPane,
     reorderLayout,
+    startingProvider,
   } from '$shared/domain';
 
   let workspace = $state<State>(emptyState());
@@ -62,7 +63,6 @@
   let paneStrip = $state<HTMLDivElement>();
   const statuses = new PaneStatuses();
   let inView = $state<Record<string, boolean>>({});
-  let panelsInView = $state<Partial<Record<AppPanel, boolean>>>({});
   let sizeOverrides = $state<Record<string, PaneSize>>({});
   let pullRequestSize = $state<PaneSize>();
   const drag = new PaneDrag(
@@ -199,7 +199,7 @@
   }
 
   /** Opens a pane at the front of the strip; an agent with the last-used provider by default. */
-  async function addPane(type?: PaneType) {
+  async function addPane(type?: PaneType, other = false) {
     if (busy) return;
     if (!project) {
       addProject();
@@ -212,7 +212,7 @@
     const count = panes.length;
     addingPane = true;
     try {
-      await runAction(() => window.bonfire.panes.add(type));
+      await runAction(() => window.bonfire.panes.add(type, other));
       await tick();
     } finally {
       addingPane = false;
@@ -350,10 +350,6 @@
     void tick().then(() =>
       isPanel(id) ? scrollToPanel(id) : scrollToPane(id),
     );
-  }
-
-  function movePane(paneId: string, step: number) {
-    moveItem(paneId, step);
   }
 
   /** The grip of a pane or panel: drags it, or moves it with the arrow keys. */
@@ -509,20 +505,12 @@
       case 'insights':
         showInsights('tokens');
         break;
-      case 'usage':
-        showInsights('usage');
-        break;
       case 'addProject':
         addProject();
         break;
       case 'switchProject':
         projectMenuOpen = true;
         break;
-      case 'openProject': {
-        const target = workspace.projects[digit - 1];
-        if (target) openProject(target.id);
-        break;
-      }
       case 'switchBranch':
         if (project && isRepository) branchMenuOpen = true;
         break;
@@ -535,11 +523,8 @@
       case 'newConversation':
         void addPane();
         break;
-      case 'newClaude':
-        void addPane('claude');
-        break;
-      case 'newCodex':
-        void addPane('codex');
+      case 'newOtherAgent':
+        void addPane(undefined, true);
         break;
       case 'newTerminal':
         void addPane('terminal');
@@ -559,15 +544,18 @@
       case 'goToPane':
         if (panes[digit - 1]) void focusPane(panes[digit - 1].id);
         break;
+      case 'goToFarPane':
+        // Panes 10 to 18 sit on the same digits, with ⇧ held.
+        if (panes[digit + 8]) void focusPane(panes[digit + 8].id);
+        break;
+      case 'run':
+        scripts.toggle();
+        break;
       case 'previousPane':
         stepPane(-1);
         break;
       case 'nextPane':
         stepPane(1);
-        break;
-      case 'movePaneLeft':
-      case 'movePaneRight':
-        if (activePane) movePane(activePane.id, id === 'movePaneLeft' ? -1 : 1);
         break;
       case 'resizePane':
         cyclePaneSize();
@@ -602,8 +590,6 @@
         for (const { target, isIntersecting } of entries) {
           const { dataset } = target as HTMLElement;
           if (dataset.paneId) inView[dataset.paneId] = isIntersecting;
-          else if (dataset.panel)
-            panelsInView[dataset.panel as AppPanel] = isIntersecting;
         }
       },
       { root: paneStrip, threshold: 0.5 },
@@ -866,14 +852,17 @@
       {trafficLightInset}
       onhelp={() => window.bonfire.navigation.help()}
       onaddPane={addPane}
-      panes={panes.map(({ id }) => ({
+      startingProvider={startingProvider(
+        preferences.current,
+        workspace.settings.lastProvider,
+      )}
+      panes={panes.map(({ id, title }) => ({
         id,
+        title,
         status: scripts.runOfPane(id)?.running ? 'working' : statuses.get(id),
-        inView: !!inView[id],
       }))}
       {canAddPane}
       onselectPane={scrollToPane}
-      {panelsInView}
       onselectPanel={scrollToPanel}
     />
     <div class="flex min-w-0 flex-1 flex-col">

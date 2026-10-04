@@ -29,6 +29,8 @@ class ScriptsStore {
 
   /** Told of the pane a script runs in, to bring it on screen. */
   onPane?: (paneId: string) => void | Promise<void>;
+  /** Told when there is no script to run, so the Run button can ask for one. */
+  onNeedScript?: () => void;
   /** Told when panes changed, such as a deleted script's pane closing. */
   onPanesChanged?: () => void | Promise<void>;
 
@@ -107,6 +109,13 @@ class ScriptsStore {
       ),
     ),
   );
+
+  /** Stops every running script, or runs the selected one; with none, asks for one. */
+  toggle() {
+    if (this.running.length) return void this.stopAll();
+    if (!this.selected) return this.onNeedScript?.();
+    void this.run(this.selected.id);
+  }
 
   /** Stops every running script of the project at once. */
   async stopAll() {

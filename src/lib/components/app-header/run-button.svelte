@@ -4,7 +4,8 @@
   import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
   import Icon from '$lib/components/icon/icon.svelte';
   import { scripts } from '$lib/stores/scripts.svelte';
-  import { cn } from '$lib/utils';
+  import { shortcutText } from '$lib/shortcuts';
+  import { cn, isMac } from '$lib/utils';
   import type { RunScript } from '$shared/contracts';
   import ScriptDialog from './script-dialog.svelte';
 
@@ -37,12 +38,11 @@
     requestAnimationFrame(() => (dialogOpen = true));
   }
 
-  /** Stops every running script, or runs the selected one; with no scripts yet, asks for one. */
-  function primary() {
-    if (running) return void scripts.stopAll();
-    if (!selected) return openDialog();
-    void scripts.run(selected.id);
-  }
+  // The run shortcut asks for a script through the same dialog.
+  $effect(() => {
+    scripts.onNeedScript = () => openDialog();
+    return () => (scripts.onNeedScript = undefined);
+  });
 
   function toggle(script: RunScript) {
     if (scripts.isRunning(script.id)) void scripts.stop(script.id);
@@ -57,9 +57,9 @@
 
   const title = $derived.by(() => {
     if (running)
-      return `Stop ${scripts.running.map(({ name }) => name).join(', ')}`;
+      return `Stop ${scripts.running.map(({ name }) => name).join(', ')} (${shortcutText('run', isMac())})`;
     if (!selected) return 'Add a script that starts the project';
-    return `Run ${selected.name}: ${selected.command}`;
+    return `Run ${selected.name}: ${selected.command} (${shortcutText('run', isMac())})`;
   });
 </script>
 
@@ -74,7 +74,7 @@
     disabled={list === undefined || pending}
     aria-busy={pending || undefined}
     {title}
-    onclick={primary}
+    onclick={() => scripts.toggle()}
   >
     <span
       class={cn('flex min-w-0 items-center gap-1.5', pending && 'invisible')}
