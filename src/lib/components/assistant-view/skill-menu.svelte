@@ -38,6 +38,7 @@
 </script>
 
 <script lang="ts">
+  import { overlayScrollbar } from '$lib/scrollbar';
   import { cn } from '$lib/utils';
 
   let {
@@ -72,6 +73,7 @@
 >
   {#if matches.length}
     <ul
+      {@attach overlayScrollbar}
       bind:this={list}
       {id}
       role="listbox"

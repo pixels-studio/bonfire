@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { overlayScrollbar } from '$lib/scrollbar';
   import { parseDiff } from '$lib/diff';
   import { highlight, type Token } from '$lib/highlight';
   import { cn } from '$lib/utils';
@@ -47,6 +48,7 @@
 </script>
 
 <div
+  {@attach overlayScrollbar}
   class="mb-2 overflow-x-auto rounded-lg border border-border bg-black/25 py-2 font-mono text-xs/relaxed"
 >
   {#if rows.length}

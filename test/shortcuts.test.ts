@@ -55,60 +55,36 @@ test('extra modifiers pick a different shortcut', () => {
       'global',
     );
   assert.equal(mac('n', 'KeyN'), 'newConversation');
-  assert.equal(mac('N', 'KeyN', true), 'newBranch');
+  assert.equal(mac('N', 'KeyN', true), 'newOtherAgent');
+  assert.equal(mac('b', 'KeyB'), 'switchBranch');
+  assert.equal(mac('B', 'KeyB', true), 'newBranch');
   assert.equal(mac('p', 'KeyP'), 'switchProject');
   assert.equal(mac('P', 'KeyP', true), 'pullRequest');
-  assert.equal(mac('i', 'KeyI'), 'insights');
-  assert.equal(mac('U', 'KeyU', true), 'usage');
+  assert.equal(mac('w', 'KeyW'), undefined);
+  assert.equal(mac('W', 'KeyW', true), 'closePane');
 });
 
-test('⌥ chords match by the physical key, whatever ⌥ types', () => {
-  assert.equal(
-    matchShortcut(
-      press('¡', 'Digit1', { metaKey: true, altKey: true }),
-      true,
-      'global',
-    ),
-    'openProject',
-  );
-  assert.equal(
-    matchShortcut(
-      press('ArrowLeft', 'ArrowLeft', { metaKey: true, altKey: true }),
-      true,
-      'global',
-    ),
-    'previousPane',
-  );
-  assert.equal(
-    matchShortcut(
-      press('ArrowRight', 'ArrowRight', {
-        metaKey: true,
-        altKey: true,
-        shiftKey: true,
-      }),
-      true,
-      'global',
-    ),
-    'movePaneRight',
-  );
+test('shifted digits match by the physical key, whatever ⇧ types', () => {
+  const event = press('#', 'Digit3', { metaKey: true, shiftKey: true });
+  assert.equal(matchShortcut(event, true, 'global'), 'goToFarPane');
+  assert.equal(digitOf(event), 3);
 });
 
-test('a shortcut can have alternative chords', () => {
-  const bracket = press(']', 'BracketRight', { metaKey: true });
-  assert.equal(matchShortcut(bracket, true, 'global'), 'nextPane');
-  assert.deepEqual(shortcutKeys('nextPane', true), [
-    ['⌘', '⌥', '→'],
-    ['⌘', ']'],
-  ]);
+test('brackets move between panes', () => {
+  const bracket = (key: string, code: string) =>
+    matchShortcut(press(key, code, { metaKey: true }), true, 'global');
+  assert.equal(bracket('[', 'BracketLeft'), 'previousPane');
+  assert.equal(bracket(']', 'BracketRight'), 'nextPane');
+  assert.deepEqual(shortcutKeys('nextPane', true), [['⌘', ']']]);
 });
 
-test('digits go to a pane, and with ⌥ to a project', () => {
+test('digits go to a pane, and with ⇧ to panes 10 to 18', () => {
   const event = press('3', 'Digit3', { metaKey: true });
   assert.equal(matchShortcut(event, true, 'global'), 'goToPane');
   assert.equal(digitOf(event), 3);
   assert.equal(
-    matchShortcut({ ...event, altKey: true }, true, 'global'),
-    'openProject',
+    matchShortcut({ ...event, shiftKey: true }, true, 'global'),
+    'goToFarPane',
   );
   assert.equal(digitOf(press('0', 'Digit0')), undefined);
   assert.equal(
@@ -160,15 +136,15 @@ test('keycaps are symbols on macOS and words elsewhere', () => {
   assert.deepEqual(chordKeys(SHORTCUTS.newBranch.chords[0], true), [
     '⌘',
     '⇧',
-    'N',
+    'B',
   ]);
   assert.deepEqual(chordKeys(SHORTCUTS.newBranch.chords[0], false), [
     'Ctrl',
     'Shift',
-    'N',
+    'B',
   ]);
-  assert.equal(shortcutText('newBranch', true), '⌘⇧N');
-  assert.equal(shortcutText('newBranch', false), 'Ctrl+Shift+N');
+  assert.equal(shortcutText('newBranch', true), '⌘⇧B');
+  assert.equal(shortcutText('newBranch', false), 'Ctrl+Shift+B');
   assert.deepEqual(shortcutKeys('stop', true), [['Esc']]);
   assert.deepEqual(shortcutKeys('goToPane', true), [['⌘', '1–9']]);
 });

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { overlayScrollbar } from '$lib/scrollbar';
   import { onMount } from 'svelte';
   import { fly } from 'svelte/transition';
   import ChevronDown from '@lucide/svelte/icons/chevron-down';
@@ -109,7 +110,7 @@
       <PaneMenu label="Files options" {onresize} onclose={onclosepanel} />
     </div>
   </header>
-  <div class="min-h-0 flex-1 overflow-x-hidden overflow-y-auto pb-3">
+  <div {@attach overlayScrollbar} class="min-h-0 flex-1 overflow-x-hidden overflow-y-auto pb-3">
     {#if error}
       <p class="px-4 text-sm text-muted-foreground">{error}</p>
     {:else if content !== undefined}

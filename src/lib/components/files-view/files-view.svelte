@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { overlayScrollbar } from '$lib/scrollbar';
   import { onMount } from 'svelte';
   import Search from '@lucide/svelte/icons/search';
   import * as Card from '$lib/components/ui/card';
@@ -103,7 +104,7 @@
     {onclose}
     {onrename}
   />
-  <section class="min-h-0 flex-1 overflow-auto px-3 pb-2">
+  <section {@attach overlayScrollbar} class="min-h-0 flex-1 overflow-auto px-3 pb-2">
     <div class="sticky top-0 z-10 -mx-3 bg-card px-3 pt-0.5 pb-4">
       <div class="relative">
         <Search

@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { ACCENT_RANGE, accentHue, accentSliderValue } from '../src/lib/accent';
+import {
+  ACCENT_RANGE,
+  ACCENT_STOPS,
+  accentStopHue,
+  accentStopIndex,
+} from '../src/lib/accent';
 import { noticeBody } from '../electron/main/notifier';
 import { cleanTitle, titlePrompt } from '../electron/main/titles';
 import {
@@ -34,16 +39,17 @@ test('state saved before preferences existed still loads', () => {
   assert.equal(state.panes[0].approvals, 'auto');
 });
 
-test('accent hues round-trip through the slider', () => {
-  for (const hue of [DEFAULT_ACCENT_HUE, 0, 149, 230, 300, 359])
-    assert.equal(accentHue(accentSliderValue(hue)), hue);
-  const value = accentSliderValue(DEFAULT_ACCENT_HUE);
-  assert(value >= ACCENT_RANGE.min && value <= ACCENT_RANGE.max);
+test('accent stops round-trip through their hues', () => {
+  for (let index = 0; index < ACCENT_STOPS; index++)
+    assert.equal(accentStopIndex(accentStopHue(index)), index);
+  const index = accentStopIndex(DEFAULT_ACCENT_HUE);
+  assert(index >= 0 && index < ACCENT_STOPS);
 });
 
 test('hues outside the slider snap to its nearer end', () => {
-  assert.equal(accentSliderValue(160), ACCENT_RANGE.max);
-  assert.equal(accentSliderValue(220), ACCENT_RANGE.min);
+  assert.equal(accentStopIndex(160), ACCENT_STOPS - 1);
+  assert.equal(accentStopIndex(220), 0);
+  assert.equal(accentStopHue(0), ACCENT_RANGE.min);
 });
 
 test('titles are pulled out of quotes, labels, and markdown', () => {

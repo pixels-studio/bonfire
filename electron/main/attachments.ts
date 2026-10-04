@@ -1,6 +1,17 @@
 import { randomUUID } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
-import type { Attachment } from '../../shared/contracts';
+import { readFile, readdir, rm, stat } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import type { NativeImage } from 'electron';
+import type { Attachment, ConversationMessage } from '../../shared/contracts';
+
+/**
+ * The side, in pixels, of the square preview kept for an image. Chips draw it at 16px, so
+ * this stays sharp at 4x while weighing a few kilobytes instead of the whole image.
+ */
+const PREVIEW_SIZE = 64;
+/** Images the preview can't be made from are kept as they are only up to this size. */
+const MAX_RAW_PREVIEW_BYTES = 128_000;
 
 export type ImageMimeType =
   'image/png' | 'image/webp' | 'image/gif' | 'image/jpeg';
@@ -21,8 +32,95 @@ export async function readImage(path: string) {
     size: data.byteLength,
     mimeType,
     base64,
-    previewUrl: `data:${mimeType};base64,${base64}`,
+    previewUrl: await imagePreview(data, mimeType, path),
   };
+}
+
+/** A centred square of the image, scaled down to the preview size, as a PNG data URL. */
+function squarePreview(image: NativeImage) {
+  if (image.isEmpty()) return undefined;
+  const { width, height } = image.getSize();
+  const side = Math.min(width, height);
+  const square = image.crop({
+    x: Math.floor((width - side) / 2),
+    y: Math.floor((height - side) / 2),
+    width: side,
+    height: side,
+  });
+  const size = Math.min(side, PREVIEW_SIZE);
+  return square
+    .resize({ width: size, height: size, quality: 'good' })
+    .toDataURL();
+}
+
+/**
+ * A small preview of an image for its chip. PNG and JPEG are scaled directly; other formats
+ * go through the system's thumbnailer when the file is at hand, and are otherwise kept
+ * whole if small, or left without a preview.
+ */
+export async function imagePreview(
+  data: Buffer,
+  mimeType: string,
+  path?: string,
+): Promise<string | undefined> {
+  // Loaded on use, so code that never handles an image runs outside Electron, as in tests.
+  const { nativeImage } = await import('electron');
+  const preview = squarePreview(nativeImage.createFromBuffer(data));
+  if (preview) return preview;
+  if (path && process.platform !== 'linux') {
+    const size = { width: PREVIEW_SIZE, height: PREVIEW_SIZE };
+    const thumbnail = await nativeImage
+      .createThumbnailFromPath(path, size)
+      .catch(() => undefined);
+    const fromThumbnail = thumbnail && squarePreview(thumbnail);
+    if (fromThumbnail) return fromThumbnail;
+  }
+  return data.byteLength <= MAX_RAW_PREVIEW_BYTES
+    ? `data:${mimeType};base64,${data.toString('base64')}`
+    : undefined;
+}
+
+/** Previews larger than this were saved whole by older versions. */
+const LEGACY_PREVIEW_LENGTH = 32_000;
+
+/**
+ * Older versions kept each image's whole data as its preview, which made saved state
+ * megabytes per image. Shrinks those in place; returns whether any changed.
+ */
+export async function shrinkPreviews(messages: ConversationMessage[]) {
+  let changed = false;
+  for (const message of messages) {
+    const url = message.previewUrl;
+    if (!url || url.length <= LEGACY_PREVIEW_LENGTH) continue;
+    const match = /^data:([^;,]+);base64,/.exec(url);
+    if (!match) continue;
+    const data = Buffer.from(url.slice(match[0].length), 'base64');
+    message.previewUrl = await imagePreview(data, match[1]);
+    changed = true;
+  }
+  return changed;
+}
+
+/** Where a pasted image is written, as providers read images from disk. */
+export const PASTE_FOLDER_PREFIX = 'bonfire-paste-';
+/** How long pasted images are kept: past any turn that could still be reading one. */
+const PASTE_TTL_MS = 24 * 60 * 60_000;
+
+/** Removes pasted images left from earlier days; nothing else ever deletes them. */
+export async function removeStalePastes(now = Date.now()) {
+  const root = tmpdir();
+  const names = await readdir(root).catch(() => []);
+  await Promise.all(
+    names
+      .filter((name) => name.startsWith(PASTE_FOLDER_PREFIX))
+      .map(async (name) => {
+        const folder = join(root, name);
+        const { mtimeMs } = await stat(folder);
+        if (now - mtimeMs > PASTE_TTL_MS)
+          await rm(folder, { recursive: true, force: true });
+      })
+      .map((removal) => removal.catch(() => {})),
+  );
 }
 
 /** The file extension for image data, judged by its leading bytes; undefined if not a supported image. */

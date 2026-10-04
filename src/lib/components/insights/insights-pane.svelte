@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { overlayScrollbar } from '$lib/scrollbar';
   import { onMount } from 'svelte';
   import * as Card from '$lib/components/ui/card';
   import PaneHeader from '$lib/components/pane-header/pane-header.svelte';
@@ -44,7 +45,7 @@
       />
     {/snippet}
   </PaneHeader>
-  <div class="min-h-0 flex-1 overflow-y-auto">
+  <div {@attach overlayScrollbar} class="min-h-0 flex-1 overflow-y-auto">
     {#if tab === 'usage'}
       <UsageTab />
     {:else}

@@ -1,6 +1,7 @@
 <script lang="ts">
   import DOMPurify from 'dompurify';
   import { marked } from 'marked';
+  import { MarkdownBlocks } from '$lib/markdown-blocks';
   import { cn } from '$lib/utils';
 
   let { text, class: className }: { text: string; class?: string } = $props();
@@ -8,11 +9,12 @@
   // Rendered HTML by block source. While text streams in only the last block changes,
   // so earlier blocks keep their DOM, which also keeps a selection or open code block steady.
   const rendered = new Map<string, string>();
+  const splitter = new MarkdownBlocks();
 
   // Model output is untrusted, so the rendered HTML is sanitized before insertion.
   // Blocks are parsed on their own, so a link reference defined in a later block isn't seen.
   const blocks = $derived.by(() => {
-    const sources = marked.lexer(text, { gfm: true }).map((token) => token.raw);
+    const sources = splitter.update(text);
     const html = sources.map((source) => {
       let block = rendered.get(source);
       if (block === undefined) {

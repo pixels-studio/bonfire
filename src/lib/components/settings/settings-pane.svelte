@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { overlayScrollbar } from '$lib/scrollbar';
   import * as Card from '$lib/components/ui/card';
   import PaneHeader from '$lib/components/pane-header/pane-header.svelte';
   import type { PanelProps } from '$lib/panes';
@@ -15,7 +16,7 @@
     {onresize}
     {onclose}
   />
-  <div class="min-h-0 flex-1 overflow-y-auto">
+  <div {@attach overlayScrollbar} class="min-h-0 flex-1 overflow-y-auto">
     <SettingsPanel />
   </div>
 </Card.Root>

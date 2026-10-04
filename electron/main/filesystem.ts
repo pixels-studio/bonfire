@@ -1,3 +1,4 @@
+import { homedir } from 'node:os';
 import { basename } from 'node:path';
 import { watch, type FSWatcher } from 'chokidar';
 import type { Entry, FileChangeEvent } from '../../shared/contracts';
@@ -9,6 +10,8 @@ import {
   type Place,
 } from './machines';
 
+/** Photos, Music, and TV libraries, which macOS asks permission to read. */
+const MEDIA_LIBRARY = /\.(photoslibrary|musiclibrary|tvlibrary|photolibrary)$/i;
 const HIDDEN_DIRECTORIES = new Set([
   '.git',
   'node_modules',
@@ -112,13 +115,21 @@ export class Filesystem {
   ) {
     const { machine, path: rootPath } = resolvePlace(root);
     if (machine.remote || this.watchers.has(projectId)) return;
+    // Watching the whole disk or home folder would reach into Music, Photos, and Contacts,
+    // which macOS guards with a prompt each, for changes no pane needs.
+    if (rootPath === '/' || rootPath === homedir()) return;
     const { relative } = machine.path;
     const watcher = watch(rootPath, {
       ignoreInitial: true,
       depth: WATCH_DEPTH,
       followSymlinks: false,
       ignored: (path) =>
-        path.split(/[\\/]/).some((segment) => HIDDEN_DIRECTORIES.has(segment)),
+        path
+          .split(/[\\/]/)
+          .some(
+            (segment) =>
+              HIDDEN_DIRECTORIES.has(segment) || MEDIA_LIBRARY.test(segment),
+          ),
     });
     watcher.on('all', (_eventName, path) =>
       emit({ projectId, path: relative(rootPath, path) }),

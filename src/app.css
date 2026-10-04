@@ -4,8 +4,8 @@
 
 @theme {
   --font-sans:
-    'Inter Variable', Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI',
-    sans-serif;
+    'Inter Variable', Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont,
+    'Segoe UI', sans-serif;
   --font-mono: 'SFMono-Regular', Menlo, Consolas, monospace;
 
   /* Surfaces take on a trace of the accent. */
@@ -30,7 +30,6 @@
     var(--accent-lightness) var(--accent-chroma) var(--accent-hue)
   );
   --color-success: #48b005;
-  --color-warning: #facc15;
   --color-destructive: #ff8c73;
   --color-destructive-surface: #3a211d;
   --color-border: rgb(255 255 255 / 10%);
@@ -169,6 +168,82 @@
 
 @utility scrollbar-none {
   scrollbar-width: none;
+}
+
+/* The overlay scroller `overlayScrollbar` (src/lib/scrollbar.ts) pins to a scrolling element's
+   edge, matching the terminal's: a thin thumb that widens, over a faint track, on hover. */
+[data-scrollbar] {
+  position: absolute;
+  z-index: 10;
+  opacity: 0;
+  pointer-events: none;
+  border: 0 solid transparent;
+  transition:
+    opacity 500ms,
+    background-color 200ms,
+    border-color 200ms;
+
+  &[data-visible] {
+    opacity: 1;
+    pointer-events: auto;
+    transition-duration: 200ms;
+  }
+  &[data-expanded] {
+    border-color: rgb(255 255 255 / 5%);
+    background-color: rgb(255 255 255 / 3%);
+  }
+
+  & > div {
+    position: absolute;
+    border-radius: 9999px;
+    background-color: rgb(255 255 255 / 20%);
+    transition:
+      width 150ms,
+      height 150ms,
+      background-color 150ms;
+  }
+  &[data-expanded] > div {
+    background-color: rgb(255 255 255 / 35%);
+  }
+}
+
+[data-scrollbar='y'] {
+  top: anchor(top);
+  bottom: anchor(bottom);
+  right: anchor(right);
+  width: 14px;
+  border-left-width: 1px;
+
+  & > div {
+    right: 2px;
+    width: 5px;
+  }
+  &[data-expanded] > div {
+    width: 8px;
+  }
+}
+
+[data-scrollbar='x'] {
+  left: anchor(left);
+  right: anchor(right);
+  bottom: anchor(bottom);
+  height: 14px;
+  border-top-width: 1px;
+
+  & > div {
+    bottom: 2px;
+    height: 5px;
+  }
+  &[data-expanded] > div {
+    height: 8px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-scrollbar],
+  [data-scrollbar] > div {
+    transition: none;
+  }
 }
 
 @layer base {

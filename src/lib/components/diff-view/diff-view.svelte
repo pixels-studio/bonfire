@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { overlayScrollbar } from '$lib/scrollbar';
   import { onMount } from 'svelte';
   import GitCommitHorizontal from '@lucide/svelte/icons/git-commit-horizontal';
   import FolderX from '@lucide/svelte/icons/folder-x';
@@ -77,7 +78,7 @@
     {onclose}
     {onrename}
   />
-  <section class="min-h-0 flex-1 overflow-auto px-4 pt-2 pb-2 [&:has(>div:only-child)]:flex [&:has(>div:only-child)]:flex-col">
+  <section {@attach overlayScrollbar} class="min-h-0 flex-1 overflow-auto px-4 pt-2 pb-2 [&:has(>div:only-child)]:flex [&:has(>div:only-child)]:flex-col">
     {#if error}<p class="text-sm text-destructive">{error}</p>{/if}
     {#each status?.changes ?? [] as change (change.path)}
       {@const slash = change.path.lastIndexOf('/') + 1}

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { overlayScrollbar } from '$lib/scrollbar';
   import { Button } from '$lib/components/ui/button';
   import { Checkbox } from '$lib/components/ui/checkbox';
   import * as RadioGroup from '$lib/components/ui/radio-group';
@@ -89,6 +90,7 @@
     <p id={`request-${request.id}`} class="font-medium">{request.title}</p>
     {#if request.detail}
       <pre
+        {@attach overlayScrollbar}
         class="max-h-40 overflow-auto rounded-lg bg-foreground/8 px-2.5 py-2 font-mono text-xs/5 whitespace-pre-wrap text-foreground/80 wrap-anywhere">{request.detail}</pre>
     {/if}
     {#if request.reason}

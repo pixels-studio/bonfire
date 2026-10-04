@@ -11,6 +11,7 @@ import {
   shell,
 } from 'electron';
 import { basename, join, resolve, relative, isAbsolute } from 'node:path';
+import { mkdirSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { homedir } from 'node:os';
 import { events, requests } from '../../shared/contracts';
@@ -26,6 +27,16 @@ protocol.registerSchemesAsPrivileged([
 app.setName('Bonfire');
 if (process.env.BONFIRE_USER_DATA)
   app.setPath('userData', process.env.BONFIRE_USER_DATA);
+// Opened from Finder or the Dock, the app starts in `/`, and so does every process it starts
+// without a folder of its own, such as the agents' background sessions for models, limits and
+// titles. Claude Code lists the files of its folder as it starts, which from `/` walks Music,
+// Photos, Contacts and every mounted volume, each a macOS privacy prompt. An empty folder of
+// the app's own gives those processes nothing to walk.
+if (process.cwd() === '/') {
+  const idle = join(app.getPath('userData'), 'idle');
+  mkdirSync(idle, { recursive: true });
+  process.chdir(idle);
+}
 process.env.PATH = [
   process.env.PATH,
   join(homedir(), '.local/bin'),
@@ -115,9 +126,11 @@ async function createWindow() {
   mainWindow.webContents.on('will-navigate', (event, url) => {
     if (!isTrustedUrl(url)) event.preventDefault();
   });
+  // The window needs no web permissions (camera, microphone, location, and the like).
   mainWindow.webContents.session.setPermissionRequestHandler(
     (_contents, _permission, callback) => callback(false),
   );
+  mainWindow.webContents.session.setPermissionCheckHandler(() => false);
   mainWindow.on('enter-full-screen', () => send(events.fullscreen, true));
   mainWindow.on('leave-full-screen', () => send(events.fullscreen, false));
   mainWindow.webContents.on('did-finish-load', () =>

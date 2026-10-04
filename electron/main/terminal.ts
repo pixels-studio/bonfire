@@ -11,6 +11,14 @@ import type { Store } from './persistence';
 import { defaultShell, isWindows } from './shell';
 
 const SCROLLBACK_BYTES = 1024 * 1024;
+/** Scrollback may run this far past its cap before it is trimmed, so output isn't copied per chunk. */
+const SCROLLBACK_SLACK = SCROLLBACK_BYTES / 4;
+/**
+ * How long output is gathered before it is sent to the window. A busy program writes
+ * thousands of small chunks a second; batching them, as VS Code does, keeps the window
+ * from handling each one, at a delay too short to notice while typing.
+ */
+const OUTPUT_BATCH_MS = 5;
 /** How long a stopped script gets to exit after Ctrl-C before it is hung up on. */
 const STOP_GRACE_MS = 3000;
 
@@ -22,6 +30,9 @@ type TerminalRecord = TerminalSnapshot & {
   process: pty.IPty;
   /** Settles once the process has exited. */
   exited: Promise<void>;
+  /** Output not yet sent to the window. */
+  pending: string;
+  flushTimer?: NodeJS.Timeout;
 };
 
 /**
@@ -142,13 +153,18 @@ export class Terminals {
       sequence: 0,
       data: '',
       exited: new Promise((resolve) => (markExited = resolve)),
+      pending: '',
     };
     this.records.set(id, record);
     process.onData((data) => {
-      record.data = (record.data + data).slice(-SCROLLBACK_BYTES);
-      this.emit({ terminalId: id, sequence: ++record.sequence, data });
+      record.pending += data;
+      record.flushTimer ??= setTimeout(
+        () => this.flushOutput(id, record),
+        OUTPUT_BATCH_MS,
+      );
     });
     process.onExit(({ exitCode }) => {
+      this.flushOutput(id, record);
       record.exitCode = exitCode;
       markExited();
       this.emit({ terminalId: id, sequence: ++record.sequence, exitCode });
@@ -158,7 +174,20 @@ export class Terminals {
 
   snapshot(id: string): TerminalSnapshot {
     const { data, sequence, exitCode } = this.get(id);
-    return { data, sequence, exitCode };
+    return { data: data.slice(-SCROLLBACK_BYTES), sequence, exitCode };
+  }
+
+  /** Sends the output gathered since the last batch, and keeps it for later snapshots. */
+  private flushOutput(id: string, record: TerminalRecord) {
+    clearTimeout(record.flushTimer);
+    record.flushTimer = undefined;
+    const data = record.pending;
+    if (!data) return;
+    record.pending = '';
+    record.data += data;
+    if (record.data.length > SCROLLBACK_BYTES + SCROLLBACK_SLACK)
+      record.data = record.data.slice(-SCROLLBACK_BYTES);
+    this.emit({ terminalId: id, sequence: ++record.sequence, data });
   }
 
   write(id: string, data: string) {
@@ -183,6 +212,7 @@ export class Terminals {
   private closeWhere(matches: (record: TerminalRecord) => boolean) {
     for (const [id, record] of this.records)
       if (matches(record)) {
+        clearTimeout(record.flushTimer);
         this.kill(id);
         this.records.delete(id);
       }

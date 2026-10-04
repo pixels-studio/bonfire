@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { overlayScrollbar } from '$lib/scrollbar';
   import { onMount } from 'svelte';
   import Search from '@lucide/svelte/icons/search';
   import * as Card from '$lib/components/ui/card';
@@ -75,7 +76,7 @@
       />
     </div>
   </div>
-  <div class="min-h-0 flex-1 overflow-y-auto px-4 pb-6">
+  <div {@attach overlayScrollbar} class="min-h-0 flex-1 overflow-y-auto px-4 pb-6">
     {#each groups as { group, ids } (group)}
       <section class="not-first:mt-12" aria-label={group}>
         <h3 class="mb-1 text-sm text-muted-foreground">{group}</h3>

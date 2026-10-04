@@ -136,9 +136,13 @@
     term.open(host);
     openTerm = term;
 
-    const unsubscribe = window.bonfire.terminal.onData((event) =>
-      ready ? receive(event) : pendingEvents.push(event),
-    );
+    // Until the snapshot is in, this terminal's output waits. Others' is no concern of this
+    // pane, and holding it would grow without end while a script isn't running.
+    const unsubscribe = window.bonfire.terminal.onData((event) => {
+      if (ready) receive(event);
+      else if (terminalId && event.terminalId === terminalId)
+        pendingEvents.push(event);
+    });
     const input = term.onData((data) => {
       if (terminalId && !exited)
         window.bonfire.terminal.write(terminalId, data).catch(reportError);

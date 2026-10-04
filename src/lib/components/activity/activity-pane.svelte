@@ -37,6 +37,7 @@
 </script>
 
 <script lang="ts">
+  import { overlayScrollbar } from '$lib/scrollbar';
   import * as Card from '$lib/components/ui/card';
   import { Button } from '$lib/components/ui/button';
   import * as Tooltip from '$lib/components/ui/tooltip';
@@ -150,7 +151,7 @@
     </Tooltip.Root>
     {/snippet}
   </PaneHeader>
-  <div class="min-h-0 flex-1 overflow-y-auto px-2 pb-6">
+  <div {@attach overlayScrollbar} class="min-h-0 flex-1 overflow-y-auto px-2 pb-6">
     {#if error}
       <p
         class="px-2 py-8 text-center text-sm text-pretty text-muted-foreground"

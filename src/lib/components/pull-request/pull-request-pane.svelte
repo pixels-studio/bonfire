@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { overlayScrollbar } from '$lib/scrollbar';
   import { untrack } from 'svelte';
   import { Button } from '$lib/components/ui/button';
   import { Checkbox } from '$lib/components/ui/checkbox';
@@ -81,7 +82,7 @@
   }
 </script>
 
-<div class="flex h-full min-h-0 flex-col overflow-y-auto px-4 pb-4">
+<div {@attach overlayScrollbar} class="flex h-full min-h-0 flex-col overflow-y-auto px-4 pb-4">
   {#if pull === undefined}
     <div
       class="grid flex-1 place-content-center"

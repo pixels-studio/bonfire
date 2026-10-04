@@ -6,6 +6,8 @@
 
   let { message }: { message: ConversationMessage } = $props();
   const streaming = $derived(message.status === 'streaming');
+  /** The text is built once first opened, so streaming thinking costs nothing while closed. */
+  let opened = $state(false);
 
   const seconds = $derived(
     message.durationMs === undefined
@@ -24,9 +26,14 @@
 
 <details class="group text-sm text-muted-foreground">
   <summary
+    onclick={() => (opened = true)}
     class="flex w-fit cursor-pointer list-none items-center gap-1 hover:text-foreground [&::-webkit-details-marker]:hidden"
   >
-    {#if streaming}<MatrixLoader variant="twinkle" size="sm" class="mr-1" />{/if}
+    {#if streaming}<MatrixLoader
+        variant="twinkle"
+        size="sm"
+        class="mr-1"
+      />{/if}
     <span class={streaming ? 'shimmer-text' : ''}>
       {label}
     </span>
@@ -35,7 +42,7 @@
       class="size-3.5 text-muted-foreground transition-transform group-open:rotate-180 motion-reduce:transition-none"
     />
   </summary>
-  {#if message.text}
+  {#if opened && message.text}
     <Markdown
       text={message.text}
       class="mt-2 border-l border-border pl-3 prose-muted"

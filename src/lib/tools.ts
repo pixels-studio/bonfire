@@ -1,11 +1,13 @@
-import Bot from '@lucide/svelte/icons/bot';
 import Globe from '@lucide/svelte/icons/globe';
 import ListTodo from '@lucide/svelte/icons/list-todo';
 import Search from '@lucide/svelte/icons/search';
 import Wrench from '@lucide/svelte/icons/wrench';
+import AgentIcon from '$lib/components/icon/agent-icon.svelte';
 import BashIcon from '$lib/components/icon/bash-icon.svelte';
 import EditIcon from '$lib/components/icon/edit-icon.svelte';
 import ReadIcon from '$lib/components/icon/read-icon.svelte';
+import ToolSearchIcon from '$lib/components/icon/tool-search-icon.svelte';
+import WriteIcon from '$lib/components/icon/write-icon.svelte';
 import WebFetchIcon from '$lib/components/icon/web-fetch-icon.svelte';
 import type { ConversationMessage } from '$shared/contracts';
 
@@ -16,21 +18,25 @@ const ICONS: Record<
   | typeof Wrench
   | typeof ReadIcon
   | typeof EditIcon
+  | typeof WriteIcon
   | typeof BashIcon
   | typeof WebFetchIcon
+  | typeof ToolSearchIcon
+  | typeof AgentIcon
 > = {
   Bash: BashIcon,
   Read: ReadIcon,
   Edit: EditIcon,
   MultiEdit: EditIcon,
-  Write: EditIcon,
+  Write: WriteIcon,
   NotebookEdit: EditIcon,
   Grep: Search,
   Glob: Search,
   WebFetch: WebFetchIcon,
   WebSearch: Globe,
-  Task: Bot,
-  Agent: Bot,
+  ToolSearch: ToolSearchIcon,
+  Task: AgentIcon,
+  Agent: AgentIcon,
   TodoWrite: ListTodo,
 };
 
@@ -46,6 +52,7 @@ const COLORS: Record<string, string> = {
   Glob: 'text-fuchsia-600 dark:text-fuchsia-400',
   WebFetch: 'text-cyan-600 dark:text-cyan-400',
   WebSearch: 'text-teal-600 dark:text-teal-400',
+  ToolSearch: 'text-yellow-600 dark:text-yellow-400',
   Task: 'text-pink-600 dark:text-pink-400',
   Agent: 'text-pink-600 dark:text-pink-400',
   TodoWrite: 'text-lime-600 dark:text-lime-400',

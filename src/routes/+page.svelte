@@ -4,7 +4,7 @@
   import * as Card from '$lib/components/ui/card';
   import ActivityPane from '$lib/components/activity/activity-pane.svelte';
   import AppHeader from '$lib/components/app-header/app-header.svelte';
-  import AuroraBeam from '$lib/components/aurora-beam/aurora-beam.svelte';
+  import AuroraGlow from '$lib/components/aurora-glow/aurora-glow.svelte';
   import AppRail, {
     type AppPanel,
   } from '$lib/components/app-rail/app-rail.svelte';
@@ -841,9 +841,8 @@
 {:else}
   <div class="flex h-screen">
     <!-- Glows along the top of the window while an agent carries out a pull request action. -->
-    <AuroraBeam
+    <AuroraGlow
       active={!!pullRequest.running}
-      duration={4}
       class="fixed inset-x-0 top-0 z-30 h-40"
     />
     <AppRail

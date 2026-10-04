@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { overlayScrollbar } from '$lib/scrollbar';
   import { onMount } from 'svelte';
   import ArrowUp from '@lucide/svelte/icons/arrow-up';
   import { Button } from '$lib/components/ui/button';
@@ -76,7 +77,7 @@
       autocapitalize="off"
     />
   </form>
-  <div class="h-52 overflow-y-auto p-1" aria-busy={loading}>
+  <div {@attach overlayScrollbar} class="h-52 overflow-y-auto p-1" aria-busy={loading}>
     {#if error}
       <p class="p-3 text-xs text-pretty text-destructive" role="alert">
         {error}

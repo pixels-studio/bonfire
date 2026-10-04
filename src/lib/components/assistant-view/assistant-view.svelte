@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { overlayScrollbar } from '$lib/scrollbar';
   import { onMount, tick, untrack } from 'svelte';
   import * as Card from '$lib/components/ui/card';
   import Icon from '$lib/components/icon/icon.svelte';
@@ -111,17 +112,35 @@
   /** Whether the feed is kept scrolled to the end as the reply grows; scrolling up lets go. */
   let following = true;
 
-  /** Messages split into turns, each starting at a run of user messages. */
-  const turns = $derived(
-    messages.reduce<ConversationMessage[][]>((result, item, index) => {
-      const startsTurn =
-        item.role === 'user' &&
-        (index === 0 || messages[index - 1].role !== 'user');
-      if (startsTurn || !result.length) result.push([item]);
-      else result[result.length - 1].push(item);
-      return result;
-    }, []),
-  );
+  /** The turns last worked out, whose unchanged arrays are handed out again. */
+  let previousTurns: ConversationMessage[][] = [];
+  /**
+   * Messages split into turns, each starting at a run of user messages. A turn whose
+   * messages are all as they were keeps its array, so a new message re-renders its own
+   * turn rather than every turn of a long conversation.
+   */
+  const turns = $derived.by(() => {
+    const result = messages.reduce<ConversationMessage[][]>(
+      (result, item, index) => {
+        const startsTurn =
+          item.role === 'user' &&
+          (index === 0 || messages[index - 1].role !== 'user');
+        if (startsTurn || !result.length) result.push([item]);
+        else result[result.length - 1].push(item);
+        return result;
+      },
+      [],
+    );
+    const stable = result.map((turn, index) => {
+      const previous = previousTurns[index];
+      return previous?.length === turn.length &&
+        previous.every((item, at) => item === turn[at])
+        ? previous
+        : turn;
+    });
+    previousTurns = stable;
+    return stable;
+  });
   const lastTurn = $derived(turns.at(-1) ?? []);
   /** Turns that ran while this view was open, keyed by their first message. They aren't folded afterwards. */
   let watched = $state<Record<string, true>>({});
@@ -133,7 +152,8 @@
   );
 
   function upsertMessage(message: ConversationMessage) {
-    const index = messages.findIndex((item) => item.id === message.id);
+    // Updates are nearly always to the latest messages, so the search starts from the end.
+    const index = messages.findLastIndex((item) => item.id === message.id);
     if (index === -1) messages.push(message);
     else messages[index] = message;
     // Only a new prompt moves the feed; replies fill the space below it.
@@ -349,10 +369,13 @@
     <p class="sr-only" role="status">{announcement}</p>
 
     <div class="relative min-h-0 flex-1">
+      <!-- Its content goes unrendered while the pane is scrolled out of the strip; being a
+           fixed-size scroller, it keeps its place and scroll position meanwhile. -->
       <div
+        {@attach overlayScrollbar}
         bind:this={feed}
         bind:clientHeight={feedHeight}
-        class="absolute inset-0 flex flex-col overflow-y-auto px-4 pt-6 pb-7 motion-safe:scroll-smooth"
+        class="absolute inset-0 flex flex-col overflow-y-auto px-4 pt-6 pb-7 motion-safe:scroll-smooth [content-visibility:auto]"
         onscroll={trackFollowing}
       >
         <div

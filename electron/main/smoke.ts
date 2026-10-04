@@ -9,7 +9,10 @@ import { Store } from './persistence';
 import type { services } from './services';
 
 const PROJECT_NAME = 'Smoke repository';
-/** Two shells and a pane per provider. */
+/**
+ * Two shells and a pane per provider. The window may add starting agent panes of its own
+ * when the project opens empty, depending on which agents this computer is signed in to.
+ */
 const EXPECTED_PANE_COUNT = 4;
 
 function sleep(milliseconds: number) {
@@ -154,7 +157,7 @@ async function verifyRestart(
 ) {
   await sleep(1800);
   assert.equal(backend.store.state.projects.length, 1);
-  assert.equal(backend.store.state.panes.length, EXPECTED_PANE_COUNT);
+  assert(backend.store.state.panes.length >= EXPECTED_PANE_COUNT);
   assert.match(await pageText(mainWindow), new RegExp(PROJECT_NAME));
   console.log('BONFIRE_RESTART_OK: project and pane layout restored');
 }
@@ -311,11 +314,13 @@ export async function smoke(
   backend.store.flush();
   const restoredStore = new Store(process.env.BONFIRE_USER_DATA!);
   assert.equal(restoredStore.state.lastProjectId, project.id);
-  assert.equal(
-    restoredStore.state.panes.filter((pane) => pane.projectId === project.id)
-      .length,
-    EXPECTED_PANE_COUNT,
-  );
+  const paneIdsOf = (store: Store) =>
+    store.state.panes
+      .filter((pane) => pane.projectId === project.id)
+      .map(({ id }) => id)
+      .sort();
+  assert.deepEqual(paneIdsOf(restoredStore), paneIdsOf(backend.store));
+  assert(paneIdsOf(restoredStore).length >= EXPECTED_PANE_COUNT);
 
   await reloadAndWait(mainWindow, 1500);
   assert.match(await pageText(mainWindow), new RegExp(PROJECT_NAME));

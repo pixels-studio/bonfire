@@ -11,6 +11,7 @@
 </script>
 
 <script lang="ts">
+  import { overlayScrollbar } from '$lib/scrollbar';
   import ArrowUp from '@lucide/svelte/icons/arrow-up';
   import { Editor, type JSONContent } from '@tiptap/core';
   import type { Node as PMNode } from '@tiptap/pm/model';
@@ -522,7 +523,7 @@
     />
   {/if}
   <!-- Grows with its content up to ten lines, then scrolls. -->
-  <div class="relative max-h-50 overflow-y-auto" bind:this={element}></div>
+  <div {@attach overlayScrollbar} class="relative max-h-50 overflow-y-auto" bind:this={element}></div>
   <div class="flex items-center justify-between gap-3 pt-3">
     <div class="flex min-w-0 items-center gap-6">
       {@render children()}

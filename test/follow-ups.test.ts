@@ -44,6 +44,8 @@ test('a steer joins the running turn through the provider', async () => {
     await sleep(30);
   };
   const turn = assistant.send(sendInput('first'));
+  // The provider takes steers once it is running; before that they are queued (see below).
+  await sleep(5);
   await assistant.send({ ...sendInput('also this'), followUp: 'steer' });
   await turn;
   assert.deepEqual(steered, ['also this']);

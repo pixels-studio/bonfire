@@ -1,5 +1,8 @@
 const REFRESH_DEBOUNCE_MS = 180;
-/** Remote folders aren't watched, so views also check back on this interval. */
+/**
+ * Remote folders aren't watched, and local ones only a few levels deep, so views also check
+ * back on this interval while the app is in view.
+ */
 const POLL_INTERVAL_MS = 5000;
 
 /** How many views watch each project; main's watcher is shared and stops with the last. */
@@ -30,10 +33,17 @@ export function watchFiles(
     clearTimeout(debounce);
     debounce = setTimeout(onchange, REFRESH_DEBOUNCE_MS);
   });
-  const interval = poll ? setInterval(onchange, POLL_INTERVAL_MS) : undefined;
+  // Checking back costs a Git status each time, which nobody sees while the app is hidden;
+  // coming back into view catches up at once instead.
+  const interval = poll
+    ? setInterval(() => document.hidden || onchange(), POLL_INTERVAL_MS)
+    : undefined;
+  const catchUp = () => document.hidden || onchange();
+  if (poll) document.addEventListener('visibilitychange', catchUp);
 
   return () => {
     unsubscribe();
+    document.removeEventListener('visibilitychange', catchUp);
     clearTimeout(debounce);
     clearInterval(interval);
     const left = (watching.get(projectId) ?? 1) - 1;

@@ -1,7 +1,7 @@
 // Packages Bonfire as a standalone macOS app: `npm run package` (add --install to copy it to /Applications).
 // Reuses the installed Electron.app as the shell and puts the built app inside it, unpacked, so
 // node-pty and the bundled agent CLIs stay ordinary files that can be executed.
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
 
@@ -69,9 +69,38 @@ set('CFBundleIconFile', 'bonfire.icns');
 set('CFBundleShortVersionString', pkg.version);
 set('CFBundleVersion', pkg.version);
 
+// Electron's template asks for hardware the app never uses; without these keys macOS has no
+// wording to show for a request, and the window denies every permission anyway.
+for (const key of [
+  'NSCameraUsageDescription',
+  'NSMicrophoneUsageDescription',
+  'NSAudioCaptureUsageDescription',
+  'NSBluetoothAlwaysUsageDescription',
+  'NSBluetoothPeripheralUsageDescription',
+])
+  spawnSync('plutil', ['-remove', key, plist], { stdio: 'ignore' });
+// Agents work in the projects opened here, which may sit in a protected folder.
+const projectAccess =
+  'Bonfire and the coding agents it runs read and edit the projects you open in it.';
+for (const key of [
+  'NSDesktopFolderUsageDescription',
+  'NSDocumentsFolderUsageDescription',
+  'NSDownloadsFolderUsageDescription',
+  'NSRemovableVolumesUsageDescription',
+  'NSNetworkVolumesUsageDescription',
+])
+  set(key, projectAccess);
+
 // Renaming the executable would need every helper renamed too, so it keeps Electron's name.
-// Ad-hoc signing is enough for an app that never leaves this machine.
-run('codesign', ['--force', '--deep', '--sign', '-', out], { stdio: 'ignore' });
+// macOS remembers privacy answers per code signature. An ad-hoc one changes with every build,
+// so each repackage asks again; a named identity (BONFIRE_SIGN_IDENTITY, such as a self-signed
+// code signing certificate from Keychain Access) keeps the answers across builds.
+const identity = process.env.BONFIRE_SIGN_IDENTITY || '-';
+if (identity === '-')
+  console.warn(
+    'Signing ad hoc: macOS will ask for folder access again after this build. Set BONFIRE_SIGN_IDENTITY to keep it.',
+  );
+run('codesign', ['--force', '--deep', '--sign', identity, out], { stdio: 'ignore' });
 console.log(`Packaged ${relative(root, out)}`);
 
 if (process.argv.includes('--install')) {

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { overlayScrollbar } from '$lib/scrollbar';
   import Check from '@lucide/svelte/icons/check';
   import ChevronDown from '@lucide/svelte/icons/chevron-down';
   import * as Popover from '$lib/components/ui/popover';
@@ -66,6 +67,7 @@
   </Popover.Trigger>
   <Popover.Content class="w-72 gap-0 p-1" align="start" side="top">
     <div
+      {@attach overlayScrollbar}
       role="listbox"
       aria-label="Models"
       class="max-h-64 overflow-y-auto pb-1"

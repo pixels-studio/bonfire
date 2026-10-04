@@ -43,7 +43,11 @@ import {
   titleFrom,
 } from '../../shared/domain';
 import type { AssistantHost } from './assistant';
-import { PendingAttachments } from './attachments';
+import {
+  PendingAttachments,
+  removeStalePastes,
+  shrinkPreviews,
+} from './attachments';
 import { ClaudeAssistant } from './claude';
 import { CodexAssistant } from './codex';
 import { favicon } from './favicon';
@@ -81,6 +85,11 @@ export type ServiceOptions = AssistantHost & {
 
 export function services(options: ServiceOptions) {
   const store = new Store(options.dataDirectory);
+  /** Settles once old full-size image previews are shrunk; the window waits, so it never loads them. */
+  const previewsShrunk = shrinkLegacyPreviews(store).catch((cause) =>
+    console.warn(`Could not shrink image previews: ${errorMessage(cause)}`),
+  );
+  void removeStalePastes();
   const files = new Filesystem();
   const tokenUsage = new TokenUsage();
   const github = new GitHub();
@@ -266,6 +275,8 @@ export function services(options: ServiceOptions) {
     terminals.closePane(pane.id);
     scripts.forgetPane(pane.id);
     pane.archived = true;
+    const { layout } = store.state;
+    layout.paneIds = layout.paneIds.filter((id) => id !== pane.id);
   }
 
   /** Notes the branch the conversation is about to work on, to spot its pull request merging. */
@@ -541,7 +552,18 @@ export function services(options: ServiceOptions) {
   }
 
   const api: Backend = {
-    state: { get: async () => store.state },
+    state: {
+      // Archived conversations are never shown, and are most of the data, so they stay here.
+      get: async () => {
+        await previewsShrunk;
+        return {
+          ...store.state,
+          panes: store.state.panes.map((pane) =>
+            pane.archived ? { ...pane, messages: [] } : pane,
+          ),
+        };
+      },
+    },
     preferences: {
       get: async () => store.preferences,
       update: async (patch) => updatePreferences(patch),
@@ -675,7 +697,10 @@ export function services(options: ServiceOptions) {
       send,
       cancel: async (paneId) => assistantFor(paneId).cancel(paneId),
       respond: async (input) => assistantFor(input.paneId).respond(input),
-      snapshot: async (paneId) => assistantFor(paneId).snapshot(paneId),
+      snapshot: async (paneId) => {
+        await previewsShrunk;
+        return assistantFor(paneId).snapshot(paneId);
+      },
       models: async (provider) => assistants[provider].models(),
       skills: async (paneId) => assistantFor(paneId).skills(paneId),
       pickAttachment: async (paneId) =>
@@ -771,4 +796,10 @@ export function services(options: ServiceOptions) {
       await files.close();
     },
   };
+}
+
+/** Shrinks image previews older versions saved whole; each pane affected is rewritten once. */
+async function shrinkLegacyPreviews(store: Store) {
+  for (const pane of store.state.panes)
+    if (await shrinkPreviews(pane.messages)) store.save(pane);
 }

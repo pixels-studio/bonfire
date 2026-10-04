@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { overlayScrollbar } from '$lib/scrollbar';
   import { onMount } from 'svelte';
   import { Button } from '$lib/components/ui/button';
   import Icon from '$lib/components/icon/icon.svelte';
@@ -100,7 +101,7 @@
 <div class="relative flex h-screen flex-col bg-background">
   <Backdrop />
   <div class="relative h-13 shrink-0 app-drag"></div>
-  <div class="relative flex min-h-0 flex-1 overflow-y-auto px-6">
+  <div {@attach overlayScrollbar} class="relative flex min-h-0 flex-1 overflow-y-auto px-6">
     <div
       class="mx-auto flex min-h-full w-full max-w-160 shrink-0 flex-col gap-16"
     >

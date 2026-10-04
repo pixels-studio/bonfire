@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { overlayScrollbar } from '$lib/scrollbar';
   import { onMount } from 'svelte';
   import Search from '@lucide/svelte/icons/search';
   import { Button } from '$lib/components/ui/button';
@@ -58,6 +59,7 @@
     />
   </div>
   <div
+    {@attach overlayScrollbar}
     class="h-56 overflow-y-auto overscroll-contain rounded-xl border border-border"
     role="listbox"
     aria-label="Repositories"

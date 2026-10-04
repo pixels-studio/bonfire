@@ -31,6 +31,7 @@ import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
+  PASTE_FOLDER_PREFIX,
   PendingAttachments,
   sniffImageExtension,
   type PendingAttachment,
@@ -262,7 +263,7 @@ export abstract class ChatAssistant {
     if (!type)
       throw Error('Only PNG, JPEG, WebP and GIF images can be attached');
     // Providers read images from disk, so the data needs a file.
-    const dir = await mkdtemp(join(tmpdir(), 'bonfire-paste-'));
+    const dir = await mkdtemp(join(tmpdir(), PASTE_FOLDER_PREFIX));
     const base = name.replace(/\.[^.]*$/, '').replace(/[\\/]/g, '_') || 'Image';
     const path = join(dir, `${base}.${type}`);
     await writeFile(path, data);
@@ -480,7 +481,8 @@ export abstract class ChatAssistant {
 
     try {
       await this.settleFastMode(turn);
-      await this.run(turn);
+      // Stopped while it was being set up: the provider never starts.
+      if (!turn.controller.signal.aborted) await this.run(turn);
     } catch (cause) {
       // A stop isn't a failure, and a failure the provider already showed isn't repeated.
       if (!turn.cancelled && !turn.controller.signal.aborted && !turn.errored)
@@ -491,7 +493,7 @@ export abstract class ChatAssistant {
       this.settle(pane, turn.errored);
       this.attachments.delete(attachments.map(({ id }) => id));
       this.turns.delete(pane.id);
-      this.store.save();
+      this.store.save(pane);
       if (turn.errored)
         this.notify({ paneId: pane.id, type: 'status', status: 'failed' });
       else if (!turn.cancelled)
@@ -611,7 +613,7 @@ export abstract class ChatAssistant {
     const index = pane.messages.findLastIndex((item) => item.id === message.id);
     if (index === -1) pane.messages.push(message);
     else pane.messages[index] = message;
-    if (persist) this.store.save();
+    if (persist) this.store.save(pane);
     this.markDirty(pane, message);
     // Finished messages go out at once; streaming ones are batched.
     if (message.status !== 'streaming') this.flush();
