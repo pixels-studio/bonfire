@@ -37,6 +37,16 @@
   let ready = false;
   let pendingEvents: TerminalEvent[] = [];
   let lastSequence = 0;
+  let resizeTimer: ReturnType<typeof setTimeout> | undefined;
+  /** The grid the PTY was last told of, as `cols×rows`. */
+  let sentSize = '';
+
+  /**
+   * How long a size is let settle before the terminal is fitted to it. The pane strip
+   * animates widths, so every pane's terminal would otherwise be fitted each frame, and on
+   * Windows every PTY resize has the console repaint its whole screen.
+   */
+  const RESIZE_SETTLE_MS = 60;
 
   /** The script's current process, which the pane follows across restarts. */
   const runTerminalId = $derived(
@@ -79,7 +89,8 @@
     ready = true;
     pendingEvents.forEach(receive);
     pendingEvents = [];
-    resize();
+    sentSize = '';
+    fitNow();
     if (focus) term.focus();
   }
 
@@ -106,8 +117,17 @@
   }
 
   function resize() {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(fitNow, RESIZE_SETTLE_MS);
+  }
+
+  function fitNow() {
+    clearTimeout(resizeTimer);
     if (!mounted || !terminalId) return;
     fit.fit();
+    const size = `${term.cols}×${term.rows}`;
+    if (size === sentSize) return;
+    sentSize = size;
     window.bonfire.terminal
       .resize(terminalId, term.cols, term.rows)
       .catch(reportError);
@@ -154,6 +174,7 @@
 
     return () => {
       mounted = false;
+      clearTimeout(resizeTimer);
       unsubscribe();
       input.dispose();
       observer.disconnect();

@@ -166,7 +166,41 @@ test('removed panes take their conversation files with them', () => {
   assert.deepEqual(conversationsOf(directory), [`${kept}.json`]);
 });
 
-test('a scheduled save that fails is tried again rather than thrown or lost', (t) => {
+test('a scheduled save lands in the background, and a flush meanwhile wins', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const directory = mkdtempSync(join(tmpdir(), 'bonfire-store-'));
+  const projectId = uuid();
+  const id = uuid();
+  writeFileSync(
+    join(directory, 'state.json'),
+    JSON.stringify(
+      legacyState(projectId, [pane(id, projectId, [message('x')])], [id]),
+    ),
+  );
+  new Store(directory).flush();
+
+  const store = new Store(directory);
+  store.pane(id).messages[0].text = 'scheduled';
+  store.save(store.pane(id));
+  t.mock.timers.tick(1000);
+  await store.settled();
+  assert.equal(new Store(directory).pane(id).messages[0].text, 'scheduled');
+
+  // A write on the thread while a background one is underway carries the newer text, and
+  // the older copy never lands over it.
+  store.pane(id).messages[0].text = 'older';
+  store.save(store.pane(id));
+  t.mock.timers.tick(1000);
+  // Lets the background write serialize 'older' and reach the disk.
+  await Promise.resolve();
+  store.pane(id).messages[0].text = 'newer';
+  store.flush();
+  await store.settled();
+  assert.equal(new Store(directory).pane(id).messages[0].text, 'newer');
+  assert.deepEqual(conversationsOf(directory), [`${id}.json`]);
+});
+
+test('a scheduled save that fails is tried again rather than thrown or lost', async (t) => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const warn = t.mock.method(console, 'warn', () => {});
   const directory = mkdtempSync(join(tmpdir(), 'bonfire-store-'));
@@ -188,10 +222,12 @@ test('a scheduled save that fails is tried again rather than thrown or lost', (t
   store.pane(id).messages[0].text = 'edited';
   store.save(store.pane(id));
   t.mock.timers.tick(1000);
+  await store.settled();
   assert.equal(warn.mock.callCount(), 1);
 
   rmSync(file, { recursive: true });
   t.mock.timers.tick(5000);
+  await store.settled();
   assert.equal(new Store(directory).pane(id).messages[0].text, 'edited');
 });
 

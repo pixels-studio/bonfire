@@ -12,6 +12,22 @@
 
   $effect(() => applyAccent(preferences.current.accentHue));
 
+  // Main writes lines starting with [perf] to bonfire.log, which says what a freeze was.
+  onMount(() => {
+    if (!('PerformanceObserver' in window)) return;
+    const observer = new PerformanceObserver((list) => {
+      for (const { duration } of list.getEntries())
+        if (duration >= 300)
+          console.warn(`[perf] Page busy for ${Math.round(duration)} ms`);
+    });
+    try {
+      observer.observe({ type: 'longtask', buffered: false });
+    } catch {
+      return;
+    }
+    return () => observer.disconnect();
+  });
+
   onMount(() => {
     Promise.all([preferences.load(), connections.load()]).catch((cause) =>
       toast(errorMessage(cause), { variant: 'error' }),

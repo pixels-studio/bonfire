@@ -9,6 +9,7 @@ import {
   type AssistantSendInput,
   type Backend,
   type GithubSignInEnd,
+  type GitStatus,
   type Pane,
   type PaneType,
   type PullRequestDraft,
@@ -100,6 +101,23 @@ export function services(options: ServiceOptions) {
   const placeOf = (project: Project) =>
     machines.place(project.connectionId, project.path);
   const folder = (projectId: string) => placeOf(store.project(projectId));
+  /**
+   * Panes of one project ask for its status in the same instant, each on its own timer
+   * and after each file change. Those that ask while one run is underway share its answer,
+   * so eight panes cost one git run rather than eight; a run takes a moment, and on Windows
+   * starting a process holds the main process besides.
+   */
+  const statusRuns = new Map<string, Promise<GitStatus>>();
+  const status = (projectId: string) => {
+    let run = statusRuns.get(projectId);
+    if (!run) {
+      run = git.status(folder(projectId)).finally(() => {
+        if (statusRuns.get(projectId) === run) statusRuns.delete(projectId);
+      });
+      statusRuns.set(projectId, run);
+    }
+    return run;
+  };
   const terminals = new Terminals(
     store,
     (event) => {
@@ -743,7 +761,7 @@ export function services(options: ServiceOptions) {
       snapshot: async (id) => terminals.snapshot(id),
     },
     git: {
-      status: async (projectId) => git.status(folder(projectId)),
+      status: (projectId) => status(projectId),
       head: async (projectId) => git.head(folder(projectId)),
       localBranches: async (projectId) => git.localBranches(folder(projectId)),
       branches: async (projectId) => git.branches(folder(projectId)),
@@ -798,6 +816,8 @@ export function services(options: ServiceOptions) {
       terminals.close();
       assistants.claude.close();
       assistants.codex.close();
+      // A save still being written in the background lands before the state is flushed.
+      await store.settled();
       store.flush();
       await files.close();
     },

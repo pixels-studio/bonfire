@@ -5,8 +5,15 @@ const REFRESH_DEBOUNCE_MS = 180;
  */
 const POLL_INTERVAL_MS = 5000;
 
-/** How many views watch each project; main's watcher is shared and stops with the last. */
-const watching = new Map<string, number>();
+type Watch = {
+  /** How many views watch the project; main's watcher is shared and stops with the last. */
+  views: number;
+  /** The views that check back on a timer, which they share. */
+  polling: Set<() => void>;
+  timer?: ReturnType<typeof setInterval>;
+};
+
+const watching = new Map<string, Watch>();
 
 /**
  * Calls `onchange` shortly after files in the project change, and every few
@@ -20,12 +27,15 @@ export function watchFiles(
     onerror,
   }: { poll?: boolean; onerror?: (cause: unknown) => void } = {},
 ) {
-  const views = watching.get(projectId) ?? 0;
-  watching.set(projectId, views + 1);
-  if (!views)
+  let watch = watching.get(projectId);
+  if (!watch) {
+    watch = { views: 0, polling: new Set() };
+    watching.set(projectId, watch);
     window.bonfire.filesystem
       .watch(projectId)
       .catch((cause) => onerror?.(cause));
+  }
+  watch.views++;
 
   let debounce: ReturnType<typeof setTimeout> | undefined;
   const unsubscribe = window.bonfire.filesystem.onChange((event) => {
@@ -34,23 +44,35 @@ export function watchFiles(
     debounce = setTimeout(onchange, REFRESH_DEBOUNCE_MS);
   });
   // Checking back costs a Git status each time, which nobody sees while the app is hidden;
-  // coming back into view catches up at once instead.
-  const interval = poll
-    ? setInterval(() => document.hidden || onchange(), POLL_INTERVAL_MS)
-    : undefined;
+  // coming back into view catches up at once instead. Views of one project check back on
+  // one timer, in the same instant, so main runs Git once for all of them rather than once
+  // each: several panes polling on their own beats kept Windows spawning git continually.
   const catchUp = () => document.hidden || onchange();
-  if (poll) document.addEventListener('visibilitychange', catchUp);
+  if (poll) {
+    watch.polling.add(onchange);
+    const { polling } = watch;
+    watch.timer ??= setInterval(() => {
+      if (document.hidden) return;
+      for (const check of polling) check();
+    }, POLL_INTERVAL_MS);
+    document.addEventListener('visibilitychange', catchUp);
+  }
 
   return () => {
     unsubscribe();
-    document.removeEventListener('visibilitychange', catchUp);
     clearTimeout(debounce);
-    clearInterval(interval);
-    const left = (watching.get(projectId) ?? 1) - 1;
-    if (left) watching.set(projectId, left);
-    else {
-      watching.delete(projectId);
-      void window.bonfire.filesystem.unwatch(projectId);
+    const current = watching.get(projectId);
+    if (!current) return;
+    if (poll) {
+      current.polling.delete(onchange);
+      document.removeEventListener('visibilitychange', catchUp);
+      if (!current.polling.size) {
+        clearInterval(current.timer);
+        current.timer = undefined;
+      }
     }
+    if (--current.views) return;
+    watching.delete(projectId);
+    void window.bonfire.filesystem.unwatch(projectId);
   };
 }
