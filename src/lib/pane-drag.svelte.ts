@@ -13,6 +13,9 @@ type Drag = {
   widths: Record<string, number>;
   /** Pane centers in strip content coordinates, measured when the drag started. */
   centers: Record<string, number>;
+  /** How far the pane can travel left and right before leaving the strip. */
+  min: number;
+  max: number;
   startX: number;
   startScroll: number;
   clientX: number;
@@ -54,20 +57,27 @@ export class PaneDrag {
     const base = strip.getBoundingClientRect().left - strip.scrollLeft;
     const widths: Record<string, number> = {};
     const centers: Record<string, number> = {};
+    const rects: Record<string, DOMRect> = {};
     for (const section of strip.querySelectorAll<HTMLElement>(
       '[data-pane-id], [data-panel]',
     )) {
       const rect = section.getBoundingClientRect();
       const paneId = (section.dataset.paneId ?? section.dataset.panel)!;
+      rects[paneId] = rect;
       widths[paneId] = rect.width;
       centers[paneId] = rect.left - base + rect.width / 2;
     }
+    const own = rects[id];
+    const first = rects[ids[0]];
+    const last = rects[ids[ids.length - 1]];
     this.#drag = {
       id,
       ids,
       from: ids.indexOf(id),
       widths,
       centers,
+      min: first && own ? first.left - own.left : 0,
+      max: last && own ? last.right - own.right : 0,
       startX: event.clientX,
       startScroll: strip.scrollLeft,
       clientX: event.clientX,
@@ -144,7 +154,8 @@ export class PaneDrag {
   #measure(drag: Drag) {
     const strip = this.strip();
     const scrolled = strip ? strip.scrollLeft - drag.startScroll : 0;
-    drag.offset = drag.clientX - drag.startX + scrolled;
+    const offset = drag.clientX - drag.startX + scrolled;
+    drag.offset = Math.min(Math.max(offset, drag.min), drag.max);
   }
 
   /** Scrolls the strip while the pointer is near its edge. */

@@ -9,6 +9,8 @@ import { branch } from './branch.svelte';
 import { toast } from './toast.svelte';
 
 const POLL_INTERVAL_MS = 20_000;
+/** An action whose agent never reports back, such as one that is stuck, is given up on after this long. */
+const ACTION_TIMEOUT_MS = 10 * 60_000;
 
 /** The pull request of the branch on screen, kept current while it is watched. */
 class PullRequestStore {
@@ -33,6 +35,9 @@ class PullRequestStore {
   agentPaneId = $state<string>();
   private projectId?: string;
   private generation = 0;
+  private timeout?: ReturnType<typeof setTimeout>;
+  /** Panes whose turn ended before the action learned which pane it was running in. */
+  private finishedEarly = new Set<string>();
 
   /**
    * Follows a project's checked-out branch, or none; returns what stops it. Watch again
@@ -91,8 +96,17 @@ class PullRequestStore {
     const projectId = this.projectId;
     if (!projectId || this.running) return;
     this.running = action;
+    this.finishedEarly.clear();
+    // Whatever happens to the agent, the action does not stay busy forever.
+    this.timeout = setTimeout(() => {
+      toast('The agent took too long to finish, so the action was released.', {
+        variant: 'error',
+      });
+      this.settle();
+    }, ACTION_TIMEOUT_MS);
     try {
       const paneId = await window.bonfire.github.runAction(projectId, action);
+      if (this.finishedEarly.has(paneId)) return this.settle();
       this.agentPaneId = paneId;
       await this.onAgentPane?.(paneId);
     } catch (cause) {
@@ -103,7 +117,12 @@ class PullRequestStore {
 
   /** Ends the running action once its agent's turn is over, or its pane is gone. */
   settle(paneId?: string) {
-    if (paneId !== undefined && paneId !== this.agentPaneId) return;
+    if (paneId !== undefined && paneId !== this.agentPaneId) {
+      // A quick failure can be reported before the pane's id has come back.
+      if (this.running && !this.agentPaneId) this.finishedEarly.add(paneId);
+      return;
+    }
+    clearTimeout(this.timeout);
     this.running = undefined;
     this.agentPaneId = undefined;
     void this.reload();
