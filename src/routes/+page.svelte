@@ -909,7 +909,7 @@
               onfocusin={trackPane}
               onpointerdowncapture={trackPane}
               class={cn(
-                '-mx-1 flex h-full snap-x snap-mandatory overflow-x-auto overscroll-x-contain scrollbar-none',
+                '-mx-1 flex h-full snap-x snap-mandatory overflow-x-auto overflow-y-hidden overscroll-x-contain scrollbar-none',
                 drag.active && 'snap-none select-none',
               )}
             >
