@@ -125,6 +125,20 @@ function log(message: string) {
 
 const STALL_CHECK_MS = 250;
 const STALL_LOG_MS = 500;
+const PING_EVERY_MS = 2000;
+/** How long the page may take to answer a ping before it is called stuck. */
+const PING_LATE_MS = 2000;
+
+/** What each Electron process is using, which says which one is pegged when the window freezes. */
+function processSnapshot() {
+  return app
+    .getAppMetrics()
+    .map(
+      ({ type, pid, cpu, memory }) =>
+        `${type}#${pid} cpu ${cpu.percentCPUUsage.toFixed(0)}% mem ${Math.round(memory.workingSetSize / 1024)} MB`,
+    )
+    .join(', ');
+}
 
 /** Logs when the main process was kept from its timers, which freezes everything that waits on it. */
 function watchEventLoop() {
@@ -133,19 +147,67 @@ function watchEventLoop() {
     const now = Date.now();
     const stalled = now - last - STALL_CHECK_MS;
     last = now;
-    if (stalled >= STALL_LOG_MS) log(`Main process stalled for ${stalled} ms`);
+    if (stalled >= STALL_LOG_MS)
+      log(`Main process stalled for ${stalled} ms [${processSnapshot()}]`);
   }, STALL_CHECK_MS).unref();
+}
+
+/**
+ * Pings the page and logs while it doesn't answer. A page stuck in one long task never gets to
+ * report it, so this is what says the page is frozen, for how long, and what the processes are doing.
+ */
+function watchPage(window: BrowserWindow) {
+  let waitingSince = 0;
+  const timer = setInterval(() => {
+    if (window.isDestroyed()) return clearInterval(timer);
+    if (waitingSince) {
+      log(
+        `Page not answering for ${Date.now() - waitingSince} ms [${processSnapshot()}]`,
+      );
+      return;
+    }
+    const sent = Date.now();
+    waitingSince = sent;
+    window.webContents
+      .executeJavaScript('0')
+      .catch(() => undefined)
+      .then(() => {
+        const late = Date.now() - sent;
+        if (late >= PING_LATE_MS) log(`Page answered after ${late} ms`);
+        waitingSince = 0;
+      });
+  }, PING_EVERY_MS);
+  timer.unref();
+}
+
+/** F12 or Ctrl+Shift+I (Cmd+Option+I) opens the developer tools, as the menu bar can't on Windows. */
+function allowDevTools(window: BrowserWindow) {
+  window.webContents.on('before-input-event', (event, input) => {
+    if (input.type !== 'keyDown') return;
+    const inspector =
+      input.key.toLowerCase() === 'i' &&
+      (process.platform === 'darwin'
+        ? input.meta && input.alt
+        : input.control && input.shift);
+    if (input.key !== 'F12' && !inspector) return;
+    event.preventDefault();
+    window.webContents.toggleDevTools();
+  });
 }
 
 function watchHealth(window: BrowserWindow) {
   window.webContents.on('console-message', (event) => {
     if (event.message.startsWith('[perf]')) log(event.message);
   });
-  window.on('unresponsive', () => log('Window became unresponsive'));
+  window.on('unresponsive', () =>
+    log(`Window became unresponsive [${processSnapshot()}]`),
+  );
   window.on('responsive', () => log('Window responsive again'));
   window.webContents.on('render-process-gone', (_event, details) =>
     log(`Renderer gone: ${details.reason} (exit code ${details.exitCode})`),
   );
+  watchPage(window);
+  allowDevTools(window);
 }
 
 watchEventLoop();
