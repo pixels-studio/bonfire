@@ -41,6 +41,13 @@
   -webkit-app-region: drag;
 }
 
+/* Clears the window buttons Windows draws over the title bar; without them it is a plain gutter. */
+@utility window-controls-inset {
+  padding-right: calc(
+    100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw) + 1rem
+  );
+}
+
 @utility app-no-drag {
   -webkit-app-region: no-drag;
 }

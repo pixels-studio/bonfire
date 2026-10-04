@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
 import {
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   readdirSync,
+  rmSync,
   statSync,
   writeFileSync,
 } from 'node:fs';
@@ -162,6 +164,35 @@ test('removed panes take their conversation files with them', () => {
   writeFileSync(join(directory, 'conversations', `${uuid()}.json`), '[]');
   new Store(directory);
   assert.deepEqual(conversationsOf(directory), [`${kept}.json`]);
+});
+
+test('a scheduled save that fails is tried again rather than thrown or lost', (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const warn = t.mock.method(console, 'warn', () => {});
+  const directory = mkdtempSync(join(tmpdir(), 'bonfire-store-'));
+  const projectId = uuid();
+  const id = uuid();
+  writeFileSync(
+    join(directory, 'state.json'),
+    JSON.stringify(
+      legacyState(projectId, [pane(id, projectId, [message('x')])], [id]),
+    ),
+  );
+  new Store(directory).flush();
+
+  const store = new Store(directory);
+  // A folder in the conversation's place makes its write fail, as a locked file would.
+  const file = join(directory, 'conversations', `${id}.json`);
+  rmSync(file);
+  mkdirSync(join(file, 'blocker'), { recursive: true });
+  store.pane(id).messages[0].text = 'edited';
+  store.save(store.pane(id));
+  t.mock.timers.tick(1000);
+  assert.equal(warn.mock.callCount(), 1);
+
+  rmSync(file, { recursive: true });
+  t.mock.timers.tick(5000);
+  assert.equal(new Store(directory).pane(id).messages[0].text, 'edited');
 });
 
 test('a missing or damaged conversation file loads as an empty conversation', () => {

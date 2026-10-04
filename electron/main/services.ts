@@ -629,11 +629,17 @@ export function services(options: ServiceOptions) {
           reasoningEffort: pane.reasoningEffort,
           fastMode: pane.fastMode,
           approvals: pane.approvals,
-        }).catch((cause) =>
+        }).catch((cause) => {
           console.warn(
             `Could not run ${ACTION_LABELS[action]}: ${errorMessage(cause)}`,
-          ),
-        );
+          );
+          // No turn began, so nothing else would tell the header the action is over.
+          options.send(events.assistantEvent, {
+            paneId: pane.id,
+            type: 'status',
+            status: 'failed',
+          });
+        });
         return pane.id;
       },
       mergePullRequest: async (projectId) =>

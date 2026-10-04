@@ -11,7 +11,13 @@ import {
   shell,
 } from 'electron';
 import { basename, join, resolve, relative, isAbsolute } from 'node:path';
-import { mkdirSync } from 'node:fs';
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { homedir } from 'node:os';
 import { events, requests } from '../../shared/contracts';
@@ -101,6 +107,49 @@ function notify({ paneId, title, body }: Notice) {
   notification.show();
 }
 
+/** Appends to `bonfire.log` in the data folder, which says what happened when a window hangs or dies. */
+function log(message: string) {
+  try {
+    appendFileSync(
+      join(app.getPath('userData'), 'bonfire.log'),
+      `${new Date().toISOString()} ${message}\n`,
+    );
+  } catch {
+    // Logging must never be the thing that breaks.
+  }
+}
+
+function watchHealth(window: BrowserWindow) {
+  window.on('unresponsive', () => log('Window became unresponsive'));
+  window.on('responsive', () => log('Window responsive again'));
+  window.webContents.on('render-process-gone', (_event, details) =>
+    log(`Renderer gone: ${details.reason} (exit code ${details.exitCode})`),
+  );
+}
+
+app.on('child-process-gone', (_event, details) =>
+  log(
+    `${details.type} process gone: ${details.reason} (${details.name ?? ''})`,
+  ),
+);
+// A main-process error would otherwise only show as a dialog, which looks like a hang.
+process.on('uncaughtException', (error) =>
+  console.error(`Uncaught exception: ${error.stack ?? error}`),
+);
+process.on('unhandledRejection', (reason) =>
+  console.error(
+    `Unhandled rejection: ${reason instanceof Error ? reason.stack : String(reason)}`,
+  ),
+);
+// Warnings, such as a save that failed and will be retried, land in the log too.
+for (const level of ['warn', 'error'] as const) {
+  const write = console[level].bind(console);
+  console[level] = (...args: unknown[]) => {
+    write(...args);
+    log(`${level}: ${args.map(String).join(' ')}`);
+  };
+}
+
 async function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1280,
@@ -110,11 +159,20 @@ async function createWindow() {
     backgroundColor: '#111111',
     title: 'Bonfire',
     icon: resolve(__dirname, '../../static/icon.png'),
-    // On macOS the native traffic lights sit over the header; elsewhere the
-    // regular frame is kept so the window keeps its native controls.
+    // On macOS the native traffic lights sit over the header, and on Windows the native window
+    // buttons do; elsewhere the regular frame is kept so the window keeps its native controls.
     ...(process.platform === 'darwin'
       ? { titleBarStyle: 'hidden', trafficLightPosition: { x: 16, y: 20 } }
-      : {}),
+      : process.platform === 'win32'
+        ? {
+            titleBarStyle: 'hidden',
+            titleBarOverlay: {
+              color: '#111111',
+              symbolColor: '#ffffff',
+              height: 52,
+            },
+          }
+        : {}),
     webPreferences: {
       preload: join(__dirname, '../preload/index.cjs'),
       contextIsolation: true,
@@ -122,6 +180,9 @@ async function createWindow() {
       sandbox: true,
     },
   });
+  // Without a menu bar the header is the whole title bar, as in VS Code.
+  if (process.platform === 'win32') mainWindow.removeMenu();
+  watchHealth(mainWindow);
   mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   mainWindow.webContents.on('will-navigate', (event, url) => {
     if (!isTrustedUrl(url)) event.preventDefault();

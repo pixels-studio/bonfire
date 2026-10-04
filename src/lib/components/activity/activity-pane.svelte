@@ -84,6 +84,8 @@
     error = undefined;
     if (!id) {
       items = [];
+      // An earlier request may have been left unfinished, and it no longer clears this.
+      loading = false;
       return;
     }
     loading = true;

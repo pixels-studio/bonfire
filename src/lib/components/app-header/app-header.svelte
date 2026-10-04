@@ -49,6 +49,11 @@
     pull === null || pull?.state === 'closed',
   );
 
+  /** Why a pull request can't be created now, such as a branch with nothing beyond its base. */
+  const createBlocked = $derived(
+    createsPullRequest ? pullRequest.draft?.blocked : undefined,
+  );
+
   const pullRequestHint = `(${shortcutText('pullRequest', isMac())})`;
   const UTILITY_BUTTON_CLASS = 'text-foreground';
   const CLOSE_BUTTON_CLASS =
@@ -78,7 +83,7 @@
 
 <header
   class={cn(
-    'sticky top-0 z-20 flex min-h-13 shrink-0 items-center justify-between bg-background py-2 pr-4 app-drag',
+    'sticky top-0 z-20 flex min-h-13 shrink-0 items-center justify-between bg-background py-2 window-controls-inset app-drag',
     trafficLightInset && 'pl-11',
   )}
 >
@@ -166,8 +171,8 @@
           !pullRequestOpen && !createsPullRequest && UTILITY_BUTTON_CLASS,
         )}
         aria-pressed={createsPullRequest ? undefined : pullRequestOpen}
-        disabled={disabled || pull === undefined}
-        title={`Create pull request ${pullRequestHint}`}
+        disabled={disabled || pull === undefined || !!createBlocked}
+        title={createBlocked || `Create pull request ${pullRequestHint}`}
         onclick={createsPullRequest
           ? () => void pullRequest.run('createPr')
           : togglePullRequest}

@@ -16,10 +16,24 @@ import {
   type Preferences,
   type State,
 } from '../../shared/contracts';
-import { emptyState, resolvePreferences } from '../../shared/domain';
+import {
+  emptyState,
+  errorMessage,
+  resolvePreferences,
+} from '../../shared/domain';
 
-/** How long writes are held back so a burst of changes costs one write. */
-const SAVE_DELAY_MS = 250;
+/**
+ * How long writes are held back so a burst of changes costs one write. Each write
+ * serializes a whole conversation on the main process, so a busy agent with a long one
+ * must not trigger it many times a second.
+ */
+const SAVE_DELAY_MS = 1000;
+/** How long a save that failed waits before it is tried again. */
+const RETRY_DELAY_MS = 5000;
+/** Windows refuses a rename while another program, such as a virus scanner, has the file open. */
+const RENAME_ATTEMPTS = 5;
+const RENAME_RETRY_MS = 20;
+const BUSY_CODES = new Set(['EPERM', 'EBUSY', 'EACCES']);
 const CONVERSATION_SUFFIX = '.json';
 /** A copy of the state from before conversations moved to their own files. */
 const LEGACY_BACKUP = 'state.before-conversations.json';
@@ -80,14 +94,32 @@ export class Store {
    */
   save(pane?: Pane) {
     if (pane) this.dirty.add(pane);
-    this.saveTimer ??= setTimeout(() => this.flush(), SAVE_DELAY_MS);
+    this.saveTimer ??= setTimeout(() => this.flushLater(), SAVE_DELAY_MS);
   }
 
-  /** Writes any pending changes now. */
+  /** Writes any pending changes now; throws if they could not be written. */
   flush() {
     if (!this.saveTimer) return;
     clearTimeout(this.saveTimer);
     this.saveTimer = undefined;
+    this.write();
+  }
+
+  /**
+   * A scheduled save. One that fails, as on Windows while a scanner holds a file, is
+   * tried again later rather than thrown from a timer, where it would bring up an error
+   * dialog and lose the changes.
+   */
+  private flushLater() {
+    try {
+      this.flush();
+    } catch (cause) {
+      console.warn(`Could not save state: ${errorMessage(cause)}`);
+      this.saveTimer ??= setTimeout(() => this.flushLater(), RETRY_DELAY_MS);
+    }
+  }
+
+  private write() {
     const live = new Set<string>();
     for (const pane of this.state.panes) {
       live.add(pane.id);
@@ -97,6 +129,7 @@ export class Store {
       )
         this.writeConversation(pane);
     }
+    // What is left belongs to panes since removed; a failed write above keeps its own.
     this.dirty.clear();
     // Conversations are written before the state that lists them, so a crash in between
     // leaves at worst an unlisted file, which the next save removes.
@@ -153,6 +186,7 @@ export class Store {
       JSON.stringify(pane.messages),
     );
     this.written.set(pane.id, pane.messages.length);
+    this.dirty.delete(pane);
   }
 
   private removeConversation(id: string) {
@@ -165,7 +199,24 @@ export class Store {
 function writeAtomically(file: string, data: string) {
   const temporaryFile = `${file}.tmp`;
   writeFileSync(temporaryFile, data, { mode: 0o600 });
-  renameSync(temporaryFile, file);
+  renameRetrying(temporaryFile, file);
+}
+
+/** Renames, waiting briefly while Windows reports the target busy. */
+function renameRetrying(from: string, to: string) {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return renameSync(from, to);
+    } catch (cause) {
+      const code = (cause as NodeJS.ErrnoException).code ?? '';
+      if (attempt >= RENAME_ATTEMPTS || !BUSY_CODES.has(code)) throw cause;
+      sleep(RENAME_RETRY_MS * attempt);
+    }
+  }
+}
+
+function sleep(milliseconds: number) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds);
 }
 
 /** Turns that were cut off by a crash or quit leave messages that would look busy forever. */
