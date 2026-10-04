@@ -82,6 +82,8 @@ export type ServiceOptions = AssistantHost & {
   /** Shows a system notification; the shell decides whether it is worth interrupting for. */
   notify: (notice: Notice) => void;
   power: Power;
+  /** Whether the window can be seen; work nobody would see waits until it can. */
+  inView?: () => boolean;
 };
 
 export function services(options: ServiceOptions) {
@@ -251,6 +253,7 @@ export function services(options: ServiceOptions) {
     github,
     isBusy: (paneId) => assistantFor(paneId).isRunning(paneId),
     place: folder,
+    inView: options.inView,
     archive: (paneIds) => {
       const closed = paneIds.filter((id) => !store.pane(id).archived);
       for (const id of closed) archivePane(store.pane(id));
@@ -808,6 +811,7 @@ export function services(options: ServiceOptions) {
   return {
     api,
     store,
+    cameIntoView: () => mergeWatcher.catchUp(),
     close: async () => {
       notifier.close();
       keepAwake.close();
