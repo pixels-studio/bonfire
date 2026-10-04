@@ -203,6 +203,20 @@
       {/snippet}
     </Setting>
     <Setting
+      title="Simplified English"
+      description="Short, plain sentences, based on ASD-STE100"
+      inline
+    >
+      {#snippet control(props)}
+        <Switch
+          {...props}
+          checked={current.simplifiedEnglish}
+          onCheckedChange={(simplifiedEnglish) =>
+            preferences.update({ simplifiedEnglish })}
+        />
+      {/snippet}
+    </Setting>
+    <Setting
       title="Codex personality"
       description="The tone of Codex's replies"
     >

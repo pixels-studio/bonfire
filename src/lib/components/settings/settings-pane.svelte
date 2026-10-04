@@ -16,7 +16,7 @@
     {onresize}
     {onclose}
   />
-  <div {@attach overlayScrollbar} class="min-h-0 flex-1 overflow-y-auto">
+  <div {@attach overlayScrollbar} class="min-h-0 flex-1 overflow-y-auto overscroll-contain">
     <SettingsPanel />
   </div>
 </Card.Root>

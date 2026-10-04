@@ -25,7 +25,10 @@ import type {
   Skill,
   Usage,
 } from '../../shared/contracts';
-import { withSkillNames } from '../../shared/domain';
+import {
+  SIMPLIFIED_ENGLISH_INSTRUCTIONS,
+  withSkillNames,
+} from '../../shared/domain';
 import {
   ChatAssistant,
   assistantMessage,
@@ -104,12 +107,22 @@ export class ClaudeAssistant extends ChatAssistant {
 
   protected async run(turn: Turn) {
     const { pane, project, machine, input, attachments, controller } = turn;
-    const { claudeOutputStyle } = this.store.preferences;
+    const { claudeOutputStyle, simplifiedEnglish } = this.store.preferences;
     const options: Options = {
       cwd: project.path,
       resume: pane.threadId || undefined,
       ...modelOptions(input.model),
       thinking: THINKING[input.reasoningEffort],
+      // Rendered fresh each request, since Claude otherwise keeps a conversation's first
+      // prompt, and the setting could then not be turned on or off mid-conversation.
+      ...(simplifiedEnglish && {
+        systemPrompt: {
+          type: 'preset',
+          preset: 'claude_code',
+          append: SIMPLIFIED_ENGLISH_INSTRUCTIONS,
+          snapshot: false,
+        },
+      }),
       settings: {
         ...(claudeOutputStyle !== DEFAULT_OUTPUT_STYLE && {
           outputStyle: claudeOutputStyle,

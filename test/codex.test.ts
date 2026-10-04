@@ -4,6 +4,7 @@ import { afterEach, test } from 'node:test';
 import type { AssistantEvent } from '../shared/contracts';
 import { CodexAssistant } from '../electron/main/codex';
 import { SshMachine } from '../electron/main/machines';
+import { SIMPLIFIED_ENGLISH_INSTRUCTIONS } from '../shared/domain';
 import { fakeStore, host, sendInput, sleep } from './helpers';
 
 const FIXTURE = join(process.cwd(), 'test/fixtures/fake-codex.mjs');
@@ -280,6 +281,25 @@ test('an attached skill is sent by the path Codex listed it at', async () => {
     'skills:review@/skills/review/SKILL.md',
   );
   assert(pane.messages.some((item) => item.text === '/review skills please'));
+});
+
+test('Simplified English is sent as developer instructions when on', async () => {
+  const { pane, store, send } = codex();
+  store.preferences.simplifiedEnglish = true;
+  await send('instructions');
+  assert.equal(
+    pane.messages.find((item) => item.id === 'a1')?.text,
+    `instructions:${SIMPLIFIED_ENGLISH_INSTRUCTIONS}`,
+  );
+});
+
+test('no developer instructions are sent when Simplified English is off', async () => {
+  const { pane, send } = codex();
+  await send('instructions');
+  assert.equal(
+    pane.messages.find((item) => item.id === 'a1')?.text,
+    'instructions:none set',
+  );
 });
 
 test('the default personality is left to Codex', async () => {

@@ -16,6 +16,8 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const interrupted = new Map();
 /** Turns waiting to be steered, keyed by turn id. */
 const steerable = new Map();
+/** Developer instructions each thread was started or resumed with. */
+const instructions = new Map();
 
 const usage = (threadId, turnId) =>
   notify('thread/tokenUsage/updated', {
@@ -233,6 +235,14 @@ async function runTurn(threadId, turnId, text, params) {
       .map((part) => `${part.name}@${part.path}`);
     agentReply(threadId, turnId, 'a1', `skills:${skills.join(',')}`);
     complete(threadId, turnId);
+  } else if (text.startsWith('instructions')) {
+    agentReply(
+      threadId,
+      turnId,
+      'a1',
+      `instructions:${instructions.get(threadId) ?? 'none set'}`,
+    );
+    complete(threadId, turnId);
   } else if (text.startsWith('personality')) {
     agentReply(
       threadId,
@@ -340,13 +350,17 @@ createInterface({ input: process.stdin }).on('line', (line) => {
           },
         ],
       });
-    case 'thread/start':
+    case 'thread/start': {
+      const id = `thread-${++counter}`;
+      instructions.set(id, params.developerInstructions);
       return reply({
-        thread: { id: `thread-${++counter}` },
+        thread: { id },
         model: params.model,
         settings: params,
       });
+    }
     case 'thread/resume':
+      instructions.set(params.threadId, params.developerInstructions);
       return reply({ thread: { id: params.threadId } });
     case 'turn/start': {
       const turnId = `turn-${++counter}`;
