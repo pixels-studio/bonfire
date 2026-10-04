@@ -17,8 +17,13 @@
     if (!('PerformanceObserver' in window)) return;
     const observer = new PerformanceObserver((list) => {
       for (const { duration } of list.getEntries())
-        if (duration >= 300)
-          console.warn(`[perf] Page busy for ${Math.round(duration)} ms`);
+        if (duration >= 300) {
+          const panes = document.querySelectorAll('[data-pane-id]').length;
+          const panels = document.querySelectorAll('[data-panel]').length;
+          console.warn(
+            `[perf] Page busy for ${Math.round(duration)} ms (${panes} panes, ${panels} panels)`,
+          );
+        }
     });
     try {
       observer.observe({ type: 'longtask', buffered: false });
