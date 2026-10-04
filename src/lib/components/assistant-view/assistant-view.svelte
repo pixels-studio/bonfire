@@ -369,13 +369,14 @@
     <p class="sr-only" role="status">{announcement}</p>
 
     <div class="relative min-h-0 flex-1">
-      <!-- Its content goes unrendered while the pane is scrolled out of the strip; being a
-           fixed-size scroller, it keeps its place and scroll position meanwhile. -->
+      <!-- No `content-visibility: auto` here: when a panel opening slid this feed to the
+           strip's edge, Chromium flipped it between skipped and rendered every frame,
+           never reaching paint, and the whole window froze. -->
       <div
         {@attach overlayScrollbar}
         bind:this={feed}
         bind:clientHeight={feedHeight}
-        class="absolute inset-0 flex flex-col overflow-y-auto px-4 pt-6 pb-7 motion-safe:scroll-smooth [content-visibility:auto]"
+        class="absolute inset-0 flex flex-col overflow-y-auto px-4 pt-6 pb-7 motion-safe:scroll-smooth"
         onscroll={trackFollowing}
       >
         <div

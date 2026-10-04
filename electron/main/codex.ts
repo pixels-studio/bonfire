@@ -8,7 +8,11 @@ import type {
   Question,
   Skill,
 } from '../../shared/contracts';
-import { errorMessage, withSkillNames } from '../../shared/domain';
+import {
+  SIMPLIFIED_ENGLISH_INSTRUCTIONS,
+  errorMessage,
+  withSkillNames,
+} from '../../shared/domain';
 import {
   ChatAssistant,
   attachedText,
@@ -98,6 +102,9 @@ export class CodexAssistant extends ChatAssistant {
     const auto = turn.approvals === 'auto';
     const settings = {
       model: input.model || undefined,
+      developerInstructions: this.store.preferences.simplifiedEnglish
+        ? SIMPLIFIED_ENGLISH_INSTRUCTIONS
+        : undefined,
       cwd: project.path,
       // The sandbox keeps writes inside the project; "on-request" asks before leaving it.
       approvalPolicy: auto ? 'never' : 'on-request',

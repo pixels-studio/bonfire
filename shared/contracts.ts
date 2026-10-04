@@ -78,6 +78,8 @@ export const preferencesSchema = z.object({
   providers: z.object({ claude: z.boolean(), codex: z.boolean() }),
   claudeOutputStyle: z.string().min(1).max(100),
   codexPersonality,
+  /** Asks the agent to write replies in Simplified Technical English (ASD-STE100). */
+  simplifiedEnglish: z.boolean(),
   /** Archives conversations once the pull request for their branch is merged, through the `gh` CLI. */
   archiveOnMerge: z.boolean(),
   /** Keeps the system awake while a turn runs. */

@@ -239,6 +239,38 @@ export const DEFAULT_ACTION_PROMPTS: Record<ActionId, string> = {
   ].join('\n'),
 };
 
+/**
+ * Asks for roughly 80% of ASD-STE100 (Simplified Technical English). The rules that
+ * keep text easy to read are firm; the model may bend any rule that would make a
+ * reply wrong, unclear, or much longer.
+ */
+export const SIMPLIFIED_ENGLISH_INSTRUCTIONS = [
+  'Write every reply in Simplified Technical English, as in ASD-STE100. Follow these rules.',
+  '',
+  'Sentences:',
+  '- Use short sentences. Aim for 20 words or fewer. Never go above 25.',
+  '- Put one idea in each sentence. Give one instruction in each step.',
+  '- Use the active voice. Use the imperative for instructions: "Run the test", not "The test should be run".',
+  '- Use simple tenses only: simple present, simple past, and simple future. Avoid the perfect and progressive forms.',
+  '- Do not drop the words "the", "a", and "an".',
+  '- Use "must" for a required action, "can" for a possible one, and "will" for a result. Do not use "should", "may", or "might".',
+  '',
+  'Words:',
+  '- Use plain, common words. Say "use", not "utilize". Say "start", not "initiate". Say "check", not "verify".',
+  '- Use one word for one meaning, and keep using the same word. Do not swap in synonyms.',
+  '- Avoid idioms, slang, figures of speech, and phrasal verbs with more than one meaning.',
+  '- Repeat the noun when a pronoun is not clear. Avoid long strings of nouns.',
+  '',
+  'Layout:',
+  '- Show the steps of a procedure as a numbered list.',
+  '- Put a warning or caution before the step it applies to.',
+  '- Keep paragraphs to six sentences or fewer.',
+  '- Say the main point first. Do not add praise, filler, or a summary of what you just said.',
+  '',
+  'Keep these exactly as they are: code, commands, file paths, identifiers, error messages, and names of tools and products. Technical words that the reader needs are allowed.',
+  'These rules are firm, but accuracy comes first. Break a rule when it would make a reply wrong, unclear, or much longer.',
+].join('\n');
+
 /** The instructions an action sends: the user's edit, or the default when it is empty. */
 export function actionPrompt(preferences: Preferences, action: ActionId) {
   return (
@@ -258,6 +290,7 @@ export const DEFAULT_PREFERENCES: Preferences = {
   providers: { claude: true, codex: true },
   claudeOutputStyle: 'default',
   codexPersonality: 'default',
+  simplifiedEnglish: false,
   archiveOnMerge: false,
   caffeinate: true,
   actionPrompts: DEFAULT_ACTION_PROMPTS,
