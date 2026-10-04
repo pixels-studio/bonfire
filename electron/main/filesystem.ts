@@ -1,6 +1,6 @@
+import { watch, type FSWatcher } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename } from 'node:path';
-import { watch, type FSWatcher } from 'chokidar';
 import type { Entry, FileChangeEvent } from '../../shared/contracts';
 import { git } from './git';
 import {
@@ -20,7 +20,9 @@ const HIDDEN_DIRECTORIES = new Set([
   '.svelte-kit',
 ]);
 const PREVIEW_LIMIT_BYTES = 2 * 1024 * 1024;
-const WATCH_DEPTH = 3;
+/** A burst of changes is reported once it settles, or after this long while it goes on. */
+const CHANGE_QUIET_MS = 150;
+const CHANGE_MAX_WAIT_MS = 1000;
 export const SEARCH_RESULT_LIMIT = 100;
 const WALK_FILE_LIMIT = 20_000;
 
@@ -64,7 +66,7 @@ export async function safePath(root: Place, path: string) {
 }
 
 export class Filesystem {
-  private readonly watchers = new Map<string, FSWatcher>();
+  private readonly watchers = new Map<string, ProjectWatch>();
 
   async list(root: Place, path: string): Promise<Entry[]> {
     const { machine, path: rootPath } = resolvePlace(root);
@@ -107,44 +109,149 @@ export class Filesystem {
     return data.toString('utf8');
   }
 
-  /** Reports changes to files on this computer; remote folders aren't watched. */
+  /**
+   * Reports changes to the files of a folder on this computer, and to what Git has checked
+   * out, staged, and committed there. Returns whether changes will be reported; remote
+   * folders aren't watched, so their views check back instead.
+   */
   watch(
     projectId: string,
     root: Place,
     emit: (event: FileChangeEvent) => void,
   ) {
+    if (this.watchers.has(projectId)) return true;
     const { machine, path: rootPath } = resolvePlace(root);
-    if (machine.remote || this.watchers.has(projectId)) return;
+    if (machine.remote) return false;
     // Watching the whole disk or home folder would reach into Music, Photos, and Contacts,
     // which macOS guards with a prompt each, for changes no pane needs.
-    if (rootPath === '/' || rootPath === homedir()) return;
-    const { relative } = machine.path;
-    const watcher = watch(rootPath, {
-      ignoreInitial: true,
-      depth: WATCH_DEPTH,
-      followSymlinks: false,
-      ignored: (path) =>
-        path
-          .split(/[\\/]/)
-          .some(
-            (segment) =>
-              HIDDEN_DIRECTORIES.has(segment) || MEDIA_LIBRARY.test(segment),
-          ),
-    });
-    watcher.on('all', (_eventName, path) =>
-      emit({ projectId, path: relative(rootPath, path) }),
-    );
-    watcher.on('error', (error) => console.error('Watcher:', error));
-    this.watchers.set(projectId, watcher);
+    if (rootPath === '/' || rootPath === homedir()) return false;
+    const project = new ProjectWatch((kind) => emit({ projectId, kind }));
+    try {
+      project.watchFolder(rootPath);
+    } catch (cause) {
+      console.error('Watcher:', cause);
+      project.close();
+      return false;
+    }
+    void project.watchGit(root);
+    this.watchers.set(projectId, project);
+    return true;
   }
 
   async unwatch(projectId: string) {
-    await this.watchers.get(projectId)?.close();
+    this.watchers.get(projectId)?.close();
     this.watchers.delete(projectId);
   }
 
   async close() {
-    await Promise.all([...this.watchers.keys()].map((id) => this.unwatch(id)));
+    for (const id of [...this.watchers.keys()]) await this.unwatch(id);
+  }
+}
+
+type ChangeKind = FileChangeEvent['kind'];
+
+/** Whether a path in the project, relative to it, is one no view shows. */
+function isHidden(path: string) {
+  return path
+    .split(/[\\/]/)
+    .some(
+      (segment) =>
+        HIDDEN_DIRECTORIES.has(segment) || MEDIA_LIBRARY.test(segment),
+    );
+}
+
+/**
+ * What Git's own folder holds that the app shows: `HEAD`, the branch checked out; `index`,
+ * what is staged; and the refs, which commits, pushes, and fetches move. Git writes each by
+ * renaming a lock file over it, so folders are watched rather than files.
+ */
+function gitChange(path: string, { refs = true, head = true } = {}) {
+  const [first] = path.split(/[\\/]/);
+  if (head && path === 'HEAD') return 'head';
+  if (head && path === 'index') return 'files';
+  if (refs && (first === 'refs' || path === 'packed-refs')) return 'refs';
+  return undefined;
+}
+
+/**
+ * The OS's own watchers on one project: one for the whole folder, however deep, and one or
+ * two for Git's. Changes come in bursts, a checkout touching thousands of files, so each
+ * kind is reported once a burst settles, or every so often while it goes on.
+ */
+class ProjectWatch {
+  private readonly watchers: FSWatcher[] = [];
+  private readonly pending = new Map<
+    ChangeKind,
+    { since: number; timer: NodeJS.Timeout }
+  >();
+  private closed = false;
+
+  constructor(private readonly emit: (kind: ChangeKind) => void) {}
+
+  watchFolder(path: string) {
+    this.add(path, true, (file) => (isHidden(file) ? undefined : 'files'));
+  }
+
+  /** A worktree keeps its HEAD and index in its own Git folder, and its refs in the shared one. */
+  async watchGit(root: Place) {
+    const output = await git(root, [
+      'rev-parse',
+      '--path-format=absolute',
+      '--git-dir',
+      '--git-common-dir',
+    ]).catch(() => undefined);
+    if (!output || this.closed) return;
+    const [gitDirectory, commonDirectory] = output.trim().split(/\r?\n/);
+    try {
+      if (gitDirectory === commonDirectory)
+        this.add(gitDirectory, true, (path) => gitChange(path));
+      else {
+        this.add(gitDirectory, false, (path) =>
+          gitChange(path, { refs: false }),
+        );
+        this.add(commonDirectory, true, (path) =>
+          gitChange(path, { head: false }),
+        );
+      }
+    } catch (cause) {
+      // The folder's own changes are still reported; only Git's are missed.
+      console.error('Git watcher:', cause);
+    }
+  }
+
+  close() {
+    this.closed = true;
+    for (const watcher of this.watchers) watcher.close();
+    for (const { timer } of this.pending.values()) clearTimeout(timer);
+    this.pending.clear();
+  }
+
+  private add(
+    path: string,
+    recursive: boolean,
+    classify: (relativePath: string) => ChangeKind | undefined,
+  ) {
+    const watcher = watch(path, { recursive }, (_event, file) => {
+      const kind = file ? classify(file) : 'files';
+      if (kind) this.changed(kind);
+    });
+    watcher.on('error', (error) => console.error('Watcher:', error));
+    this.watchers.push(watcher);
+  }
+
+  private changed(kind: ChangeKind) {
+    const now = Date.now();
+    const pending = this.pending.get(kind);
+    const since = pending?.since ?? now;
+    clearTimeout(pending?.timer);
+    const timer = setTimeout(
+      () => {
+        this.pending.delete(kind);
+        this.emit(kind);
+      },
+      Math.min(CHANGE_QUIET_MS, since + CHANGE_MAX_WAIT_MS - now),
+    );
+    this.pending.set(kind, { since, timer });
   }
 }
 

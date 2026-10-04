@@ -60,3 +60,27 @@ test('a battery above the floor keeps the block', async () => {
   assert.equal(held.size, 1);
   awake.close();
 });
+
+test('the battery is only checked while running on it', async () => {
+  let checks = 0;
+  let onBattery = false;
+  let powerChanged = () => {};
+  const awake = new KeepAwake(() => true, {
+    start: () => 1,
+    stop: () => {},
+    dischargingLevel: async () => {
+      checks++;
+      return 50;
+    },
+    onBatteryPower: () => onBattery,
+    onPowerSourceChange: (listener) => (powerChanged = listener),
+  });
+  awake.handle({ paneId: 'a', type: 'status', status: 'running' });
+  await sleep(10);
+  assert.equal(checks, 0);
+  onBattery = true;
+  powerChanged();
+  await sleep(10);
+  assert.equal(checks, 1);
+  awake.close();
+});

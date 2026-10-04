@@ -79,3 +79,38 @@ test('nothing is archived while auto-close is off', async () => {
   await merges.check();
   assert.deepEqual(archived, []);
 });
+
+test('checks wait while the app is out of view, and catch up once it is back', async (t) => {
+  t.mock.timers.enable({ apis: ['setInterval'] });
+  let inView = false;
+  const archived: string[] = [];
+  const store = {
+    state: { panes: [pane('merged', 'feature/a', 100)] },
+    preferences: { ...DEFAULT_PREFERENCES, archiveOnMerge: true },
+    project: () => ({ path: '/nonexistent-repository' }),
+  } as unknown as Store;
+  let lookups = 0;
+  const merges = new MergeWatcher({
+    store,
+    github: {
+      lastMerge: async () => {
+        lookups++;
+        return 200;
+      },
+    },
+    isBusy: () => false,
+    archive: (ids) => archived.push(...ids),
+    inView: () => inView,
+  });
+  merges.start();
+  t.mock.timers.tick(60_000);
+  t.mock.timers.tick(60_000);
+  assert.equal(lookups, 0);
+  inView = true;
+  await merges.catchUp();
+  assert.equal(lookups, 1);
+  assert.deepEqual(archived, ['merged']);
+  await merges.catchUp();
+  assert.equal(lookups, 1, 'nothing was missed since');
+  merges.close();
+});

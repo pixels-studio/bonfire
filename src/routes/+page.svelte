@@ -616,9 +616,12 @@
       ['idle', 'completed', 'failed'].includes(event.status)
     )
       pullRequest.settle(event.paneId);
-    // Agents commit and switch branches too.
-    if (event.type === 'status' && event.status === 'idle')
+    // Agents commit, push, open pull requests, and switch branches too; in a remote folder
+    // the end of a turn is the only word of it.
+    if (event.type === 'status' && event.status === 'idle') {
       void branch.reload();
+      void pullRequest.reload();
+    }
     if (
       event.type === 'status' &&
       event.status === 'completed' &&

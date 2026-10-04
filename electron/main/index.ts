@@ -5,6 +5,7 @@ import {
   dialog,
   ipcMain,
   Notification,
+  powerMonitor,
   powerSaveBlocker,
   protocol,
   net,
@@ -213,6 +214,11 @@ async function createWindow() {
     (_contents, _permission, callback) => callback(false),
   );
   mainWindow.webContents.session.setPermissionCheckHandler(() => false);
+  // What waited while the window was hidden catches up as it comes back.
+  const catchUp = () => void backend.cameIntoView();
+  mainWindow.on('show', catchUp);
+  mainWindow.on('restore', catchUp);
+  mainWindow.on('focus', catchUp);
   mainWindow.on('enter-full-screen', () => send(events.fullscreen, true));
   mainWindow.on('leave-full-screen', () => send(events.fullscreen, false));
   mainWindow.webContents.on('did-finish-load', () =>
@@ -298,7 +304,17 @@ app
         start: () => powerSaveBlocker.start('prevent-app-suspension'),
         stop: (blocker) => powerSaveBlocker.stop(blocker),
         dischargingLevel,
+        onBatteryPower: () => powerMonitor.isOnBatteryPower(),
+        onPowerSourceChange: (listener) => {
+          powerMonitor.on('on-battery', listener);
+          powerMonitor.on('on-ac', listener);
+        },
       },
+      inView: () =>
+        !!mainWindow &&
+        !mainWindow.isDestroyed() &&
+        mainWindow.isVisible() &&
+        !mainWindow.isMinimized(),
     });
     registerIpc();
     await createWindow();

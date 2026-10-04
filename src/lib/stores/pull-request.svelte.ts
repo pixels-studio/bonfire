@@ -5,10 +5,29 @@ import type {
   PullRequestInput,
 } from '$shared/contracts';
 import { errorMessage } from '$shared/domain';
+import { watchProject } from '../file-watch';
+import { Refresher } from '../refresher';
 import { branch } from './branch.svelte';
 import { toast } from './toast.svelte';
 
-const POLL_INTERVAL_MS = 20_000;
+/**
+ * GitHub can't tell the app when checks finish or a pull request merges, so an open one is
+ * checked back on: often while its checks run, and now and then once they have finished.
+ */
+const CHECKS_POLL_MS = 20_000;
+const OPEN_POLL_MS = 60_000;
+/** The least time between lookups set off by commits and pushes, which come in bursts. */
+const PULL_GAP_MS = 5000;
+/** The least time between looking at the branch's work after a commit, push, or switch. */
+const DRAFT_GAP_MS = 2000;
+/**
+ * The least time between looking at it while files keep changing, as they do all through an
+ * agent's turn. Each look runs several Git commands, and edits only move the count of
+ * uncommitted files; the end of the turn looks again anyway.
+ */
+const DRAFT_FILES_GAP_MS = 15_000;
+/** How often to look at the work in a remote folder, whose changes nothing reports. */
+const REMOTE_DRAFT_POLL_MS = 20_000;
 /** An action whose agent never reports back, such as one that is stuck, is given up on after this long. */
 const ACTION_TIMEOUT_MS = 10 * 60_000;
 
@@ -35,6 +54,8 @@ class PullRequestStore {
   agentPaneId = $state<string>();
   private projectId?: string;
   private generation = 0;
+  private pulls?: Refresher;
+  private drafts?: Refresher;
   private timeout?: ReturnType<typeof setTimeout>;
   /** Panes whose turn ended before the action learned which pane it was running in. */
   private finishedEarly = new Set<string>();
@@ -47,35 +68,73 @@ class PullRequestStore {
     this.projectId = projectId;
     this.current = undefined;
     this.draft = undefined;
+    const session = ++this.generation;
     if (!projectId) return;
-    void this.reload();
-    const timer = setInterval(() => void this.reload(), POLL_INTERVAL_MS);
-    const onFocus = () => void this.reload();
-    window.addEventListener('focus', onFocus);
+    const current = () => session === this.generation;
+    const pulls = new Refresher(
+      async () => {
+        const pull = await this.lookUpPull(projectId, current);
+        pulls.setInterval(
+          pull?.state !== 'open'
+            ? undefined
+            : pull.checks === 'pending'
+              ? CHECKS_POLL_MS
+              : OPEN_POLL_MS,
+        );
+      },
+      { minGapMs: PULL_GAP_MS },
+    );
+    const drafts = new Refresher(() => this.lookUpDraft(projectId, current), {
+      minGapMs: DRAFT_GAP_MS,
+    });
+    this.pulls = pulls;
+    this.drafts = drafts;
+    void pulls.refresh();
+    void drafts.refresh();
+    // A push moves the remote branch, which can open or update the pull request; the
+    // branch's own work changes with its files, its commits, and its pushes.
+    const watch = watchProject(projectId, ['files', 'refs', 'head'], (kind) => {
+      drafts.invalidate(kind === 'files' ? DRAFT_FILES_GAP_MS : undefined);
+      if (kind === 'refs') pulls.invalidate();
+    });
+    void watch.live.then(
+      (live) => {
+        if (!live) drafts.setInterval(REMOTE_DRAFT_POLL_MS);
+      },
+      // A folder that can't be watched still updates when asked, such as after a turn.
+      () => {},
+    );
     return () => {
-      clearInterval(timer);
-      window.removeEventListener('focus', onFocus);
+      pulls.stop();
+      drafts.stop();
+      watch.stop();
     };
   }
 
+  /** Looks the pull request and the branch's work up again, after any lookup underway. */
   async reload() {
-    const projectId = this.projectId;
-    if (!projectId) return;
-    const token = ++this.generation;
+    await Promise.all([this.pulls?.refresh(), this.drafts?.refresh()]);
+  }
+
+  private async lookUpPull(projectId: string, current: () => boolean) {
     try {
       const pull = await window.bonfire.github.pullRequest(projectId);
-      // Looked up even with an open pull request, to know whether it has work left to push.
-      const draft = await window.bonfire.github
-        .pullRequestDraft(projectId)
-        .catch(() => undefined);
-      if (token === this.generation) {
-        this.current = pull;
-        this.draft = draft;
-      }
-    } catch {
-      // gh missing, signed out, or offline: keep what was last known, or no pull request.
-      if (token === this.generation) this.current ??= null;
+      if (current()) this.current = pull;
+      return pull;
+    } catch (cause) {
+      // gh missing, signed out, or offline: keep what was last known, or no pull request,
+      // and check back less often until it answers.
+      if (current()) this.current ??= null;
+      throw cause;
     }
+  }
+
+  /** Looked up even with an open pull request, to know whether it has work left to push. */
+  private async lookUpDraft(projectId: string, current: () => boolean) {
+    const draft = await window.bonfire.github
+      .pullRequestDraft(projectId)
+      .catch(() => undefined);
+    if (current()) this.draft = draft;
   }
 
   async create(input: PullRequestInput) {
