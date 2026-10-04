@@ -13,6 +13,10 @@ export type Power = {
   stop(blocker: number): void;
   /** The battery's charge while running on it; undefined on wall power or when unknown. */
   dischargingLevel(): Promise<number | undefined>;
+  /** Whether the computer runs on its battery; assumed so when unknown. */
+  onBatteryPower?(): boolean;
+  /** Calls `listener` when the computer moves onto its battery or off it. */
+  onPowerSourceChange?(listener: () => void): void;
 };
 
 /** Reads the charge from `pmset`; other platforms don't report one, so they are never cut off. */
@@ -34,7 +38,10 @@ export class KeepAwake {
   constructor(
     private readonly enabled: () => boolean,
     private readonly power: Power,
-  ) {}
+  ) {
+    // The charge only matters on the battery, so it is only checked there.
+    power.onPowerSourceChange?.(() => this.update());
+  }
 
   handle(event: AssistantEvent) {
     if (event.type !== 'status') return;
@@ -47,13 +54,14 @@ export class KeepAwake {
   /** Re-evaluates whether to block sleep, such as after the setting changes. */
   update() {
     const active = this.enabled() && this.running.size > 0;
-    if (active && !this.batteryTimer) {
+    const onBattery = active && (this.power.onBatteryPower?.() ?? true);
+    if (onBattery && !this.batteryTimer) {
       this.batteryTimer = setInterval(
         () => void this.checkBattery(),
         BATTERY_CHECK_MS,
       );
       void this.checkBattery();
-    } else if (!active && this.batteryTimer) {
+    } else if (!onBattery && this.batteryTimer) {
       clearInterval(this.batteryTimer);
       this.batteryTimer = undefined;
       this.lowBattery = false;

@@ -543,7 +543,14 @@ export type TerminalEvent = {
   data?: string;
   exitCode?: number;
 };
-export type FileChangeEvent = { projectId: string; path: string };
+/**
+ * Something changed in a project's folder: its `files`, including what Git has staged; the
+ * `head`, which branch Git has checked out; or `refs`, such as after a commit or push.
+ */
+export type FileChangeEvent = {
+  projectId: string;
+  kind: 'files' | 'head' | 'refs';
+};
 /** Panes the app archived on its own, such as when their pull request merged. */
 export type PanesClosedEvent = {
   paneIds: string[];
@@ -841,7 +848,8 @@ export type API = {
     readFile(projectId: string, path: string): Promise<string>;
     /** Project file paths matching `query`, best match first. */
     search(projectId: string, query: string): Promise<string[]>;
-    watch(projectId: string): Promise<void>;
+    /** Starts reporting changes; false when they can't be, such as in a remote folder. */
+    watch(projectId: string): Promise<boolean>;
     unwatch(projectId: string): Promise<void>;
     onChange(listener: (event: FileChangeEvent) => void): Unsubscribe;
   };

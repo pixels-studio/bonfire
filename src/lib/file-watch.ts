@@ -1,78 +1,72 @@
-const REFRESH_DEBOUNCE_MS = 180;
+import type { FileChangeEvent } from '$shared/contracts';
+import { Refresher } from './refresher';
+
+/** How often views check a remote folder, whose changes nothing reports. */
+const REMOTE_POLL_MS = 5000;
+
+type ChangeKind = FileChangeEvent['kind'];
+
+/** Main watches each project once, for every view of it, and stops with the last. */
+const watching = new Map<string, { views: number; live: Promise<boolean> }>();
+
 /**
- * Remote folders aren't watched, and local ones only a few levels deep, so views also check
- * back on this interval while the app is in view.
+ * Calls `onchange` when main reports one of `kinds` changing in the project. `live` settles
+ * on whether main reports changes at all; remote folders it can't, so those need checking
+ * back instead. Returns what stops watching.
  */
-const POLL_INTERVAL_MS = 5000;
-
-type Watch = {
-  /** How many views watch the project; main's watcher is shared and stops with the last. */
-  views: number;
-  /** The views that check back on a timer, which they share. */
-  polling: Set<() => void>;
-  timer?: ReturnType<typeof setInterval>;
-};
-
-const watching = new Map<string, Watch>();
+export function watchProject(
+  projectId: string,
+  kinds: ChangeKind[],
+  onchange: (kind: ChangeKind) => void,
+) {
+  const watch = watching.get(projectId) ?? {
+    views: 0,
+    live: window.bonfire.filesystem.watch(projectId),
+  };
+  watching.set(projectId, watch);
+  watch.views++;
+  const unsubscribe = window.bonfire.filesystem.onChange((event) => {
+    if (event.projectId === projectId && kinds.includes(event.kind))
+      onchange(event.kind);
+  });
+  let stopped = false;
+  return {
+    live: watch.live,
+    stop() {
+      if (stopped) return;
+      stopped = true;
+      unsubscribe();
+      if (--watch.views) return;
+      watching.delete(projectId);
+      void window.bonfire.filesystem.unwatch(projectId);
+    },
+  };
+}
 
 /**
- * Calls `onchange` shortly after files in the project change, and every few
- * seconds besides unless `poll` is off. Returns a function that stops watching.
+ * Keeps a view of the project's files current with `load`: when they change, and every few
+ * seconds in a remote folder unless `poll` is off. Returns what stops it.
  */
 export function watchFiles(
   projectId: string,
-  onchange: () => void,
+  load: () => unknown,
   {
     poll = true,
     onerror,
   }: { poll?: boolean; onerror?: (cause: unknown) => void } = {},
 ) {
-  let watch = watching.get(projectId);
-  if (!watch) {
-    watch = { views: 0, polling: new Set() };
-    watching.set(projectId, watch);
-    window.bonfire.filesystem
-      .watch(projectId)
-      .catch((cause) => onerror?.(cause));
-  }
-  watch.views++;
-
-  let debounce: ReturnType<typeof setTimeout> | undefined;
-  const unsubscribe = window.bonfire.filesystem.onChange((event) => {
-    if (event.projectId !== projectId) return;
-    clearTimeout(debounce);
-    debounce = setTimeout(onchange, REFRESH_DEBOUNCE_MS);
-  });
-  // Checking back costs a Git status each time, which nobody sees while the app is hidden;
-  // coming back into view catches up at once instead. Views of one project check back on
-  // one timer, in the same instant, so main runs Git once for all of them rather than once
-  // each: several panes polling on their own beats kept Windows spawning git continually.
-  const catchUp = () => document.hidden || onchange();
-  if (poll) {
-    watch.polling.add(onchange);
-    const { polling } = watch;
-    watch.timer ??= setInterval(() => {
-      if (document.hidden) return;
-      for (const check of polling) check();
-    }, POLL_INTERVAL_MS);
-    document.addEventListener('visibilitychange', catchUp);
-  }
-
+  const refresher = new Refresher(load);
+  const watch = watchProject(projectId, ['files'], () =>
+    refresher.invalidate(),
+  );
+  watch.live.then(
+    (live) => {
+      if (poll && !live) refresher.setInterval(REMOTE_POLL_MS);
+    },
+    (cause) => onerror?.(cause),
+  );
   return () => {
-    unsubscribe();
-    clearTimeout(debounce);
-    const current = watching.get(projectId);
-    if (!current) return;
-    if (poll) {
-      current.polling.delete(onchange);
-      document.removeEventListener('visibilitychange', catchUp);
-      if (!current.polling.size) {
-        clearInterval(current.timer);
-        current.timer = undefined;
-      }
-    }
-    if (--current.views) return;
-    watching.delete(projectId);
-    void window.bonfire.filesystem.unwatch(projectId);
+    refresher.stop();
+    watch.stop();
   };
 }
