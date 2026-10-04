@@ -45,6 +45,19 @@
   -webkit-app-region: no-drag;
 }
 
+/* The native window swallows pointer events over a drag region, so a click there never reaches
+   the page to dismiss an open menu. The regions give way while one is open. */
+body:has(
+    :is(
+      [data-slot='dropdown-menu-content'],
+      [data-slot='popover-content'],
+      [data-slot='select-content']
+    )[data-state='open']
+  )
+  .app-drag {
+  -webkit-app-region: no-drag;
+}
+
 /* Maps the typography plugin's palette onto the app theme. */
 @utility prose-bonfire {
   --tw-prose-body: color-mix(in srgb, var(--color-foreground) 80%, transparent);

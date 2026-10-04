@@ -166,13 +166,10 @@
               {...props}
               variant="secondary"
               size="icon"
-              class={cn(BUTTON_CLASS, 'group')}
+              class={BUTTON_CLASS}
               aria-label="Add pane"
             >
-              <Icon
-                name="plus"
-                class="transition-transform duration-200 ease-out group-aria-expanded:rotate-45 motion-reduce:transition-none"
-              />
+              <Icon name="add-pane" />
             </Button>
           {/snippet}
         </DropdownMenu.Trigger>
@@ -200,11 +197,11 @@
           {/each}
         </DropdownMenu.Content>
       </DropdownMenu.Root>
-      {#if panes.length + panels.length > 3}
+      {#if panes.length + panels.length > 0}
         <!-- Holds the collapsed width in the rail; the minimap overflows it rightward over the panes. -->
-        <div class="minimap-slot relative z-40 w-8">
+        <div class="minimap-slot relative z-40 w-7">
           <nav
-            class="minimap flex w-max max-w-72 min-w-44 flex-col gap-0.5 rounded-2xl p-1"
+            class="minimap flex w-max max-w-72 min-w-44 flex-col gap-0.5 rounded-2xl px-0.5 py-1"
             aria-label="Panes"
           >
             {#each openPanels as item (item.panel)}
@@ -313,7 +310,7 @@
     background-color: var(--color-secondary);
     backdrop-filter: blur(16px) saturate(1.4);
     box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0);
-    clip-path: inset(0 calc(100% - 2rem) 0 0 round 1rem);
+    clip-path: inset(0 calc(100% - 1.75rem) 0 0 round 0.875rem);
     /* Collapsing gets out of the way quicker than expanding. */
     transition:
       clip-path 180ms var(--minimap-ease),
@@ -325,7 +322,7 @@
   .minimap:has(:focus-visible) {
     background-color: rgb(44 44 44 / 70%); /* Mid-grey glass: mutes the blurred text behind without going black. */
     box-shadow: inset 0 0 0 1px rgb(255 255 255 / 8%);
-    clip-path: inset(0 0 0 0 round 1rem);
+    clip-path: inset(0 0 0 0 round 0.875rem);
     /* A beat of hover intent, so sweeping the cursor past doesn't flash it open. */
     transition:
       clip-path 280ms var(--minimap-ease) 60ms,

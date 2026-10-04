@@ -25,7 +25,7 @@
       : !!selected && !!scripts.pending[selected.id],
   );
 
-  /** The pill's two halves sit a pixel apart, so the header shows through as a cutout. Their facing borders are dropped, as the button's transparent border would widen the gap. */
+  /** The pill's two halves sit 2px apart, so the header shows through as a cutout. Their facing borders are dropped, as the button's transparent border would widen the gap. */
   const HALF_CLASS = cn(
     buttonVariants({ variant: 'secondary', size: 'sm' }),
     'text-foreground',
@@ -63,7 +63,7 @@
   });
 </script>
 
-<div class="flex items-center gap-px" role="group" aria-label="Run scripts">
+<div class="flex items-center gap-0.5" role="group" aria-label="Run scripts">
   <button
     type="button"
     class={cn(

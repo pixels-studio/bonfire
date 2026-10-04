@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { Snippet } from 'svelte';
   import { Button } from '$lib/components/ui/button';
+  import Icon from '$lib/components/icon/icon.svelte';
   import { shortcutText } from '$lib/shortcuts';
   import { pullRequest } from '$lib/stores/pull-request.svelte';
   import { cn, isMac } from '$lib/utils';
@@ -50,7 +51,9 @@
 
   const pullRequestHint = `(${shortcutText('pullRequest', isMac())})`;
   const UTILITY_BUTTON_CLASS = 'text-foreground';
-  const PILL_BUTTON_CLASS = 'min-w-36 rounded-full px-3';
+  const CLOSE_BUTTON_CLASS =
+    'bg-amber-500/10 text-amber-500 hover:bg-amber-500/20';
+  const ACTION_BUTTON_CLASS = 'h-auto px-2 py-1';
   /** Each action has its own color, so what a button does shows before it is read. */
   const PUSH_BUTTON_CLASS = 'bg-green-700 text-white hover:bg-green-700/85';
   const CONFLICTS_BUTTON_CLASS =
@@ -63,11 +66,12 @@
 {#snippet pushButton()}
   <Button
     size="sm"
-    class={cn(PILL_BUTTON_CLASS, PUSH_BUTTON_CLASS)}
+    class={cn(ACTION_BUTTON_CLASS, PUSH_BUTTON_CLASS)}
     disabled={disabled || !!pullRequest.running}
     title="Have an agent commit the changes and push them to the remote"
     onclick={() => void pullRequest.run('push')}
   >
+    <Icon name="push" />
     {ACTION_LABELS.push}
   </Button>
 {/snippet}
@@ -89,7 +93,10 @@
       <Button
         variant={pullRequestOpen ? 'default' : 'secondary'}
         size="sm"
-        class={cn(PILL_BUTTON_CLASS, !pullRequestOpen && UTILITY_BUTTON_CLASS)}
+        class={cn(
+          ACTION_BUTTON_CLASS,
+          !pullRequestOpen && UTILITY_BUTTON_CLASS,
+        )}
         aria-pressed={pullRequestOpen}
         title={`Pull request ${pullRequestHint}`}
         onclick={togglePullRequest}
@@ -101,27 +108,27 @@
       {:else if pull.mergeable === 'no'}
         <Button
           size="sm"
-          class={cn(PILL_BUTTON_CLASS, CONFLICTS_BUTTON_CLASS)}
+          class={cn(ACTION_BUTTON_CLASS, CONFLICTS_BUTTON_CLASS)}
           disabled={disabled || !!pullRequest.running}
           title="Have an agent merge the target branch in and resolve the conflicts"
-            onclick={() => void pullRequest.run('resolveConflicts')}
+          onclick={() => void pullRequest.run('resolveConflicts')}
         >
           {ACTION_LABELS.resolveConflicts}
         </Button>
       {:else if pull.checks === 'failing'}
         <Button
           size="sm"
-          class={cn(PILL_BUTTON_CLASS, CHECKS_BUTTON_CLASS)}
+          class={cn(ACTION_BUTTON_CLASS, CHECKS_BUTTON_CLASS)}
           disabled={disabled || !!pullRequest.running}
           title="Have an agent fix the failing checks"
-            onclick={() => void pullRequest.run('fixChecks')}
+          onclick={() => void pullRequest.run('fixChecks')}
         >
           {ACTION_LABELS.fixChecks}
         </Button>
       {:else}
         <Button
           size="sm"
-          class={cn(PILL_BUTTON_CLASS, MERGE_BUTTON_CLASS)}
+          class={cn(ACTION_BUTTON_CLASS, MERGE_BUTTON_CLASS)}
           title={mergeBlocked || 'Squash and merge the pull request'}
           disabled={!!mergeBlocked || !!pullRequest.running}
           loading={pullRequest.merging}
@@ -137,13 +144,14 @@
         <Button
           size="sm"
           variant="secondary"
-          class={cn(PILL_BUTTON_CLASS, UTILITY_BUTTON_CLASS)}
+          class={cn(ACTION_BUTTON_CLASS, CLOSE_BUTTON_CLASS)}
           title={paneCount === 1
             ? 'Everything is pushed; close the pane'
             : 'Everything is pushed; close all panes'}
           disabled={!!pullRequest.running}
           onclick={onclosePanes}
         >
+          <Icon name="close-panes" />
           {paneCount === 1 ? 'Close Pane' : 'Close Panes'}
         </Button>
       {/if}
@@ -154,7 +162,7 @@
           : 'secondary'}
         size="sm"
         class={cn(
-          PILL_BUTTON_CLASS,
+          ACTION_BUTTON_CLASS,
           !pullRequestOpen && !createsPullRequest && UTILITY_BUTTON_CLASS,
         )}
         aria-pressed={createsPullRequest ? undefined : pullRequestOpen}
@@ -164,6 +172,9 @@
           ? () => void pullRequest.run('createPr')
           : togglePullRequest}
       >
+        {#if createsPullRequest}
+          <Icon name="pull-request" />
+        {/if}
         {pull?.state === 'merged' ? 'Merged' : ACTION_LABELS.createPr}
       </Button>
     {/if}

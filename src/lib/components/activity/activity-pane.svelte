@@ -151,7 +151,7 @@
     </Tooltip.Root>
     {/snippet}
   </PaneHeader>
-  <div {@attach overlayScrollbar} class="min-h-0 flex-1 overflow-y-auto px-2 pb-6">
+  <div {@attach overlayScrollbar} class="min-h-0 flex-1 overflow-y-auto px-2 py-6">
     {#if error}
       <p
         class="px-2 py-8 text-center text-sm text-pretty text-muted-foreground"
@@ -159,10 +159,14 @@
         {error}
       </p>
     {:else if !items}
-      <div class="px-2" role="status" aria-label="Loading activity">
-        <div class="mb-3 h-4 w-24 rounded bg-muted"></div>
+      <!-- Mirrors a day's heading and rows, so the list replaces it without shifting. -->
+      <div role="status" aria-label="Loading activity">
+        <div class="mb-1 flex h-5 items-center gap-2 px-2">
+          <div class="h-3.5 w-12 rounded bg-muted"></div>
+          <div class="h-3.5 w-4 rounded bg-muted"></div>
+        </div>
         {#each { length: 6 }, index (index)}
-          <div class="flex h-11 items-center gap-3">
+          <div class="flex h-11 items-center gap-3 px-2">
             <div class="size-6 shrink-0 rounded-full bg-muted"></div>
             <div
               class="h-3.5 rounded bg-muted"

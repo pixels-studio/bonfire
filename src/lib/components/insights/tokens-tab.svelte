@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { tokens } from '$lib/stores/tokens.svelte';
   import TokenBreakdown from './token-breakdown.svelte';
+  import TokenRangeSelect from './token-range-select.svelte';
   import TokenChart from './token-chart.svelte';
   import TokenStatsGrid from './token-stats.svelte';
   import TokensSkeleton from './tokens-skeleton.svelte';
@@ -13,6 +14,10 @@
 
 <div class="divide-y divide-border">
   <section class="px-4 py-6">
+    <!-- Pulled left by the select's own padding, so its label lines up with the stats. -->
+    <div class="-ml-2 mb-4">
+      <TokenRangeSelect />
+    </div>
     {#if entry.stats}
       <TokenStatsGrid totals={entry.stats.totals} />
     {:else if entry.error}
