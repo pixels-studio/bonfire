@@ -18,6 +18,7 @@ import {
   statSync,
   writeFileSync,
 } from 'node:fs';
+import { setTimeout as wait } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
 import { homedir } from 'node:os';
 import { events, requests } from '../../shared/contracts';
@@ -53,6 +54,8 @@ process.env.PATH = [
   .filter(Boolean)
   .join(process.platform === 'win32' ? ';' : ':');
 const DEV_URL = process.env.BONFIRE_DEV_URL;
+/** How long quitting waits for the backend to close, such as for a save to land. */
+const CLOSE_TIMEOUT_MS = 5000;
 const HELP_URL = 'https://artifacts.studio/helm';
 const IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'webp', 'gif'];
 
@@ -119,7 +122,24 @@ function log(message: string) {
   }
 }
 
+const STALL_CHECK_MS = 250;
+const STALL_LOG_MS = 500;
+
+/** Logs when the main process was kept from its timers, which freezes everything that waits on it. */
+function watchEventLoop() {
+  let last = Date.now();
+  setInterval(() => {
+    const now = Date.now();
+    const stalled = now - last - STALL_CHECK_MS;
+    last = now;
+    if (stalled >= STALL_LOG_MS) log(`Main process stalled for ${stalled} ms`);
+  }, STALL_CHECK_MS).unref();
+}
+
 function watchHealth(window: BrowserWindow) {
+  window.webContents.on('console-message', (event) => {
+    if (event.message.startsWith('[perf]')) log(event.message);
+  });
   window.on('unresponsive', () => log('Window became unresponsive'));
   window.on('responsive', () => log('Window responsive again'));
   window.webContents.on('render-process-gone', (_event, details) =>
@@ -127,6 +147,7 @@ function watchHealth(window: BrowserWindow) {
   );
 }
 
+watchEventLoop();
 app.on('child-process-gone', (_event, details) =>
   log(
     `${details.type} process gone: ${details.reason} (${details.name ?? ''})`,
@@ -293,6 +314,12 @@ app
   });
 
 app.on('window-all-closed', () => app.quit());
-app.on('before-quit', () => {
-  void backend?.close();
+/** Quitting waits for the backend to close, briefly, so a save being written lands. */
+let closing: Promise<void> | undefined;
+app.on('before-quit', (event) => {
+  if (closing || !backend) return;
+  event.preventDefault();
+  closing = Promise.race([backend.close(), wait(CLOSE_TIMEOUT_MS)])
+    .catch((cause) => console.error(`Could not close cleanly: ${cause}`))
+    .then(() => app.quit());
 });

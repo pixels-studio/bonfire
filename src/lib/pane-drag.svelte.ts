@@ -86,7 +86,14 @@ export class PaneDrag {
       settling: false,
     };
 
-    const move = (event: PointerEvent) => this.#move(event.clientX);
+    // The native window swallows pointer events over a drag region, so the header gives way
+    // for the length of the drag.
+    document.body.classList.add('pane-dragging');
+    const move = (event: PointerEvent) => {
+      // A release the page never saw, such as one over the window controls, ends the drag.
+      if (event.buttons === 0) end(false);
+      else this.#move(event.clientX);
+    };
     const keydown = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
       event.preventDefault();
@@ -96,7 +103,12 @@ export class PaneDrag {
       handle.removeEventListener('pointermove', move);
       handle.removeEventListener('pointerup', drop);
       handle.removeEventListener('pointercancel', abort);
+      handle.removeEventListener('lostpointercapture', abort);
+      window.removeEventListener('blur', abort);
       window.removeEventListener('keydown', keydown, true);
+      document.body.classList.remove('pane-dragging');
+      if (handle.hasPointerCapture(event.pointerId))
+        handle.releasePointerCapture(event.pointerId);
       this.#end(cancel);
     };
     const drop = () => end(false);
@@ -104,6 +116,8 @@ export class PaneDrag {
     handle.addEventListener('pointermove', move);
     handle.addEventListener('pointerup', drop);
     handle.addEventListener('pointercancel', abort);
+    handle.addEventListener('lostpointercapture', abort);
+    window.addEventListener('blur', abort);
     window.addEventListener('keydown', keydown, true);
   }
 

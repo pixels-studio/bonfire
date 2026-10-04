@@ -8,6 +8,7 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs';
+import { rename, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import {
   stateSchema,
@@ -30,6 +31,8 @@ import {
 const SAVE_DELAY_MS = 1000;
 /** How long a save that failed waits before it is tried again. */
 const RETRY_DELAY_MS = 5000;
+/** Serializing slower than this is logged, since it holds up everything else in the main process. */
+const SLOW_SERIALIZE_MS = 200;
 /** Windows refuses a rename while another program, such as a virus scanner, has the file open. */
 const RENAME_ATTEMPTS = 5;
 const RENAME_RETRY_MS = 20;
@@ -37,6 +40,15 @@ const BUSY_CODES = new Set(['EPERM', 'EBUSY', 'EACCES']);
 const CONVERSATION_SUFFIX = '.json';
 /** A copy of the state from before conversations moved to their own files. */
 const LEGACY_BACKUP = 'state.before-conversations.json';
+
+/** Everything one save puts on disk, serialized up front so the state may change meanwhile. */
+type Batch = {
+  conversations: { pane: Pane; file: string; data: string; count: number }[];
+  state: string;
+  /** Conversation files of panes since removed. */
+  stale: string[];
+  generation: number;
+};
 
 /**
  * Atomically persisted application state; lookups throw when an id is unknown.
@@ -46,15 +58,25 @@ const LEGACY_BACKUP = 'state.before-conversations.json';
  * rewrites `state.json`, which stays small, and only the conversations that changed, so a
  * busy agent costs its own conversation rather than every chat ever had.
  *
- * Saves are debounced, so call `flush()` before the process exits.
+ * Scheduled saves write in the background: only serializing runs on the main process,
+ * while the disk is waited on asynchronously. On Windows a virus scanner reads every file
+ * as it is written, and writing several busy conversations in step held the main process,
+ * and with it the window, for seconds at a time. Saves are debounced, so call `flush()`
+ * before the process exits.
  */
 export class Store {
   state: State;
   private readonly file: string;
   private readonly conversations: string;
   private saveTimer?: NodeJS.Timeout;
+  /** The background write underway, if any; the next one queues behind it. */
+  private writing?: Promise<void>;
+  /** Stepped by a write on this thread, which a background write still underway then yields to. */
+  private generation = 0;
   /** Panes whose messages changed since they were last written. */
   private readonly dirty = new Set<Pane>();
+  /** Panes a background write is carrying, so a write on this thread covers them too. */
+  private readonly inFlight = new Set<Pane>();
   /** How many messages each pane's file held when written, to catch a change nobody reported. */
   private readonly written = new Map<string, number>();
 
@@ -97,46 +119,123 @@ export class Store {
     this.saveTimer ??= setTimeout(() => this.flushLater(), SAVE_DELAY_MS);
   }
 
-  /** Writes any pending changes now; throws if they could not be written. */
+  /**
+   * Writes any pending changes now, on this thread; throws if they could not be written.
+   * For quitting and tests. A background write underway yields: what it carries is
+   * written here, and it stops short of putting its older copy over this one.
+   */
   flush() {
-    if (!this.saveTimer) return;
     clearTimeout(this.saveTimer);
     this.saveTimer = undefined;
-    this.write();
+    this.generation++;
+    for (const pane of this.inFlight) this.dirty.add(pane);
+    this.inFlight.clear();
+    const batch = this.serialize();
+    try {
+      for (const { file, data } of batch.conversations)
+        writeAtomicallySync(file, data);
+      writeAtomicallySync(this.file, batch.state);
+    } catch (cause) {
+      this.keep(batch);
+      throw cause;
+    }
+    for (const id of batch.stale)
+      rmSync(this.conversationFile(id), { force: true });
+    this.commit(batch);
+  }
+
+  /** Settles once no background write is underway; one that failed is retried, not reported here. */
+  settled(): Promise<void> {
+    return this.writing ?? Promise.resolve();
   }
 
   /**
-   * A scheduled save. One that fails, as on Windows while a scanner holds a file, is
-   * tried again later rather than thrown from a timer, where it would bring up an error
-   * dialog and lose the changes.
+   * A scheduled save, written in the background, one at a time. One that fails, as on
+   * Windows while a scanner holds a file, is tried again later rather than thrown from a
+   * timer, where it would bring up an error dialog and lose the changes.
    */
   private flushLater() {
+    clearTimeout(this.saveTimer);
+    this.saveTimer = undefined;
+    const run: Promise<void> = (this.writing ?? Promise.resolve())
+      .then(() => this.writeInBackground())
+      .catch((cause) => {
+        console.warn(`Could not save state: ${errorMessage(cause)}`);
+        this.saveTimer ??= setTimeout(() => this.flushLater(), RETRY_DELAY_MS);
+      })
+      .finally(() => {
+        if (this.writing === run) this.writing = undefined;
+      });
+    this.writing = run;
+  }
+
+  private async writeInBackground() {
+    const batch = this.serialize();
+    for (const { pane } of batch.conversations) this.inFlight.add(pane);
+    // A write on this thread meanwhile has already put everything here on disk.
+    const wanted = () => batch.generation === this.generation;
     try {
-      this.flush();
+      // Conversations are written before the state that lists them, so a crash in between
+      // leaves at worst an unlisted file, which the next save removes.
+      for (const { file, data } of batch.conversations)
+        await writeAtomically(file, data, wanted);
+      if (!wanted()) return;
+      await writeAtomically(this.file, batch.state, wanted);
+      if (!wanted()) return;
+      for (const id of batch.stale)
+        await rm(this.conversationFile(id), { force: true });
+      this.commit(batch);
     } catch (cause) {
-      console.warn(`Could not save state: ${errorMessage(cause)}`);
-      this.saveTimer ??= setTimeout(() => this.flushLater(), RETRY_DELAY_MS);
+      if (wanted()) this.keep(batch);
+      throw cause;
+    } finally {
+      for (const { pane } of batch.conversations) this.inFlight.delete(pane);
     }
   }
 
-  private write() {
+  /** Serializes what a save puts on disk and takes the changes as written; `keep` gives them back. */
+  private serialize(): Batch {
+    const started = Date.now();
     const live = new Set<string>();
+    const conversations: Batch['conversations'] = [];
     for (const pane of this.state.panes) {
       live.add(pane.id);
       if (
         this.dirty.has(pane) ||
         this.written.get(pane.id) !== pane.messages.length
       )
-        this.writeConversation(pane);
+        conversations.push({
+          pane,
+          file: this.conversationFile(pane.id),
+          data: JSON.stringify(pane.messages),
+          count: pane.messages.length,
+        });
     }
-    // What is left belongs to panes since removed; a failed write above keeps its own.
     this.dirty.clear();
-    // Conversations are written before the state that lists them, so a crash in between
-    // leaves at worst an unlisted file, which the next save removes.
     const panes = this.state.panes.map(({ messages: _, ...pane }) => pane);
-    writeAtomically(this.file, JSON.stringify({ ...this.state, panes }));
-    for (const id of this.written.keys())
-      if (!live.has(id)) this.removeConversation(id);
+    const batch = {
+      conversations,
+      state: JSON.stringify({ ...this.state, panes }),
+      stale: [...this.written.keys()].filter((id) => !live.has(id)),
+      generation: this.generation,
+    };
+    const took = Date.now() - started;
+    if (took >= SLOW_SERIALIZE_MS)
+      console.warn(
+        `Serializing state took ${took} ms (${conversations.length} of ${this.state.panes.length} conversations)`,
+      );
+    return batch;
+  }
+
+  /** A write that failed leaves its changes pending, so the retry carries them. */
+  private keep(batch: Batch) {
+    for (const { pane } of batch.conversations) this.dirty.add(pane);
+  }
+
+  private commit(batch: Batch) {
+    for (const { pane, count } of batch.conversations)
+      this.written.set(pane.id, count);
+    for (const id of batch.stale) this.written.delete(id);
   }
 
   /** The user's preferences, with defaults for anything unset. */
@@ -158,7 +257,7 @@ export class Store {
     for (const name of readdirSync(this.conversations)) {
       const id = name.slice(0, -CONVERSATION_SUFFIX.length);
       if (name.endsWith(CONVERSATION_SUFFIX) && !live.has(id))
-        this.removeConversation(id);
+        rmSync(this.conversationFile(id), { force: true });
     }
   }
 
@@ -179,40 +278,50 @@ export class Store {
       return [];
     }
   }
-
-  private writeConversation(pane: Pane) {
-    writeAtomically(
-      this.conversationFile(pane.id),
-      JSON.stringify(pane.messages),
-    );
-    this.written.set(pane.id, pane.messages.length);
-    this.dirty.delete(pane);
-  }
-
-  private removeConversation(id: string) {
-    rmSync(this.conversationFile(id), { force: true });
-    this.written.delete(id);
-  }
 }
 
 /** Replaces the file in one step, so a crash mid-write never leaves it half written. */
-function writeAtomically(file: string, data: string) {
-  const temporaryFile = `${file}.tmp`;
+function writeAtomicallySync(file: string, data: string) {
+  const temporaryFile = `${file}.now.tmp`;
   writeFileSync(temporaryFile, data, { mode: 0o600 });
-  renameRetrying(temporaryFile, file);
-}
-
-/** Renames, waiting briefly while Windows reports the target busy. */
-function renameRetrying(from: string, to: string) {
   for (let attempt = 1; ; attempt++) {
     try {
-      return renameSync(from, to);
+      return renameSync(temporaryFile, file);
     } catch (cause) {
-      const code = (cause as NodeJS.ErrnoException).code ?? '';
-      if (attempt >= RENAME_ATTEMPTS || !BUSY_CODES.has(code)) throw cause;
+      if (attempt >= RENAME_ATTEMPTS || !busy(cause)) throw cause;
       sleep(RENAME_RETRY_MS * attempt);
     }
   }
+}
+
+/**
+ * The background counterpart, which waits on the disk rather than holding the thread. Its
+ * temporary file is its own, so a write on the thread meanwhile can't cross it, and the
+ * rename is skipped once `wanted` says a newer copy is on disk already.
+ */
+async function writeAtomically(
+  file: string,
+  data: string,
+  wanted: () => boolean,
+) {
+  const temporaryFile = `${file}.tmp`;
+  await writeFile(temporaryFile, data, { mode: 0o600 });
+  if (!wanted()) return rm(temporaryFile, { force: true });
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await rename(temporaryFile, file);
+    } catch (cause) {
+      if (attempt >= RENAME_ATTEMPTS || !busy(cause)) throw cause;
+      await new Promise((resolve) =>
+        setTimeout(resolve, RENAME_RETRY_MS * attempt),
+      );
+    }
+  }
+}
+
+/** Whether a failure is Windows refusing a file another program holds, which passes. */
+function busy(cause: unknown) {
+  return BUSY_CODES.has((cause as NodeJS.ErrnoException).code ?? '');
 }
 
 function sleep(milliseconds: number) {
