@@ -562,6 +562,12 @@ export function skillText(text: string, skills: Pick<Skill, 'name'>[]) {
   return [`/${first.name}`, text, also].filter(Boolean).join(' ');
 }
 
+/** One block of a user message's content: text or an image. */
+type UserContentBlock = Exclude<
+  SDKUserMessage['message']['content'],
+  string
+>[number];
+
 function userMessage(
   { text, attachments, skills }: Prompt,
   uuid: SDKUserMessage['uuid'],
@@ -575,7 +581,7 @@ function userMessage(
     message: {
       role: 'user',
       content: inlineParts(skillText(text, skills), attachments).flatMap(
-        (part) => {
+        (part): UserContentBlock[] => {
           if ('text' in part)
             return part.text.trim()
               ? [{ type: 'text' as const, text: part.text }]

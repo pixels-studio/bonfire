@@ -1,20 +1,37 @@
 import type { AssistantEvent } from '$shared/contracts';
 
-export type PaneStatus = 'idle' | 'working' | 'input' | 'error';
+export type PaneStatus = 'idle' | 'working' | 'input' | 'error' | 'done';
+
+/** The statuses worth flagging on a pane's icon while scrolling past it. */
+export type PaneBadge = Extract<PaneStatus, 'input' | 'error' | 'done'>;
+
+const BADGES: PaneStatus[] = ['input', 'error', 'done'];
+
+export function paneBadge(status: PaneStatus): PaneBadge | undefined {
+  return BADGES.includes(status) ? (status as PaneBadge) : undefined;
+}
 
 /** Tracks what each pane's assistant is doing, from the main process's event stream. */
 export class PaneStatuses {
   #running = $state<Record<string, boolean>>({});
   #failed = $state<Record<string, boolean>>({});
+  /** Finished turns the user hasn't looked at yet. */
+  #unseen = $state<Record<string, boolean>>({});
   #requests = $state<Record<string, string[]>>({});
   #loaded = new Set<string>();
 
-  /** Waiting on the user wins, then running, then a failed last turn. */
+  /** Waiting on the user wins, then running, then a failed last turn, then an unseen finished one. */
   get(paneId: string): PaneStatus {
     if (this.#requests[paneId]?.length) return 'input';
     if (this.#running[paneId]) return 'working';
     if (this.#failed[paneId]) return 'error';
+    if (this.#unseen[paneId]) return 'done';
     return 'idle';
+  }
+
+  /** Clears a finished turn's mark once the user has looked at its pane. */
+  markSeen(paneId: string) {
+    if (this.#unseen[paneId]) this.#unseen[paneId] = false;
   }
 
   /** Catches up once on a pane whose events were missed, such as after a reload. */
@@ -32,8 +49,13 @@ export class PaneStatuses {
     if (event.type === 'status') {
       this.#running[paneId] = event.status === 'running';
       // A failed turn is followed by `idle`, so the error stays until the next run.
-      if (event.status === 'running') this.#failed[paneId] = false;
+      if (event.status === 'running') {
+        this.#failed[paneId] = false;
+        this.#unseen[paneId] = false;
+      }
       if (event.status === 'failed') this.#failed[paneId] = true;
+      // Likewise a finished turn stays marked until it's seen or the next run.
+      if (event.status === 'completed') this.#unseen[paneId] = true;
     } else if (event.type === 'request') {
       this.#requests[paneId] = [
         ...(this.#requests[paneId] ?? []),

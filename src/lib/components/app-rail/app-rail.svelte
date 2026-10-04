@@ -1,19 +1,16 @@
 <script lang="ts" module>
   /** A pane of app-wide tools, opened from the rail ahead of the conversation panes. */
-  export type AppPanel = 'shortcuts' | 'insights' | 'settings';
+  export type AppPanel = 'shortcuts' | 'insights' | 'activity' | 'settings';
 
-  const PANELS: {
+  type PanelItem = {
     panel: AppPanel;
     icon: string;
     label: string;
     shortcut: ShortcutId;
-  }[] = [
-    {
-      panel: 'shortcuts',
-      icon: 'keyboard',
-      label: 'Keyboard shortcuts',
-      shortcut: 'shortcuts',
-    },
+  };
+
+  /** The panel buttons at the foot of the rail, top to bottom, above help. */
+  const PANELS: PanelItem[] = [
     {
       panel: 'insights',
       icon: 'insights',
@@ -21,10 +18,22 @@
       shortcut: 'insights',
     },
     {
+      panel: 'activity',
+      icon: 'activity',
+      label: 'Activity',
+      shortcut: 'activity',
+    },
+    {
       panel: 'settings',
       icon: 'settings',
       label: 'Settings',
       shortcut: 'settings',
+    },
+    {
+      panel: 'shortcuts',
+      icon: 'keyboard',
+      label: 'Keyboard shortcuts',
+      shortcut: 'shortcuts',
     },
   ];
 </script>
@@ -68,12 +77,18 @@
       dot: 'bg-destructive',
       ring: 'border-destructive',
     },
+    done: {
+      slot: 'hover:bg-success/10',
+      dot: 'bg-success',
+      ring: 'border-success',
+    },
   };
   const STATUS_LABELS: Record<PaneStatus, string> = {
     idle: 'idle',
     working: 'working',
     input: 'needs input',
     error: 'failed',
+    done: 'done, not yet reviewed',
   };
 
   let {
@@ -226,7 +241,10 @@
                 class={cn(
                   DOT_CLASS,
                   style.ring,
-                  pane.inView ? style.dot : 'bg-transparent',
+                  // An unreviewed finished pane stays filled wherever it is, so it stands out.
+                  pane.inView || pane.status === 'done'
+                    ? style.dot
+                    : 'bg-transparent',
                   pane.status === 'working' && 'dot-working',
                 )}
               ></span>
@@ -236,8 +254,10 @@
       {/if}
     </div>
   </div>
-  <!-- Sized to span the composer: its 24px bottom inset and 112px height. -->
   <div class="flex flex-col items-center gap-3.5">
+    {#each PANELS as item (item.panel)}
+      {@render panelButton(item)}
+    {/each}
     <Tooltip.Root>
       <Tooltip.Trigger>
         {#snippet child({ props })}
@@ -255,29 +275,30 @@
       </Tooltip.Trigger>
       <Tooltip.Content side="right">Help</Tooltip.Content>
     </Tooltip.Root>
-    {#each PANELS as item (item.panel)}
-      {@const open = panels.includes(item.panel)}
-      <Tooltip.Root>
-        <Tooltip.Trigger>
-          {#snippet child({ props })}
-            <Button
-              {...props}
-              variant={open ? 'default' : 'secondary'}
-              size="icon"
-              class={cn(!open && BUTTON_CLASS)}
-              aria-label={item.label}
-              aria-pressed={open}
-              onclick={() => ontogglePanel(item.panel)}
-            >
-              <Icon name={item.icon} />
-            </Button>
-          {/snippet}
-        </Tooltip.Trigger>
-        <Tooltip.Content side="right">
-          {item.label}
-          <ShortcutKeys id={item.shortcut} inverse />
-        </Tooltip.Content>
-      </Tooltip.Root>
-    {/each}
   </div>
 </nav>
+
+{#snippet panelButton(item: PanelItem)}
+  {@const open = panels.includes(item.panel)}
+  <Tooltip.Root>
+    <Tooltip.Trigger>
+      {#snippet child({ props })}
+        <Button
+          {...props}
+          variant={open ? 'default' : 'secondary'}
+          size="icon"
+          class={cn(!open && BUTTON_CLASS)}
+          aria-label={item.label}
+          aria-pressed={open}
+          onclick={() => ontogglePanel(item.panel)}
+        >
+          <Icon name={item.icon} />
+        </Button>
+      {/snippet}
+    </Tooltip.Trigger>
+    <Tooltip.Content side="right">
+      {item.label}
+      <ShortcutKeys id={item.shortcut} inverse />
+    </Tooltip.Content>
+  </Tooltip.Root>
+{/snippet}

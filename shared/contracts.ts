@@ -126,6 +126,8 @@ export const paneSchema = z.object({
   approvals: approvalMode.default('auto'),
   /** The branch the conversation last worked on, and since when, to spot its pull request merging. */
   workBranch: z.object({ name: z.string(), since: z.number() }).optional(),
+  /** A terminal pane that shows a run script's output rather than a shell. */
+  scriptId: id.optional(),
   archived: z.boolean().default(false),
 });
 
@@ -149,6 +151,13 @@ export const sshConnectionSchema = z.object({
   identityFile: z.string().trim().max(4096).optional(),
 });
 
+/** A command that starts the project, such as its dev server, run from the header's Run button. */
+export const runScriptSchema = z.object({
+  id,
+  name: z.string().trim().min(1).max(60),
+  command: z.string().trim().min(1).max(10_000),
+});
+
 export const projectSchema = z.object({
   id,
   name: z.string(),
@@ -158,6 +167,10 @@ export const projectSchema = z.object({
   connectionId: id.optional(),
   createdAt: z.number(),
   lastOpenedAt: z.number(),
+  /** The project's run scripts; unset until they are first detected from its files. */
+  scripts: z.array(runScriptSchema).optional(),
+  /** The script the Run button starts: the one last run. */
+  runScriptId: id.optional(),
 });
 
 export const stateSchema = z.object({
@@ -246,6 +259,9 @@ export const projectCloneInput = z.object({
   parent: z.string().trim().min(1).max(4096),
 });
 
+/** A run script as entered in its dialog; a new one has no id yet. */
+export const runScriptInput = runScriptSchema.extend({ id: id.optional() });
+
 /** A connection as entered in its dialog; a new one has no id yet. */
 export const sshConnectionInput = sshConnectionSchema.extend({
   id: id.optional(),
@@ -257,6 +273,24 @@ export type ProjectCloneInput = z.infer<typeof projectCloneInput>;
 export type SshConnection = z.infer<typeof sshConnectionSchema>;
 export type SshConnectionInput = z.infer<typeof sshConnectionInput>;
 export type SshAuth = z.infer<typeof sshAuth>;
+export type RunScript = z.infer<typeof runScriptSchema>;
+export type RunScriptInput = z.infer<typeof runScriptInput>;
+/** A run script found in the project's files, such as its `dev` script. */
+export type ScriptSuggestion = Omit<RunScript, 'id'>;
+export type ScriptList = {
+  scripts: RunScript[];
+  /** The script the Run button starts. */
+  selectedId?: string;
+};
+/** A run script's process, shown in its own terminal pane. */
+export type ScriptRun = {
+  projectId: string;
+  scriptId: string;
+  paneId: string;
+  terminalId: string;
+  running: boolean;
+  exitCode?: number;
+};
 export type Pane = z.infer<typeof paneSchema>;
 export type PaneType = z.infer<typeof paneType>;
 export type ToolPaneType = z.infer<typeof toolPaneType>;
@@ -314,6 +348,27 @@ export type PullRequest = {
   mergeable: 'yes' | 'no' | 'unknown';
   /** The combined result of the pull request's checks. */
   checks: 'none' | 'pending' | 'passing' | 'failing';
+};
+/**
+ * Work pushed to the project's repository, as listed in the activity panel: a pull
+ * request, or a commit pushed straight to the default branch without one.
+ */
+export type Activity = {
+  /** Unique across both kinds: `pr-<number>` or `commit-<sha>`. */
+  id: string;
+  kind: 'pull' | 'push';
+  title: string;
+  url: string;
+  /** Set for pull requests. */
+  state?: PullRequest['state'];
+  /** The GitHub login of whoever opened or pushed it, else their git name. */
+  author: string;
+  avatarUrl?: string;
+  /** Lines added and removed; unset when GitHub doesn't report them. */
+  additions?: number;
+  deletions?: number;
+  /** When it last changed, or for a push when it was committed, in milliseconds since the epoch. */
+  at: number;
 };
 /** What a new pull request from the checked-out branch would contain. */
 export type PullRequestDraft = {
@@ -514,6 +569,8 @@ export const requests = {
   'github.runAction': z.tuple([id, actionId]),
   'github.mergePullRequest': z.tuple([id]),
   'github.openPullRequest': z.tuple([id]),
+  'github.activity': z.tuple([id]),
+  'github.openActivity': z.tuple([z.string().url().max(2048)]),
   'projects.chooseFolder': z.tuple([]),
   'projects.create': z.tuple([projectCreateInput]),
   'projects.clone': z.tuple([projectCloneInput]),
@@ -530,6 +587,7 @@ export const requests = {
   'panes.add': z.tuple([paneType.optional()]),
   'panes.archive': z.tuple([id]),
   'panes.reorder': z.tuple([z.array(id).max(100)]),
+  'panes.rename': z.tuple([id, z.string().trim().min(1).max(200)]),
   'assistant.send': z.tuple([assistantSendInput]),
   'assistant.pickAttachment': z.tuple([id]),
   'assistant.attachFile': z.tuple([id, filePath]),
@@ -557,6 +615,13 @@ export const requests = {
   'tokens.get': z.tuple([tokenRange]),
   'navigation.help': z.tuple([]),
   'app.isFullscreen': z.tuple([]),
+  'scripts.list': z.tuple([id]),
+  'scripts.detect': z.tuple([id]),
+  'scripts.save': z.tuple([id, runScriptInput]),
+  'scripts.remove': z.tuple([id, id]),
+  'scripts.run': z.tuple([id, id]),
+  'scripts.stop': z.tuple([id, id]),
+  'scripts.runs': z.tuple([id]),
   'terminal.create': z.tuple([terminalCreateInput]),
   'terminal.write': z.tuple([id, z.string().max(1_048_576)]),
   'terminal.resize': z.tuple([
@@ -590,6 +655,7 @@ export const events = {
   notificationsBlocked: 'window:notifications-blocked',
   panesClosed: 'panes:closed',
   githubSignInEnd: 'github:sign-in-end',
+  scriptRun: 'scripts:run',
 } as const;
 
 type Unsubscribe = () => void;
@@ -635,6 +701,13 @@ export type API = {
     /** Squash-merges the open pull request of the checked-out branch. */
     mergePullRequest(projectId: string): Promise<void>;
     openPullRequest(projectId: string): Promise<void>;
+    /**
+     * The project repository's pull requests and the commits pushed straight to its
+     * default branch, newest first.
+     */
+    activity(projectId: string): Promise<Activity[]>;
+    /** Opens a pull request from the activity list in the browser; only github.com links. */
+    openActivity(url: string): Promise<void>;
     onSignInEnd(listener: (end: GithubSignInEnd) => void): Unsubscribe;
   };
   projects: {
@@ -671,6 +744,8 @@ export type API = {
     archive(id: string): Promise<void>;
     /** Reorders the given panes among the layout slots they already occupy. */
     reorder(ids: string[]): Promise<void>;
+    /** Gives the pane a title of the user's choosing. */
+    rename(id: string, title: string): Promise<void>;
   };
   assistant: {
     send(input: AssistantSendInput): Promise<void>;
@@ -713,6 +788,25 @@ export type API = {
     onFocusPane(listener: (paneId: string) => void): Unsubscribe;
     /** The OS refused a notification; carries the app name to allow in its settings. */
     onNotificationsBlocked(listener: (appName: string) => void): Unsubscribe;
+  };
+  scripts: {
+    /** The project's run scripts; the first time, those detected from its files. */
+    list(projectId: string): Promise<ScriptList>;
+    /** Scripts found in the project's files, best first, such as each app of a monorepo. */
+    detect(projectId: string): Promise<ScriptSuggestion[]>;
+    /** Adds a script, or updates the one with the input's id. */
+    save(projectId: string, input: RunScriptInput): Promise<RunScript>;
+    /** Deletes a script, stopping it and closing its pane. */
+    remove(projectId: string, scriptId: string): Promise<void>;
+    /**
+     * Runs a script in its terminal pane, opened if needed, restarting it if it is running;
+     * resolves with the pane's id.
+     */
+    run(projectId: string, scriptId: string): Promise<string>;
+    stop(projectId: string, scriptId: string): Promise<void>;
+    /** The project's scripts that have run since the app started, running or not. */
+    runs(projectId: string): Promise<ScriptRun[]>;
+    onRun(listener: (run: ScriptRun) => void): Unsubscribe;
   };
   terminal: {
     create(input: TerminalCreateInput): Promise<string>;

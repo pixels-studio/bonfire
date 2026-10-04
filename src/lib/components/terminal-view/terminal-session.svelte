@@ -4,15 +4,27 @@
   import { FitAddon } from '@xterm/addon-fit';
   import '@xterm/xterm/css/xterm.css';
   import { Button } from '$lib/components/ui/button';
+  import { scripts } from '$lib/stores/scripts.svelte';
   import { errorMessage } from '$shared/domain';
   import type { TerminalEvent } from '$shared/contracts';
 
-  let { projectId, paneId }: { projectId: string; paneId: string } = $props();
+  let {
+    projectId,
+    paneId,
+    scriptId,
+  }: {
+    projectId: string;
+    paneId: string;
+    /** Shows the run script's terminal instead of starting a shell. */
+    scriptId?: string;
+  } = $props();
 
   let host: HTMLDivElement;
   let error = $state('');
   let exited = $state(false);
   let starting = $state(false);
+  /** Whether xterm is set up, which attaching to a script's run waits for. */
+  let opened = $state(false);
 
   let term: Terminal;
   let fit: FitAddon;
@@ -22,8 +34,17 @@
   let pendingEvents: TerminalEvent[] = [];
   let lastSequence = 0;
 
+  /** The script's current process, which the pane follows across restarts. */
+  const runTerminalId = $derived(
+    scriptId ? scripts.runOfPane(paneId)?.terminalId : undefined,
+  );
+
   function reportError(cause: unknown) {
     error = errorMessage(cause);
+  }
+
+  function exitLine(code: number) {
+    term.writeln(`\r\n[Process exited: ${code}]`);
   }
 
   function receive(event: TerminalEvent) {
@@ -33,31 +54,41 @@
     if (event.data) term.write(event.data);
     if (event.exitCode !== undefined) {
       exited = true;
-      term.writeln(`\r\n[Process exited: ${event.exitCode}]`);
+      exitLine(event.exitCode);
     }
+  }
+
+  /** Shows a terminal's output so far, then follows it. */
+  async function attach(id: string, focus: boolean) {
+    terminalId = id;
+    ready = false;
+    lastSequence = 0;
+    exited = false;
+    error = '';
+    term.reset();
+    const snapshot = await window.bonfire.terminal.snapshot(id);
+    if (!mounted || terminalId !== id) return;
+    term.write(snapshot.data);
+    lastSequence = snapshot.sequence;
+    exited = snapshot.exitCode !== undefined;
+    if (snapshot.exitCode !== undefined) exitLine(snapshot.exitCode);
+    ready = true;
+    pendingEvents.forEach(receive);
+    pendingEvents = [];
+    resize();
+    if (focus) term.focus();
   }
 
   async function launch() {
     starting = true;
-    ready = false;
-    lastSequence = 0;
     error = '';
     try {
-      terminalId = await window.bonfire.terminal.create({
+      const id = await window.bonfire.terminal.create({
         projectId,
         paneId,
         type: 'shell',
       });
-      const snapshot = await window.bonfire.terminal.snapshot(terminalId);
-      if (!mounted) return;
-      term.write(snapshot.data);
-      lastSequence = snapshot.sequence;
-      exited = snapshot.exitCode !== undefined;
-      ready = true;
-      pendingEvents.forEach(receive);
-      pendingEvents = [];
-      resize();
-      term.focus();
+      await attach(id, true);
     } catch (cause) {
       reportError(cause);
     } finally {
@@ -78,6 +109,13 @@
       .catch(reportError);
   }
 
+  // A script pane shows whichever process its script last started.
+  $effect(() => {
+    const id = runTerminalId;
+    if (!opened || !id || id === terminalId) return;
+    attach(id, false).catch(reportError);
+  });
+
   onMount(() => {
     mounted = true;
     term = new Terminal({
@@ -97,12 +135,13 @@
       ready ? receive(event) : pendingEvents.push(event),
     );
     const input = term.onData((data) => {
-      if (terminalId)
+      if (terminalId && !exited)
         window.bonfire.terminal.write(terminalId, data).catch(reportError);
     });
     const observer = new ResizeObserver(resize);
     observer.observe(host);
-    void launch();
+    opened = true;
+    if (!scriptId) void launch();
 
     return () => {
       mounted = false;
@@ -116,7 +155,13 @@
 
 <div class="absolute inset-0 flex flex-col px-5 py-4">
   {#if error}<p class="pb-3 text-sm text-destructive">{error}</p>{/if}
-  {#if error || exited}
+  {#if scriptId}
+    {#if !runTerminalId}
+      <p class="pb-3 text-sm text-muted-foreground">
+        Not running. Start it with Run above.
+      </p>
+    {/if}
+  {:else if error || exited}
     <div class="pb-3">
       <Button variant="secondary" disabled={starting} onclick={relaunch}>
         Relaunch terminal

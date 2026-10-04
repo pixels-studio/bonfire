@@ -5,6 +5,7 @@
   import { pullRequest } from '$lib/stores/pull-request.svelte';
   import { cn, isMac } from '$lib/utils';
   import { ACTION_LABELS } from '$shared/domain';
+  import RunButton from './run-button.svelte';
 
   let {
     pullRequestOpen = $bindable(false),
@@ -82,6 +83,9 @@
     {@render location()}
   </div>
   <div class="flex items-center gap-3 app-no-drag">
+    {#if !disabled}
+      <RunButton />
+    {/if}
     {#if pull?.state === 'open'}
       <Button
         variant={pullRequestOpen ? 'default' : 'secondary'}
@@ -137,11 +141,13 @@
           size="sm"
           variant="secondary"
           class={cn(PILL_BUTTON_CLASS, UTILITY_BUTTON_CLASS)}
-          title="Everything is pushed; close all panes"
+          title={paneCount === 1
+            ? 'Everything is pushed; close the pane'
+            : 'Everything is pushed; close all panes'}
           disabled={!!pullRequest.running}
           onclick={onclosePanes}
         >
-          Close Panes
+          {paneCount === 1 ? 'Close Pane' : 'Close Panes'}
         </Button>
       {/if}
     {:else}

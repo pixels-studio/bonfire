@@ -21,6 +21,7 @@
     dragHandle,
     onresize,
     onclose,
+    onrename,
   }: PaneProps & { projectId: string; title: string } = $props();
 
   /** Loaded directory listings by path; the project root is `''`. */
@@ -100,6 +101,7 @@
     {dragHandle}
     {onresize}
     {onclose}
+    {onrename}
   />
   <section class="min-h-0 flex-1 overflow-auto px-3 pb-2">
     <div class="sticky top-0 z-10 -mx-3 bg-card px-3 pt-0.5 pb-4">

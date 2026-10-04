@@ -17,6 +17,7 @@
     dragHandle,
     onresize,
     onclose,
+    onrename,
   }: PaneProps & { projectId: string; title: string } = $props();
 
   let status = $state<GitStatus>();
@@ -74,6 +75,7 @@
     {dragHandle}
     {onresize}
     {onclose}
+    {onrename}
   />
   <section class="min-h-0 flex-1 overflow-auto px-4 pt-2 pb-2 [&:has(>div:only-child)]:flex [&:has(>div:only-child)]:flex-col">
     {#if error}<p class="text-sm text-destructive">{error}</p>{/if}

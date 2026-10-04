@@ -13,21 +13,22 @@
 <script lang="ts">
   import ArrowUp from '@lucide/svelte/icons/arrow-up';
   import X from '@lucide/svelte/icons/x';
-  import { tick, type Snippet } from 'svelte';
+  import { Editor, type JSONContent } from '@tiptap/core';
+  import type { Node as PMNode } from '@tiptap/pm/model';
+  import type { EditorView } from '@tiptap/pm/view';
+  import { onMount, type Snippet } from 'svelte';
   import { Button } from '$lib/components/ui/button';
   import * as Tooltip from '$lib/components/ui/tooltip';
   import Icon from '$lib/components/icon/icon.svelte';
   import ShortcutKeys from '$lib/components/shortcuts/shortcut-keys.svelte';
   import SkillMenu, { matchSkills } from './skill-menu.svelte';
+  import { composerExtensions, plainTextSlice } from './composer-editor';
   import { preferences } from '$lib/stores/preferences.svelte';
   import { toast } from '$lib/stores/toast.svelte';
   import { matchShortcut } from '$lib/shortcuts';
+  import { ATTACHMENT_NODE, promptMarkdown } from '$lib/prompt-markdown';
   import { cn, isMac } from '$lib/utils';
-  import {
-    LONG_TEXT_THRESHOLD,
-    attachmentMarker,
-    errorMessage,
-  } from '$shared/domain';
+  import { LONG_TEXT_THRESHOLD, errorMessage } from '$shared/domain';
   import {
     MAX_SKILLS,
     MAX_TEXT_ATTACHMENT_LENGTH,
@@ -36,9 +37,8 @@
   } from '$shared/contracts';
 
   const MAX_ATTACHMENTS = 8;
-  /** The text around an attachment's name; the head's width leaves room for the chip's icon. */
-  const TOKEN_HEAD = '[[     ';
-  const TOKEN_TAIL = ' ]]';
+  /** Stands for an attachment chip when reading the text before the caret. */
+  const CHIP = '￼';
   const FOLLOW_UP_ACTIONS: Record<FollowUpMode, string> = {
     queue: 'Queue message',
     steer: 'Steer response',
@@ -79,6 +79,7 @@
     /** Lets an empty message be sent, for a composer that starts something rather than chats. */
     allowEmpty?: boolean;
     submitLabel?: string;
+    /** Classes for the editable text box. */
     textareaClass?: string;
     autofocus?: boolean;
     /**
@@ -94,28 +95,112 @@
     children: Snippet;
   } = $props();
 
+  let element = $state<HTMLDivElement>();
+  let editor = $state.raw<Editor>();
+  /**
+   * The draft as it is sent: markdown, with each attachment chip written as its marker.
+   * Kept in step with the editor, which is the source of truth.
+   */
   let prompt = $state('');
   let attachments = $state<Attachment[]>([]);
-  /**
-   * What each attachment looks like in the text, `[[name]]`, keyed by id. It is written at
-   * the caret, shown as a chip, and swapped for the real marker when the message is sent.
-   */
-  let tokens = $state<Record<string, string>>({});
   /** Skills attached with `/`, which run with the message. */
   let skills = $state<Skill[]>([]);
   const canAttach = $derived(attachments.length < MAX_ATTACHMENTS);
   const followUp = $derived(preferences.current.followUp);
   const hasMessage = $derived(!!prompt.trim() || skills.length > 0);
+  const shownPlaceholder = $derived(
+    placeholder ??
+      (running
+        ? FOLLOW_UP_PLACEHOLDERS[followUp]
+        : paneId
+          ? 'Ask for changes, or type / for skills'
+          : 'Ask for changes'),
+  );
+
+  onMount(() => {
+    const instance = new Editor({
+      element,
+      extensions: composerExtensions(() => shownPlaceholder),
+      autofocus: autofocus ? 'end' : false,
+      editorProps: {
+        attributes: {
+          class: cn(
+            'composer-editor min-h-15 w-full text-sm caret-foreground outline-none wrap-anywhere',
+            textareaClass,
+          ),
+        },
+        handleKeyDown: handleKeydown,
+        handlePaste,
+        // Files dropped on the text are attached by the pane, like anywhere else on it.
+        handleDrop: (_view, event) => !!event.dataTransfer?.files.length,
+      },
+      onUpdate: sync,
+      onSelectionUpdate: updateSlash,
+      onFocus: updateSlash,
+      onBlur: () => (slash = null),
+    });
+    editor = instance;
+    sync();
+    return () => instance.destroy();
+  });
+
+  // The placeholder is drawn by a decoration, which only redraws when the view updates.
+  $effect(() => {
+    void shownPlaceholder;
+    if (editor && !editor.isDestroyed)
+      editor.view.dispatch(editor.state.tr.setMeta('addToHistory', false));
+  });
+
+  // The editable box is what screen readers see, so it carries the field's semantics.
+  $effect(() => {
+    const dom = editor?.view.dom;
+    if (!dom) return;
+    const attributes: Record<string, string | undefined> = {
+      'aria-label': label,
+      'aria-multiline': 'true',
+      role: paneId ? 'combobox' : 'textbox',
+      'aria-autocomplete': paneId ? 'list' : undefined,
+      'aria-expanded': paneId ? String(!!slash) : undefined,
+      'aria-controls': slash && matches.length ? menuId : undefined,
+      'aria-activedescendant':
+        slash && matches.length ? `${menuId}-${highlighted}` : undefined,
+    };
+    for (const [name, value] of Object.entries(attributes))
+      if (value === undefined) dom.removeAttribute(name);
+      else dom.setAttribute(name, value);
+  });
+
+  /** The attachment ids the text still holds; deleting a chip takes its attachment out. */
+  function placedIds(doc: PMNode) {
+    const ids = new Set<string>();
+    doc.descendants((node) => {
+      if (node.type.name === ATTACHMENT_NODE) ids.add(node.attrs.id);
+    });
+    return ids;
+  }
+
+  function sync() {
+    if (!editor) return;
+    prompt = promptMarkdown(editor.getJSON());
+    const ids = placedIds(editor.state.doc);
+    if (attachments.some(({ id }) => !ids.has(id)))
+      attachments = attachments.filter(({ id }) => ids.has(id));
+  }
 
   /** Sends the draft. While a turn runs, `invert` swaps queueing and steering for this message. */
   async function send(invert = false) {
-    const text = withMarkers(prompt).trim();
+    if (!editor) return;
+    sync();
+    const text = prompt.trim();
     if ((!text && !skills.length && !allowEmpty) || disabled) return;
-    const draft = { prompt, attachments, skills, tokens };
-    prompt = '';
+    const draft: {
+      content: JSONContent;
+      attachments: Attachment[];
+      skills: Skill[];
+    } = { content: editor.getJSON(), attachments, skills };
     attachments = [];
     skills = [];
-    tokens = {};
+    editor.commands.clearContent(true);
     try {
       await onsend(
         text,
@@ -125,8 +210,12 @@
       );
     } catch {
       // Nothing typed is lost, unless the user has already started a new draft.
-      if (!prompt && !attachments.length && !skills.length)
-        ({ prompt, attachments, skills, tokens } = draft);
+      if (editor.isEmpty && !prompt && !attachments.length && !skills.length) {
+        // The attachments go back first, so restoring their chips doesn't drop them.
+        attachments = draft.attachments;
+        skills = draft.skills;
+        editor.commands.setContent(draft.content);
+      }
     }
   }
 
@@ -145,19 +234,22 @@
 
   /** Opens, narrows, or closes the menu after the text or the caret moved. */
   function updateSlash() {
-    if (!paneId || !textarea) return;
-    const { value, selectionStart: caret, selectionEnd } = textarea;
-    const typed =
-      caret === selectionEnd
-        ? /(?:^|\s)\/([^\s/]*)$/.exec(value.slice(0, caret))
+    if (!paneId || !editor || !editor.view.hasFocus()) return;
+    const { empty, $from: caret } = editor.state.selection;
+    const before =
+      empty && !caret.parent.type.spec.code
+        ? caret.parent.textBetween(0, caret.parentOffset, undefined, (node) =>
+            node.type.name === 'hardBreak' ? '\n' : CHIP,
+          )
         : null;
+    const typed = before === null ? null : /(?:^|\s)\/([^\s/￼]*)$/.exec(before);
     if (!typed) {
       slash = null;
       dismissed = -1;
       return;
     }
     const query = typed[1];
-    const start = caret - query.length - 1;
+    const start = caret.pos - query.length - 1;
     if (start === dismissed) return;
     if (!slash) void loadSkills();
     if (slash?.start !== start || slash.query !== query) highlighted = 0;
@@ -175,20 +267,32 @@
   }
 
   /** Attaches the skill and takes the `/` and what was typed after it out of the text. */
-  async function chooseSkill(skill: Skill) {
-    if (!slash || !textarea) return;
+  function chooseSkill(skill: Skill) {
+    if (!slash || !editor) return;
     if (skills.length >= MAX_SKILLS) {
       toast(`You can attach up to ${MAX_SKILLS} skills.`);
       return;
     }
-    const before = prompt.slice(0, slash.start);
-    const after = prompt.slice(textarea.selectionStart);
-    prompt = before + (before.endsWith(' ') ? after.trimStart() : after);
+    const { doc, selection } = editor.state;
+    const { start } = slash;
+    const blockStart = doc.resolve(start).start();
+    const blockEnd = doc.resolve(start).end();
+    const caret = selection.from;
+    // Two spaces would be left where the `/word` was; one goes with it.
+    const spaceBefore =
+      start > blockStart && doc.textBetween(start - 1, start) === ' ';
+    const spaceAfter =
+      caret < blockEnd && doc.textBetween(caret, caret + 1) === ' ';
     skills.push(skill);
     slash = null;
-    await tick();
-    textarea.setSelectionRange(before.length, before.length);
-    textarea.focus();
+    editor
+      .chain()
+      .focus()
+      .deleteRange({
+        from: start,
+        to: spaceBefore && spaceAfter ? caret + 1 : caret,
+      })
+      .run();
   }
 
   function removeSkill(name: string) {
@@ -209,7 +313,7 @@
       case 'Enter':
       case 'Tab':
         if (!count || event.shiftKey) return false;
-        void chooseSkill(matches[Math.min(highlighted, count - 1)]);
+        chooseSkill(matches[Math.min(highlighted, count - 1)]);
         return true;
       case 'Escape':
         dismissed = slash.start;
@@ -256,100 +360,57 @@
     }
   }
 
-  const MAX_LINES = 10;
-  let textarea = $state<HTMLTextAreaElement>();
-  /** Grows the box with its content up to `MAX_LINES`, then lets it scroll. */
-  function resize() {
-    if (!textarea) return;
-    textarea.style.height = 'auto';
-    const style = getComputedStyle(textarea);
-    const line = parseFloat(style.lineHeight) || 20;
-    const max = line * MAX_LINES;
-    textarea.style.height = `${Math.min(textarea.scrollHeight, max)}px`;
-    textarea.style.overflowY = textarea.scrollHeight > max ? 'auto' : 'hidden';
-  }
-  $effect(() => {
-    void prompt;
-    resize();
-  });
-
-  /** Writes the attachment into the text where the caret is, so it is sent in place. */
+  /** Puts the attachment's chip where the caret is, so it is sent in place. */
   function insertAttachment(attachment: Attachment) {
-    const label =
-      attachment.name.length > 32
-        ? `${attachment.name.slice(0, 31)}…`
-        : attachment.name;
-    const taken = new Set(Object.values(tokens));
-    let token = `${TOKEN_HEAD}${label}${TOKEN_TAIL}`;
-    for (let n = 2; taken.has(token); n++)
-      token = `${TOKEN_HEAD}${label} ${n}${TOKEN_TAIL}`;
+    if (!editor) return;
     attachments.push(attachment);
-    tokens[attachment.id] = token;
-    const at = textarea?.selectionStart ?? prompt.length;
-    const end = textarea?.selectionEnd ?? at;
-    const before = prompt.slice(0, at);
-    const after = prompt.slice(end);
-    const lead = before && !/\s$/.test(before) ? ' ' : '';
-    const tail = after.startsWith(' ') ? '' : ' ';
-    prompt = `${before}${lead}${token}${tail}${after}`;
-    const caret = before.length + lead.length + token.length + 1;
-    void tick().then(() => {
-      textarea?.setSelectionRange(caret, caret);
-      textarea?.focus();
-    });
+    const { doc, selection } = editor.state;
+    const { from, to, $from: head, $to: tail } = selection;
+    const before = from > head.start() ? doc.textBetween(from - 1, from) : '';
+    const after = to < tail.end() ? doc.textBetween(to, to + 1) : '';
+    const chip = {
+      type: ATTACHMENT_NODE,
+      attrs: {
+        id: attachment.id,
+        name: attachment.name,
+        previewUrl: attachment.previewUrl ?? null,
+      },
+    };
+    editor
+      .chain()
+      .focus()
+      .insertContent([
+        ...(before && !/\s/.test(before) ? [{ type: 'text', text: ' ' }] : []),
+        chip,
+        ...(after.startsWith(' ') ? [] : [{ type: 'text', text: ' ' }]),
+      ])
+      .run();
   }
 
-  /** The text with each attachment's chip swapped for the marker that is sent. */
-  function withMarkers(text: string) {
-    let result = text;
-    for (const { id } of attachments)
-      result = result.split(tokens[id]).join(attachmentMarker(id));
-    return result;
-  }
-
-  // Deleting a chip's text takes the attachment out of the message.
-  $effect(() => {
-    const kept = attachments.filter(({ id }) => prompt.includes(tokens[id]));
-    if (kept.length !== attachments.length) attachments = kept;
-  });
-
-  /** The text cut at its chips, so a layer behind the box can paint them. */
-  const segments = $derived.by(() => {
-    const byToken = new Map(
-      attachments.map((attachment) => [tokens[attachment.id], attachment]),
-    );
-    byToken.delete(undefined as never);
-    const plain = (
-      text: string,
-    ): { text: string; name?: string; icon?: string } => ({ text });
-    if (!byToken.size) return [plain(prompt)];
-    const pattern = new RegExp(
-      `(${[...byToken.keys()].map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})`,
-    );
-    return prompt.split(pattern).map((text, index) => {
-      const attachment = index % 2 === 1 ? byToken.get(text) : undefined;
-      return attachment
-        ? {
-            text,
-            name: text.slice(TOKEN_HEAD.length, -TOKEN_TAIL.length),
-            icon: attachment.previewUrl ? 'image' : 'file',
-          }
-        : plain(text);
-    });
-  });
-  let highlights = $state<HTMLElement>();
-
-  function handleKeydown(event: KeyboardEvent) {
-    if (event.isComposing) return;
+  /**
+   * Enter sends, and ⌘/Ctrl+Enter sends the other way while a turn runs. Shift+Enter
+   * does what Enter does in a document: a new line, list item, or a step out of a list.
+   */
+  function handleKeydown(view: EditorView, event: KeyboardEvent) {
+    if (event.isComposing || view.composing) return false;
     if (handleMenuKey(event)) {
-      event.preventDefault();
       // Escape here closes the menu, not the response the composer would otherwise stop.
       event.stopPropagation();
-      return;
+      return true;
     }
-    if (event.key !== 'Enter' || event.shiftKey) return;
-    event.preventDefault();
+    if (event.key !== 'Enter' || event.altKey) return false;
+    if (event.shiftKey) {
+      editor?.commands.first(({ commands }) => [
+        () => commands.splitListItem('listItem'),
+        () => commands.newlineInCode(),
+        () => commands.createParagraphNear(),
+        () => commands.liftEmptyBlock(),
+        () => commands.splitBlock(),
+      ]);
+      return true;
+    }
     void send(event.metaKey || event.ctrlKey);
+    return true;
   }
 
   /** Handles the shortcuts that work anywhere in the composer, not only in the text box. */
@@ -365,22 +426,43 @@
     }
   }
 
-  /** Turns a long paste into an attachment, so the message itself stays readable. */
-  async function handlePaste(event: ClipboardEvent) {
+  /**
+   * Attaches pasted files, and long text when that's turned on. Other text goes in as
+   * typed, line for line, rather than as the HTML that came with it, so code copied from
+   * an editor keeps its indentation and markdown stays the text it was. A paste from the
+   * composer itself keeps its lists and formatting.
+   */
+  function handlePaste(view: EditorView, event: ClipboardEvent) {
+    const data = event.clipboardData;
+    if (!data) return false;
     // Files and images copied from Finder, a browser or a screenshot tool.
-    const files = [...(event.clipboardData?.files ?? [])];
+    const files = [...data.files];
     if (files.length) {
-      event.preventDefault();
-      await addFiles(files);
-      return;
+      void addFiles(files);
+      return true;
     }
-    const text = event.clipboardData?.getData('text/plain') ?? '';
+    const text = data.getData('text/plain');
     if (
-      !preferences.current.convertLongText ||
-      text.length <= LONG_TEXT_THRESHOLD
-    )
-      return;
-    event.preventDefault();
+      preferences.current.convertLongText &&
+      text.length > LONG_TEXT_THRESHOLD
+    ) {
+      void attachText(text);
+      return true;
+    }
+    if (!text || data.getData('text/html').includes('data-pm-slice'))
+      return false;
+    // ProseMirror pastes into a code block as plain text already.
+    if (view.state.selection.$from.parent.type.spec.code) return false;
+    view.dispatch(
+      view.state.tr
+        .replaceSelection(plainTextSlice(view.state.schema, text))
+        .scrollIntoView(),
+    );
+    return true;
+  }
+
+  /** Turns a long paste into an attachment, so the message itself stays readable. */
+  async function attachText(text: string) {
     if (!canAttach) {
       toast(`You can attach up to ${MAX_ATTACHMENTS} files.`);
       return;
@@ -434,67 +516,14 @@
         </button>
       </div>
     {/each}
-    <div class="relative min-w-40 flex-1">
-      <!-- Paints the text and the chips; it has the box's exact font and wrapping, and the
-           chip is drawn without padding or borders so it never shifts the caret. -->
-      <div
-        class={cn(
-          'pointer-events-none absolute inset-0 overflow-hidden text-sm wrap-anywhere whitespace-pre-wrap',
-          !attachments.length && 'text-transparent',
-        )}
-        aria-hidden="true"
-        bind:this={highlights}
-      >
-        {#each segments as segment}{#if segment.icon}<mark
-              class="rounded-md bg-background/40 text-transparent shadow-[inset_0_0_0_1px_var(--color-border)] box-decoration-clone"
-              ><span class="relative"
-                >{TOKEN_HEAD}<Icon
-                  name={segment.icon}
-                  class="absolute top-1/2 left-1 size-3.5 -translate-y-1/2 text-brand"
-                /><span class="absolute top-0 right-1 h-full w-px bg-border"
-                ></span></span
-              ><span class="text-foreground">{segment.name}</span
-              >{TOKEN_TAIL}</mark
-            >{:else}{segment.text}{/if}{/each}
-      </div>
-      <!-- svelte-ignore a11y_autofocus -->
-      <textarea
-        class={cn(
-          'relative block min-h-15 w-full resize-none bg-transparent text-sm caret-foreground outline-none placeholder:text-muted-foreground',
-          attachments.length && 'text-transparent',
-          skills.length && 'min-h-7',
-          textareaClass,
-        )}
-        aria-label={label}
-        role={paneId ? 'combobox' : undefined}
-        aria-autocomplete={paneId ? 'list' : undefined}
-        aria-expanded={paneId ? !!slash : undefined}
-        aria-controls={slash && matches.length ? menuId : undefined}
-        aria-activedescendant={slash && matches.length
-          ? `${menuId}-${highlighted}`
-          : undefined}
-        {autofocus}
-        placeholder={placeholder ??
-          (running
-            ? FOLLOW_UP_PLACEHOLDERS[followUp]
-            : paneId
-              ? 'Ask for changes, or type / for skills'
-              : 'Ask for changes')}
-        bind:this={textarea}
-        bind:value={prompt}
-        oninput={updateSlash}
-        onkeyup={(event) => {
-          if (event.key.startsWith('Arrow') && !slash) updateSlash();
-          else if (['Home', 'End'].includes(event.key)) updateSlash();
-        }}
-        onclick={updateSlash}
-        onblur={() => (slash = null)}
-        onkeydown={handleKeydown}
-        onscroll={() => {
-          if (highlights && textarea) highlights.scrollTop = textarea.scrollTop;
-        }}
-        onpaste={handlePaste}></textarea>
-    </div>
+    <!-- Grows with its content up to ten lines, then scrolls. -->
+    <div
+      class={cn(
+        'relative max-h-50 min-w-40 flex-1 overflow-y-auto',
+        skills.length && '[&_.composer-editor]:min-h-7',
+      )}
+      bind:this={element}
+    ></div>
   </div>
   <div class="flex items-center justify-between gap-3 pt-3">
     <div class="flex min-w-0 items-center gap-6">
@@ -528,6 +557,7 @@
                 {...props}
                 variant="secondary"
                 size="icon"
+                class="bg-red-500/10 text-red-500 hover:bg-red-500/20"
                 aria-label="Stop response"
                 onclick={() => window.bonfire.assistant.cancel(paneId)}
               >
@@ -554,3 +584,91 @@
     </div>
   </div>
 </form>
+
+<style>
+  /* The editor's content is rendered by ProseMirror, outside Svelte's scoping. */
+  div :global(.composer-editor) {
+    white-space: pre-wrap;
+    line-height: 1.25rem;
+  }
+  div :global(.composer-editor > * + *) {
+    margin-top: 0;
+  }
+  div :global(.composer-editor :is(ul, ol)) {
+    margin: 0.125rem 0;
+    padding-left: 1.375rem;
+  }
+  div :global(.composer-editor ul) {
+    list-style: disc;
+  }
+  div :global(.composer-editor ul ul) {
+    list-style: circle;
+  }
+  div :global(.composer-editor ol) {
+    list-style: decimal;
+  }
+  div :global(.composer-editor li::marker) {
+    color: var(--color-muted-foreground);
+  }
+  div :global(.composer-editor blockquote) {
+    margin: 0.125rem 0;
+    border-left: 2px solid var(--color-border);
+    padding-left: 0.75rem;
+    color: var(--color-muted-foreground);
+  }
+  div :global(.composer-editor :is(h1, h2, h3, h4, h5, h6)) {
+    font-weight: 600;
+  }
+  div :global(.composer-editor h1) {
+    font-size: 1.125rem;
+    line-height: 1.75rem;
+  }
+  div :global(.composer-editor h2) {
+    font-size: 1rem;
+    line-height: 1.5rem;
+  }
+  div :global(.composer-editor code) {
+    border-radius: 0.25rem;
+    background: color-mix(in oklab, var(--color-muted) 70%, transparent);
+    padding: 0.0625rem 0.25rem;
+    font-family: var(--font-mono);
+    font-size: 0.8125rem;
+  }
+  div :global(.composer-editor pre) {
+    margin: 0.25rem 0;
+    border-radius: 0.375rem;
+    background: color-mix(in oklab, var(--color-muted) 70%, transparent);
+    padding: 0.5rem 0.75rem;
+    overflow-x: auto;
+    white-space: pre;
+  }
+  div :global(.composer-editor pre code) {
+    background: none;
+    padding: 0;
+  }
+  div :global(.composer-editor hr) {
+    margin: 0.5rem 0;
+    border-color: var(--color-border);
+  }
+  div :global(.composer-editor a) {
+    color: var(--color-brand);
+    text-decoration: underline;
+  }
+  div :global(.composer-editor .composer-attachment) {
+    display: inline-block;
+    margin: 0.0625rem 0;
+    vertical-align: middle;
+    line-height: 0;
+  }
+  div :global(.composer-editor .composer-attachment.ProseMirror-selectednode) {
+    border-radius: 0.375rem;
+    outline: 2px solid var(--color-brand);
+  }
+  div :global(.composer-editor p.is-editor-empty:first-child::before) {
+    content: attr(data-placeholder);
+    float: left;
+    height: 0;
+    color: var(--color-muted-foreground);
+    pointer-events: none;
+  }
+</style>

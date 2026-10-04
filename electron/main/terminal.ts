@@ -8,15 +8,33 @@ import type {
 import { isAssistantPane } from '../../shared/domain';
 import type { Machine, Program } from './machines';
 import type { Store } from './persistence';
+import { defaultShell, isWindows } from './shell';
 
 const SCROLLBACK_BYTES = 1024 * 1024;
+/** How long a stopped script gets to exit after Ctrl-C before it is hung up on. */
+const STOP_GRACE_MS = 3000;
 
 type TerminalRecord = TerminalSnapshot & {
   paneId: string;
   projectId: string;
-  type: TerminalCreateInput['type'];
+  /** `script` runs a project's run script rather than a shell or CLI. */
+  type: TerminalCreateInput['type'] | 'script';
   process: pty.IPty;
+  /** Settles once the process has exited. */
+  exited: Promise<void>;
 };
+
+/**
+ * Runs a command through the user's shell, so their PATH and version managers apply. Over
+ * SSH, the remote login shell wraps it already.
+ */
+function scriptProgram(machine: Machine, command: string): Program {
+  if (machine.remote) return { file: 'sh', args: ['-c', command] };
+  if (isWindows())
+    return { file: defaultShell(), args: ['-NoLogo', '-Command', command] };
+  // Interactive as well as login, as tools like nvm are often set up only in the rc file.
+  return { file: defaultShell(), args: ['-ilc', command] };
+}
 
 export class Terminals {
   private readonly records = new Map<string, TerminalRecord>();
@@ -56,6 +74,41 @@ export class Terminals {
     );
   }
 
+  /**
+   * Runs a command in the pane's terminal. Whatever it ran before is stopped first and
+   * waited for, so a restarted server finds its port free.
+   */
+  async run(projectId: string, paneId: string, command: string) {
+    const project = this.store.project(projectId);
+    const previous = [...this.records].filter(
+      ([, record]) => record.paneId === paneId,
+    );
+    await Promise.all(previous.map(([id]) => this.stop(id)));
+    for (const [id] of previous) this.records.delete(id);
+    return this.spawn(
+      { projectId: project.id, paneId, type: 'script' },
+      scriptProgram(this.machine(project.id), command),
+      project.path,
+    );
+  }
+
+  /**
+   * Ends a terminal's process the way a person would: Ctrl-C, so servers shut down cleanly,
+   * then a hang-up if it is still running after a moment. Its output stays on screen.
+   */
+  async stop(id: string) {
+    const record = this.get(id);
+    if (record.exitCode !== undefined) return;
+    record.process.write('\x03');
+    let timer: NodeJS.Timeout | undefined;
+    const grace = new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, STOP_GRACE_MS);
+    });
+    await Promise.race([record.exited, grace]);
+    clearTimeout(timer);
+    this.kill(id);
+  }
+
   private find(matches: (record: TerminalRecord) => boolean) {
     for (const [id, record] of this.records) if (matches(record)) return id;
   }
@@ -82,11 +135,13 @@ export class Terminals {
     }
 
     const id = randomUUID();
+    let markExited!: () => void;
     const record: TerminalRecord = {
       ...owner,
       process,
       sequence: 0,
       data: '',
+      exited: new Promise((resolve) => (markExited = resolve)),
     };
     this.records.set(id, record);
     process.onData((data) => {
@@ -95,6 +150,7 @@ export class Terminals {
     });
     process.onExit(({ exitCode }) => {
       record.exitCode = exitCode;
+      markExited();
       this.emit({ terminalId: id, sequence: ++record.sequence, exitCode });
     });
     return id;

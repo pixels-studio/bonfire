@@ -21,6 +21,8 @@
     titleFrom,
   } from '$shared/domain';
   import type { PaneProps } from '$lib/panes';
+  import type { PaneBadge } from '$lib/pane-status.svelte';
+  import MatrixLoader from '$lib/components/matrix-loader/matrix-loader.svelte';
   import { toast } from '$lib/stores/toast.svelte';
   import type {
     AssistantEvent,
@@ -41,8 +43,12 @@
     dragHandle,
     onclose,
     onresize,
+    onrename,
+    badge,
   }: PaneProps & {
     pane: Pane;
+    /** A status worth flagging on the header icon: needs input, failed, or done but unreviewed. */
+    badge?: PaneBadge;
     /** The agent the conversation is with; the composer offers its models. */
     provider: AssistantProvider;
   } = $props();
@@ -330,10 +336,12 @@
   <PaneHeader
     {title}
     icon={provider}
+    {badge}
     menuLabel="Conversation options"
     {dragHandle}
     {onresize}
     {onclose}
+    {onrename}
   />
 
   <p class="sr-only" role="status">{announcement}</p>
@@ -364,7 +372,10 @@
                 expanded={!!watched[lastTurn[0].id]}
               />
               {#if running && !assistantStarted && !requests.length}
-                <p class="w-fit text-sm shimmer-text">Thinking</p>
+                <p class="flex w-fit items-center gap-2 text-sm">
+                  <MatrixLoader />
+                  <span class="shimmer-text">Thinking</span>
+                </p>
               {/if}
               {#each requests as request (request.id)}
                 <RequestView

@@ -2,6 +2,7 @@
   import { onMount, tick, untrack } from 'svelte';
   import { Button } from '$lib/components/ui/button';
   import * as Card from '$lib/components/ui/card';
+  import ActivityPane from '$lib/components/activity/activity-pane.svelte';
   import AppHeader from '$lib/components/app-header/app-header.svelte';
   import AppRail, {
     type AppPanel,
@@ -26,11 +27,12 @@
   } from '$lib/panes';
   import { digitOf, matchShortcut, type ShortcutId } from '$lib/shortcuts';
   import { PaneDrag } from '$lib/pane-drag.svelte';
-  import { PaneStatuses } from '$lib/pane-status.svelte';
+  import { PaneStatuses, paneBadge } from '$lib/pane-status.svelte';
   import { playCompletionSound } from '$lib/sounds';
   import { branch } from '$lib/stores/branch.svelte';
   import { preferences } from '$lib/stores/preferences.svelte';
   import { pullRequest } from '$lib/stores/pull-request.svelte';
+  import { scripts } from '$lib/stores/scripts.svelte';
   import { toast } from '$lib/stores/toast.svelte';
   import { cn, isMac, scrollBehavior } from '$lib/utils';
   import type { HTMLButtonAttributes } from 'svelte/elements';
@@ -253,6 +255,7 @@
 
   function scrollToPane(paneId: string) {
     currentPaneId = paneId;
+    statuses.markSeen(paneId);
     scrollToSection(`[data-pane-id="${CSS.escape(paneId)}"]`, paneId);
   }
 
@@ -262,7 +265,7 @@
     await tick();
     paneStrip
       ?.querySelector<HTMLElement>(
-        `[data-pane-id="${CSS.escape(paneId)}"] :is(textarea, input[type="search"])`,
+        `[data-pane-id="${CSS.escape(paneId)}"] :is(textarea, input[type="search"], [contenteditable="true"])`,
       )
       ?.focus({ preventScroll: true });
   }
@@ -272,7 +275,18 @@
     const paneId = (event.target as Element).closest<HTMLElement>(
       '[data-pane-id]',
     )?.dataset.paneId;
-    if (paneId) currentPaneId = paneId;
+    if (!paneId) return;
+    currentPaneId = paneId;
+    statuses.markSeen(paneId);
+  }
+
+  /** Whether the user is in a pane right now: the window has focus and so does something in it. */
+  function isPaneFocused(paneId: string) {
+    return (
+      document.hasFocus() &&
+      document.activeElement?.closest<HTMLElement>('[data-pane-id]')?.dataset
+        .paneId === paneId
+    );
   }
 
   /** Panel names can't clash with pane ids, which are UUIDs. */
@@ -347,6 +361,26 @@
     const id = branch.head?.branch ? projectId : undefined;
     void branch.head;
     return untrack(() => pullRequest.watch(id));
+  });
+
+  $effect(() => {
+    if (!loaded) return;
+    const id = projectId;
+    return untrack(() => scripts.watch(id));
+  });
+
+  // A script runs in its own terminal pane, which is brought on screen.
+  $effect(() => {
+    scripts.onPane = async (paneId) => {
+      await refresh();
+      await tick();
+      scrollToPane(paneId);
+    };
+    scripts.onPanesChanged = refresh;
+    return () => {
+      scripts.onPane = undefined;
+      scripts.onPanesChanged = undefined;
+    };
   });
 
   // A pull request is written by an agent in a new pane, which is brought on screen.
@@ -424,6 +458,7 @@
     switch (id) {
       case 'shortcuts':
       case 'settings':
+      case 'activity':
         togglePanel(id);
         break;
       case 'insights':
@@ -537,6 +572,13 @@
 
   function handleAssistantEvent(event: AssistantEvent) {
     statuses.handle(event);
+    // A turn that finishes in the pane the user is in needs no reminder.
+    if (
+      event.type === 'status' &&
+      event.status === 'completed' &&
+      isPaneFocused(event.paneId)
+    )
+      statuses.markSeen(event.paneId);
     // The header's action stays busy until its agent has finished.
     if (
       event.type === 'status' &&
@@ -775,7 +817,7 @@
       onaddPane={addPane}
       panes={panes.map(({ id }) => ({
         id,
-        status: statuses.get(id),
+        status: scripts.runOfPane(id)?.running ? 'working' : statuses.get(id),
         inView: !!inView[id],
       }))}
       {canAddPane}
@@ -844,6 +886,8 @@
                     <SettingsPane />
                   {:else if panel === 'shortcuts'}
                     <ShortcutsPane />
+                  {:else if panel === 'activity'}
+                    <ActivityPane {projectId} />
                   {:else}
                     <InsightsPane bind:tab={insightsTab} />
                   {/if}
@@ -865,10 +909,17 @@
                   <PaneView
                     {pane}
                     projectId={project!.id}
+                    badge={paneBadge(statuses.get(pane.id))}
                     dragHandle={dragHandle(pane)}
                     onclose={() =>
                       runAction(() => window.bonfire.panes.archive(pane.id))}
                     onresize={(size) => (sizeOverrides[pane.id] = size)}
+                    onrename={(title) => {
+                      pane.title = title;
+                      void runAction(() =>
+                        window.bonfire.panes.rename(pane.id, title),
+                      );
+                    }}
                   />
                 </section>
               {:else}

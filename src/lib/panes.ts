@@ -12,6 +12,7 @@ export type PaneProps = {
   dragHandle: HTMLButtonAttributes;
   onresize: (size: PaneSize) => void;
   onclose: () => void;
+  onrename: (title: string) => void;
 };
 
 /** The tool panes, in the order the add menu lists them. */

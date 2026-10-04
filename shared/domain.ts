@@ -207,7 +207,7 @@ export function errorMessage(cause: unknown) {
 }
 
 /** The most panes, of any type, a project can have open at once. */
-export const MAX_PANES = 12;
+export const MAX_PANES = 18;
 
 /**
  * Reorders `ids` among the layout slots they already occupy, leaving every other

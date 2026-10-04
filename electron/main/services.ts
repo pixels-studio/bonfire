@@ -53,6 +53,7 @@ import { Machines, SshMachine, localMachine, type Place } from './machines';
 import { MergeWatcher } from './merge-watcher';
 import { TurnNotifier, type Notice } from './notifier';
 import { Store } from './persistence';
+import { Scripts } from './scripts';
 import { Terminals } from './terminal';
 import {
   parsePullRequestText,
@@ -90,9 +91,20 @@ export function services(options: ServiceOptions) {
   const folder = (projectId: string) => placeOf(store.project(projectId));
   const terminals = new Terminals(
     store,
-    (event) => options.send(events.terminalData, event),
+    (event) => {
+      options.send(events.terminalData, event);
+      scripts.handle(event);
+    },
     (projectId) => machineOf(store.project(projectId)),
   );
+  const scripts: Scripts = new Scripts({
+    store,
+    terminals,
+    machine: machineOf,
+    addPane: (project) => addPane('terminal', project),
+    archivePane,
+    emit: (run) => options.send(events.scriptRun, run),
+  });
   const notifier = new TurnNotifier(store, options.notify);
   const keepAwake = new KeepAwake(
     () => store.preferences.caffeinate,
@@ -254,6 +266,7 @@ export function services(options: ServiceOptions) {
     // An archived pane has no view left to show, answer its turn, or type into its shell.
     if (isAssistantPane(pane)) assistantFor(pane.id).discard(pane.id);
     terminals.closePane(pane.id);
+    scripts.forgetPane(pane.id);
     pane.archived = true;
   }
 
@@ -331,10 +344,12 @@ export function services(options: ServiceOptions) {
   }
 
   /** Adds a pane to the project on screen, at the front; agents start with the last-used provider and model. */
-  function addPane(type?: PaneType) {
-    const project = store.state.lastProjectId
+  function addPane(
+    type?: PaneType,
+    project = store.state.lastProjectId
       ? store.project(store.state.lastProjectId)
-      : undefined;
+      : undefined,
+  ) {
     if (!project) throw Error('Add a project first.');
     if (openPanesOf(project).length >= MAX_PANES)
       throw new Error(`A project can have up to ${MAX_PANES} panes open.`);
@@ -602,6 +617,12 @@ export function services(options: ServiceOptions) {
         const pull = await github.pullRequest(folder(projectId));
         if (pull) await options.openUrl(pull.url);
       },
+      activity: async (projectId) => github.activity(folder(projectId)),
+      openActivity: async (url) => {
+        if (new URL(url).origin !== 'https://github.com')
+          throw Error('Only GitHub links can be opened.');
+        await options.openUrl(url);
+      },
     },
     projects: {
       chooseFolder: async () => (await options.chooseDirectory()) ?? null,
@@ -638,6 +659,14 @@ export function services(options: ServiceOptions) {
         layout.paneIds = reorderLayout(layout.paneIds, ids);
         store.save();
       },
+      rename: async (id, title) => {
+        const pane = store.pane(id);
+        pane.title = title;
+        store.save();
+        // Agent panes keep their title in the view, which follows title events.
+        if (isAssistantPane(pane))
+          emitAssistantEvent({ paneId: id, type: 'title', title });
+      },
     },
     assistant: {
       send,
@@ -663,6 +692,15 @@ export function services(options: ServiceOptions) {
     limits: { get: async (provider) => assistants[provider].limits() },
     navigation: { help: options.openHelp },
     app: { isFullscreen: async () => options.isFullscreen() },
+    scripts: {
+      list: async (projectId) => scripts.list(projectId),
+      detect: async (projectId) => scripts.detect(projectId),
+      save: async (projectId, input) => scripts.save(projectId, input),
+      remove: async (projectId, scriptId) => scripts.remove(projectId, scriptId),
+      run: async (projectId, scriptId) => scripts.run(projectId, scriptId),
+      stop: async (projectId, scriptId) => scripts.stop(projectId, scriptId),
+      runs: async (projectId) => scripts.activeRuns(projectId),
+    },
     terminal: {
       create: async (input) => terminals.create(input),
       write: async (id, data) => terminals.write(id, data),

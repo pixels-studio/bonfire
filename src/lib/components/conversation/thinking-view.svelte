@@ -1,5 +1,6 @@
 <script lang="ts">
   import Icon from '$lib/components/icon/icon.svelte';
+  import MatrixLoader from '$lib/components/matrix-loader/matrix-loader.svelte';
   import Markdown from './markdown.svelte';
   import type { ConversationMessage } from '$shared/contracts';
 
@@ -25,6 +26,7 @@
   <summary
     class="flex w-fit cursor-pointer list-none items-center gap-1 hover:text-foreground [&::-webkit-details-marker]:hidden"
   >
+    {#if streaming}<MatrixLoader class="mr-1" />{/if}
     <span class={streaming ? 'shimmer-text' : ''}>
       {label}
     </span>

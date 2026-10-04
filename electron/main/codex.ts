@@ -546,6 +546,12 @@ export class CodexAssistant extends ChatAssistant {
   }
 }
 
+/** One part of a Codex prompt: text, or an image inline or on disk. */
+type InputPart =
+  | { type: 'text'; text: string; text_elements: never[] }
+  | { type: 'image'; url: string }
+  | { type: 'localImage'; path: string };
+
 /**
  * A prompt as Codex input. Images on this computer go by path, and inline to a remote
  * machine. Skills go by the path the server listed them at, which is on its own machine.
@@ -555,7 +561,7 @@ function userInput(
   machine: Machine = localMachine,
 ) {
   return [
-    ...inlineParts(text, attachments).flatMap((part) => {
+    ...inlineParts(text, attachments).flatMap((part): InputPart[] => {
       if ('text' in part)
         return part.text.trim()
           ? [{ type: 'text', text: part.text, text_elements: [] }]
