@@ -806,7 +806,10 @@ export function services(options: ServiceOptions) {
     tokens: { get: async (range) => tokenUsage.stats(range) },
     limits: { get: async (provider) => assistants[provider].limits() },
     navigation: { help: options.openHelp },
-    app: { isFullscreen: async () => options.isFullscreen() },
+    app: {
+      isFullscreen: async () => options.isFullscreen(),
+      copyText: async (text) => options.copyText(text),
+    },
     scripts: {
       list: async (projectId) => scripts.list(projectId),
       detect: async (projectId) => scripts.detect(projectId),

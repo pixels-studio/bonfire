@@ -47,11 +47,16 @@
   const workLength = $derived(
     expanded ? 0 : replies.findLastIndex((item) => item.kind === 'tool') + 1,
   );
+  /** The turn's final reply, which carries the copy button and timestamp once complete. */
+  const lastReplyId = $derived(
+    replies.findLast((item) => item.kind === 'text' && item.role === 'assistant')
+      ?.id,
+  );
 </script>
 
 {#snippet entry(message: ConversationMessage)}
   {#if message.kind === 'text' || message.kind === 'error' || message.kind === 'capacity'}
-    <TextView {message} />
+    <TextView {message} isLastReply={message.id === lastReplyId} />
   {:else if message.kind === 'thinking'}
     <!-- Thinking without text (e.g. redacted) has nothing to expand. -->
     {#if message.text || message.status === 'streaming'}

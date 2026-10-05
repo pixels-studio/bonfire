@@ -57,8 +57,8 @@ type Run = {
   interruptPending: boolean;
   /** Highest summary section seen per reasoning item, to separate sections. */
   summaryIndex: Map<string, number>;
-  /** When each reasoning item started, to time it once it completes. */
-  reasoningStarts: Map<string, number>;
+  /** When each reasoning or agent-message item started, to time it once it completes. */
+  itemStarts: Map<string, number>;
   settle: { resolve: () => void; reject: (error: Error) => void };
   finished: boolean;
   /** Whether this turn has already shown its failure. */
@@ -135,7 +135,7 @@ export class CodexAssistant extends ChatAssistant {
         threadId,
         interruptPending: false,
         summaryIndex: new Map(),
-        reasoningStarts: new Map(),
+        itemStarts: new Map(),
         settle: { resolve, reject },
         finished: false,
         reported: false,
@@ -416,10 +416,16 @@ export class CodexAssistant extends ChatAssistant {
         const completed = method === 'item/completed';
         const item = params.item as ThreadItem;
         const message = messageFromItem(item, completed);
-        if (message && item.type === 'reasoning') {
-          const startedAt = run.reasoningStarts.get(item.id) ?? Date.now();
-          run.reasoningStarts.set(item.id, startedAt);
-          if (completed) message.durationMs = Date.now() - startedAt;
+        if (
+          message &&
+          (item.type === 'reasoning' || item.type === 'agentMessage')
+        ) {
+          const startedAt = run.itemStarts.get(item.id) ?? Date.now();
+          run.itemStarts.set(item.id, startedAt);
+          if (completed) {
+            message.durationMs = Date.now() - startedAt;
+            message.createdAt = Date.now();
+          }
         }
         if (message) this.publish(pane, message, completed);
         break;

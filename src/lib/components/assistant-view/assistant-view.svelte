@@ -419,7 +419,7 @@
                 />
                 {#if running && !assistantStarted && !requests.length}
                   <p class="flex w-fit items-center gap-2 text-sm">
-                    <MatrixLoader />
+                    <MatrixLoader variant="twinkle" size="sm" />
                     <span class="shimmer-text">Thinking</span>
                   </p>
                 {/if}

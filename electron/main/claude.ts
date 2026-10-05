@@ -59,9 +59,8 @@ type StreamedBlock = {
   json: string;
   /** Set once the complete assistant message has replaced the streamed text. */
   settled: boolean;
+  /** When the block started, to time it once its finishing message arrives. */
   startedAt: number;
-  /** How long a thinking block streamed, known once the block stops. */
-  durationMs?: number;
 };
 
 type StreamState = {
@@ -397,6 +396,11 @@ export class ClaudeAssistant extends ChatAssistant {
         if (event.session_id) this.rememberThread(pane, event.session_id);
         const blocks = event.message.content;
         const apiBlocks = state.blocks.get(event.message.id);
+        // The CLI's own per-block timestamp and our locally recorded start, not the stream
+        // event's content_block_stop, which races this message and often arrives after it.
+        const finishedAt = event.timestamp
+          ? Date.parse(event.timestamp)
+          : Date.now();
         blocks.forEach((block, index) => {
           const kind = blockKind(block);
           const match =
@@ -413,7 +417,13 @@ export class ClaudeAssistant extends ChatAssistant {
             (blocks.length > 1 ? `${event.uuid}-${index}` : event.uuid);
           const message = messageFrom(id, block);
           if (message)
-            this.publish(pane, { ...message, durationMs: match?.durationMs });
+            this.publish(pane, {
+              ...message,
+              durationMs: match
+                ? Math.max(0, finishedAt - match.startedAt)
+                : undefined,
+              createdAt: Date.now(),
+            });
         });
         break;
       }
@@ -485,12 +495,6 @@ export class ClaudeAssistant extends ChatAssistant {
         };
         blocks.set(index, entry);
         this.publish(pane, streamingMessage(entry, ''), false);
-        break;
-      }
-      case 'content_block_stop': {
-        const entry = state.blocks.get(state.current)?.get(event.index);
-        if (entry?.kind === 'thinking')
-          entry.durationMs = Date.now() - entry.startedAt;
         break;
       }
       case 'content_block_delta': {
