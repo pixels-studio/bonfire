@@ -24,7 +24,15 @@ const usage = (threadId, turnId) =>
     threadId,
     turnId,
     tokenUsage: {
-      total: {},
+      // The real app-server reports the whole thread's usage here; this fixture only
+      // ever emits one update, so it matches `last`.
+      total: {
+        totalTokens: 1100,
+        inputTokens: 1000,
+        cachedInputTokens: 600,
+        outputTokens: 100,
+        reasoningOutputTokens: 40,
+      },
       last: {
         totalTokens: 1100,
         inputTokens: 1000,

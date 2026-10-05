@@ -453,16 +453,18 @@ export class CodexAssistant extends ChatAssistant {
         this.publish(pane, planMessage(params.turnId, params.plan), false);
         break;
       case 'thread/tokenUsage/updated': {
-        const last: TokenUsageBreakdown = params.tokenUsage.last;
+        // `total` is the whole thread's usage so far, i.e. what occupies the context
+        // window; `last` only covers the most recent exchange and understates it.
+        const total: TokenUsageBreakdown = params.tokenUsage.total;
         this.publishUsage(pane, {
           // Cached and reasoning tokens are counted inside input and output, so split them out.
-          inputTokens: Math.max(0, last.inputTokens - last.cachedInputTokens),
-          cachedInputTokens: last.cachedInputTokens,
+          inputTokens: Math.max(0, total.inputTokens - total.cachedInputTokens),
+          cachedInputTokens: total.cachedInputTokens,
           outputTokens: Math.max(
             0,
-            last.outputTokens - last.reasoningOutputTokens,
+            total.outputTokens - total.reasoningOutputTokens,
           ),
-          reasoningOutputTokens: last.reasoningOutputTokens,
+          reasoningOutputTokens: total.reasoningOutputTokens,
           contextWindow: params.tokenUsage.modelContextWindow ?? undefined,
         });
         break;
