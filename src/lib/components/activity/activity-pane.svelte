@@ -133,6 +133,7 @@
     {size}
     {onresize}
     {onclose}
+    resizable={false}
   >
     {#snippet actions()}
       <Tooltip.Root>

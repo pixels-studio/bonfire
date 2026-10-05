@@ -19,14 +19,10 @@
   import ProjectPicker from '$lib/components/workspace/project-picker.svelte';
   import ShortcutsPane from '$lib/components/shortcuts/shortcuts-pane.svelte';
   import Onboarding from '$lib/components/onboarding/onboarding.svelte';
-  import {
-    PANE_SIZES,
-    defaultPaneSize,
-    paneWidth,
-    type PaneSize,
-  } from '$lib/panes';
+  import { PANE_SIZES, defaultPaneSize, type PaneSize } from '$lib/panes';
   import { digitOf, matchShortcut, type ShortcutId } from '$lib/shortcuts';
   import { PaneDrag } from '$lib/pane-drag.svelte';
+  import { StripMotion, leave } from '$lib/strip-motion.svelte';
   import { PaneStatuses, paneBadge } from '$lib/pane-status.svelte';
   import { playCompletionSound } from '$lib/sounds';
   import { branch } from '$lib/stores/branch.svelte';
@@ -53,8 +49,10 @@
     emptyState,
     errorMessage,
     isAssistantPane,
+    isViewPaneType,
     reorderLayout,
     startingProvider,
+    type ViewPaneType,
   } from '$shared/domain';
 
   let workspace = $state<State>(emptyState());
@@ -70,17 +68,21 @@
     () => paneStrip,
     (ids) => reorderStrip(ids),
   );
+  const motion = new StripMotion(() => paneStrip);
   let pullRequestOpen = $state(false);
   /** The open panels, newest first, ahead of the panes. */
   let panels = $state<AppPanel[]>([]);
-  /** The strip's order, panels and panes interleaved; what's new or unlisted goes in front. */
+  /**
+   * The strip's order, panels and panes interleaved; what's new or unlisted goes in
+   * front, except view panes, which go at the end.
+   */
   let stripOrder = $state<string[]>([]);
   let creatingBranch = $state(false);
   /**
-   * Set while a pane is being added, so only that pane grows in; panes that
-   * appear on load or a project switch show at once.
+   * Set while panes are added or closed by hand, so only those grow in or shrink
+   * away; panes that come and go on load or a project switch do so at once.
    */
-  let addingPane = $state(false);
+  let paneMotion = $state(false);
   /** Whether the pointer is over the empty state's flame, which lights it. */
   let stirred = $state(false);
   let creatingProject = $state(false);
@@ -114,16 +116,25 @@
           !!pane && !pane.archived && pane.projectId === project?.id,
       ),
   );
+  /** The open view panes, which the header's toggles show as pressed. */
+  const views = $derived(panes.filter((pane) => isViewPaneType(pane.type)));
+  const openViews = $derived(
+    views.map(({ type }) => type).filter(isViewPaneType),
+  );
   const PANELS: string[] = ['activity', 'insights', 'settings', 'shortcuts'];
+  const PULL_REQUEST_ID = 'pull-request';
   const isPanel = (id: string): id is AppPanel => PANELS.includes(id);
   /** Every open panel and pane, in the order the strip shows them. */
   const stripIds = $derived.by(() => {
     const visible = [...panels, ...panes.map(({ id }) => id)];
     const shown = new Set(visible);
     const listed = new Set(stripOrder);
+    const unlisted = visible.filter((id) => !listed.has(id));
+    const isView = (id: string) => views.some((pane) => pane.id === id);
     return [
-      ...visible.filter((id) => !listed.has(id)),
+      ...unlisted.filter((id) => !isView(id)),
       ...stripOrder.filter((id) => shown.has(id)),
+      ...unlisted.filter(isView),
     ];
   });
   const assistantPanes = $derived(panes.filter(isAssistantPane));
@@ -150,8 +161,7 @@
 
   const canAddPane = $derived(!!project && panes.length < MAX_PANES);
 
-  const SECTION_CLASS =
-    'h-full shrink-0 snap-start px-1 transition-[flex-basis,min-width] duration-200 ease-[cubic-bezier(0.65,0,0.35,1)] motion-reduce:transition-none';
+  const SECTION_CLASS = 'h-full shrink-0 snap-start px-1';
 
   function showError(cause: unknown) {
     toast(errorMessage(cause), { variant: 'error', duration: 0 });
@@ -171,6 +181,21 @@
     } finally {
       busy = false;
     }
+  }
+
+  /** Runs a change to the panes made by hand, so the panes it opens or closes animate. */
+  async function changePanes(task: () => Promise<unknown>) {
+    paneMotion = true;
+    try {
+      await runAction(task);
+      await tick();
+    } finally {
+      paneMotion = false;
+    }
+  }
+
+  function closePane(paneId: string) {
+    return changePanes(() => window.bonfire.panes.archive(paneId));
   }
 
   function addProject() {
@@ -199,11 +224,20 @@
     creatingBranch = true;
   }
 
-  /** Opens a pane at the front of the strip; an agent with the last-used provider by default. */
+  /**
+   * Opens a pane at the front of the strip; an agent with the last-used provider by
+   * default. A view pane opens at the end instead, or, if it is open, is brought into sight.
+   */
   async function addPane(type?: PaneType, other = false) {
     if (busy) return;
     if (!project) {
       addProject();
+      return;
+    }
+    const view = !!type && isViewPaneType(type);
+    const open = view && panes.find((pane) => pane.type === type);
+    if (open) {
+      void focusPane(open.id);
       return;
     }
     if (!canAddPane) {
@@ -211,15 +245,17 @@
       return;
     }
     const count = panes.length;
-    addingPane = true;
-    try {
-      await runAction(() => window.bonfire.panes.add(type, other));
-      await tick();
-    } finally {
-      addingPane = false;
-    }
-    paneStrip?.scrollTo({ left: 0, behavior: scrollBehavior() });
-    if (panes.length > count) void focusPane(panes[0].id);
+    await changePanes(() => window.bonfire.panes.add(type, other));
+    const added = view ? panes.find((pane) => pane.type === type) : panes[0];
+    if (!view) paneStrip?.scrollTo({ left: 0, behavior: scrollBehavior() });
+    if (panes.length > count && added) void focusPane(added.id);
+  }
+
+  /** Opens a view pane at the end of the strip, or closes it if it is open. */
+  function toggleView(type: ViewPaneType) {
+    const open = panes.find((pane) => pane.type === type);
+    if (open) void closePane(open.id);
+    else void addPane(type);
   }
 
   function sizeClass(size: PaneSize) {
@@ -234,11 +270,26 @@
     return sizeOverrides[id] ?? autoSize;
   }
 
-  function paneSizeClass(pane: Pane) {
-    return sizeOverrides[pane.id]
-      ? sizeClass(sizeOverrides[pane.id])
-      : autoSizeClass;
-  }
+  /** Everything that sets the strip's layout; a change to it is animated. */
+  const stripLayout = $derived(
+    JSON.stringify([
+      stripIds.map((id) => [id, sizeOverrides[id] ?? autoSize]),
+      !panes.length,
+      showPullRequest && (pullRequestSize ?? autoSize),
+    ]),
+  );
+
+  $effect.pre(() => {
+    void stripLayout;
+    untrack(() => motion.measure());
+  });
+
+  $effect(() => {
+    void stripLayout;
+    untrack(() =>
+      motion.play((id) => paneMotion || isPanel(id) || id === PULL_REQUEST_ID),
+    );
+  });
 
   /** Brings an opened panel or view into sight at its end of the strip. */
   async function revealEdge(edge: 'start' | 'end') {
@@ -397,6 +448,11 @@
     if (!project) pullRequestOpen = false;
   });
 
+  // The pull request opens at the end of the strip, which is brought into sight.
+  $effect(() => {
+    if (showPullRequest) untrack(() => void revealEdge('end'));
+  });
+
   $effect(() => {
     if (!loaded) return;
     const id = projectId;
@@ -548,15 +604,14 @@
         void addPane('terminal');
         break;
       case 'newFiles':
-        void addPane('files');
+        toggleView('files');
         break;
       case 'newDiff':
-        void addPane('diff');
+        toggleView('diff');
         break;
       case 'closePane': {
         const target = activePane;
-        if (target)
-          void runAction(() => window.bonfire.panes.archive(target.id));
+        if (target) void closePane(target.id);
         break;
       }
       case 'goToPane':
@@ -897,9 +952,11 @@
         {trafficLightInset}
         bind:pullRequestOpen
         disabled={!project}
+        {openViews}
+        ontoggleView={toggleView}
         paneCount={panes.length + panels.length}
         onclosePanes={() =>
-          void runAction(async () => {
+          void changePanes(async () => {
             panels = [];
             for (const { id } of panes) await window.bonfire.panes.archive(id);
           })}
@@ -935,62 +992,40 @@
               onpointerdowncapture={trackPane}
               class={cn(
                 '-mx-1 flex h-full snap-x snap-mandatory overflow-x-auto overflow-y-hidden overscroll-x-contain scrollbar-none',
-                drag.active && 'snap-none select-none',
+                drag.active && 'select-none',
+                (drag.active || motion.active) && 'snap-none',
               )}
             >
               {#each stripIds as id (id)}
-                {#if isPanel(id)}
-                  <section
-                    data-panel={id}
-                    class={cn(
-                      SECTION_CLASS,
-                      sizeOverrides[id]
-                        ? sizeClass(sizeOverrides[id])
-                        : autoSizeClass,
-                      HIGHLIGHT_CLASS,
-                      highlightedId === id && HIGHLIGHTED_CLASS,
-                      drag.isDragging(id) && '*:shadow-2xl *:shadow-black/50',
-                    )}
-                    style={drag.style(id)}
-                    in:paneWidth
-                    out:paneWidth
-                  >
-                    {#if id === 'settings'}
-                      <SettingsPane {...panelProps(id)} />
-                    {:else if id === 'shortcuts'}
-                      <ShortcutsPane {...panelProps(id)} />
-                    {:else if id === 'activity'}
-                      <ActivityPane {projectId} {...panelProps(id)} />
-                    {:else}
-                      <InsightsPane
-                        bind:tab={insightsTab}
-                        {...panelProps(id)}
-                      />
-                    {/if}
-                  </section>
-                {:else}
-                  {@const pane = panes.find((pane) => pane.id === id)!}
-                  <section
-                    data-pane-id={pane.id}
-                    class={cn(
-                      SECTION_CLASS,
-                      paneSizeClass(pane),
-                      HIGHLIGHT_CLASS,
-                      highlightedId === pane.id && HIGHLIGHTED_CLASS,
-                      drag.isDragging(pane.id) &&
-                        '*:shadow-2xl *:shadow-black/50',
-                    )}
-                    style={drag.style(pane.id)}
-                    in:paneWidth={{ animate: addingPane }}
-                  >
+                {@const pane = isPanel(id)
+                  ? undefined
+                  : panes.find((pane) => pane.id === id)}
+                <!-- One section for panels and panes alike: an `out:` only plays when its own
+                     block goes, so the section has to sit right in the `#each`. -->
+                <section
+                  data-panel={pane ? undefined : id}
+                  data-pane-id={pane?.id}
+                  data-strip-id={id}
+                  class={cn(
+                    SECTION_CLASS,
+                    sizeOverrides[id]
+                      ? sizeClass(sizeOverrides[id])
+                      : autoSizeClass,
+                    HIGHLIGHT_CLASS,
+                    highlightedId === id && HIGHLIGHTED_CLASS,
+                    drag.isDragging(id) && '*:shadow-2xl *:shadow-black/50',
+                  )}
+                  style={drag.style(id)}
+                  out:leave={{ animate: !pane || paneMotion }}
+                >
+                  {#if pane}
                     <PaneView
                       {pane}
                       projectId={project!.id}
                       badge={paneBadge(statuses.get(pane.id))}
                       dragHandle={gripOf(pane.id)}
                       size={paneSize(pane.id)}
-                      onclose={() =>
-                        runAction(() => window.bonfire.panes.archive(pane.id))}
+                      onclose={() => closePane(pane.id)}
                       onresize={(size) => (sizeOverrides[pane.id] = size)}
                       onrename={(title) => {
                         pane.title = title;
@@ -999,25 +1034,36 @@
                         );
                       }}
                     />
-                  </section>
-                {/if}
+                  {:else if id === 'settings'}
+                    <SettingsPane {...panelProps(id)} />
+                  {:else if id === 'shortcuts'}
+                    <ShortcutsPane {...panelProps(id)} />
+                  {:else if id === 'activity'}
+                    <ActivityPane {projectId} {...panelProps(id)} />
+                  {:else if id === 'insights'}
+                    <InsightsPane bind:tab={insightsTab} {...panelProps(id)} />
+                  {/if}
+                </section>
               {/each}
               {#if !panes.length}
-                <section class={cn(SECTION_CLASS, autoSizeClass)}>
+                <section
+                  data-strip-id="placeholder"
+                  class={cn(SECTION_CLASS, autoSizeClass)}
+                  out:leave={{ animate: paneMotion }}
+                >
                   {@render placeholder()}
                 </section>
               {/if}
               {#if project && showPullRequest}
                 <section
+                  data-strip-id={PULL_REQUEST_ID}
                   class={cn(
                     SECTION_CLASS,
                     pullRequestSize
                       ? sizeClass(pullRequestSize)
                       : autoSizeClass,
                   )}
-                  in:paneWidth
-                  out:paneWidth
-                  onintroend={() => void revealEdge('end')}
+                  out:leave
                 >
                   <PullRequestView
                     projectId={project.id}

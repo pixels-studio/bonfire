@@ -33,6 +33,7 @@
     size,
     onresize,
     onclose,
+    resizable = true,
   }: {
     title: string;
     /** Shown before the title. */
@@ -52,6 +53,8 @@
     size: PaneSize;
     onresize: (size: PaneSize) => void;
     onclose: () => void;
+    /** Hides the size menu for panels with no useful size to switch to. */
+    resizable?: boolean;
   } = $props();
 
   const label = $derived(menuLabel ?? `${title} options`);
@@ -179,7 +182,9 @@
   </div>
   <div class="flex shrink-0 items-center gap-2">
     {@render actions?.()}
-    <PaneMenu {label} {size} {onresize} />
+    {#if resizable}
+      <PaneMenu {label} {size} {onresize} />
+    {/if}
     <Button
       variant="secondary"
       size="icon"

@@ -20,6 +20,7 @@ import {
 import {
   emptyState,
   errorMessage,
+  isViewPaneType,
   resolvePreferences,
 } from '../../shared/domain';
 
@@ -417,8 +418,19 @@ export function settleProjects(state: State) {
     state.lastProjectId = state.projects[0]?.id;
 }
 
-/** The layout lists only panes that are open; older versions left closed ones in it. */
-function settleLayout(state: State) {
+/**
+ * The layout lists only panes that are open; older versions left closed ones in it. They
+ * also allowed several of a view pane, of which a project now keeps the first.
+ */
+export function settleLayout(state: State) {
+  const seen = new Set<string>();
+  for (const id of state.layout.paneIds) {
+    const pane = state.panes.find((item) => item.id === id);
+    if (!pane || pane.archived || !isViewPaneType(pane.type)) continue;
+    const key = `${pane.projectId}:${pane.type}`;
+    if (seen.has(key)) pane.archived = true;
+    seen.add(key);
+  }
   const open = new Set(
     state.panes.filter((pane) => !pane.archived).map(({ id }) => id),
   );
