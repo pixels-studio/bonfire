@@ -66,9 +66,9 @@ export function isViewPaneType(type: string): type is ViewPaneType {
 }
 
 /** Whether the pane is a conversation with an agent, rather than a tool pane. */
-export function isAssistantPane(
-  pane: Pane,
-): pane is Pane & { type: AssistantProvider } {
+export function isAssistantPane<Item extends Pick<Pane, 'type'>>(
+  pane: Item,
+): pane is Item & { type: AssistantProvider } {
   return pane.type in PROVIDER_LABELS;
 }
 
@@ -336,6 +336,13 @@ export function errorMessage(cause: unknown) {
 
 /** The most panes, of any type, a project can have open at once. */
 export const MAX_PANES = 18;
+
+/**
+ * The most terminal panes, run scripts' included, a project can have open at once: as many
+ * as the WebGL pool has contexts, so each can draw with WebGL while busy. Agent panes' CLI
+ * terminals share the pool too; any terminal past it draws with the DOM renderer.
+ */
+export const MAX_TERMINAL_PANES = 15;
 
 /**
  * Reorders `ids` among the layout slots they already occupy, leaving every other

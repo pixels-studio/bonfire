@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -7,6 +7,7 @@ import {
   readClaudeLog,
   readCodexLog,
   summarize,
+  TokenUsage,
   type UsageRecord,
 } from '../electron/main/token-usage';
 
@@ -177,4 +178,39 @@ test('a call counted twice across logs is counted once', () => {
     NOW,
   );
   assert.equal(stats.totals.output, 9);
+});
+
+test('a growing log is read from where the last look stopped, each call counted once', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'bonfire-tokens-home-'));
+  const folder = join(home, '.claude', 'projects', 'p');
+  await mkdir(folder, { recursive: true });
+  const file = join(folder, 'session.jsonl');
+  const entry = (id: string, output: number) => ({
+    type: 'assistant',
+    timestamp: new Date().toISOString(),
+    requestId: `req_${id}`,
+    message: {
+      id,
+      model: 'claude-opus-5-5',
+      usage: { input_tokens: 1, output_tokens: output },
+    },
+  });
+  const usage = new TokenUsage(home);
+  const output = async () => (await usage.stats('today')).totals.output;
+
+  // The last line has no newline yet, as when the CLI is mid-write.
+  await writeFile(
+    file,
+    `${JSON.stringify(entry('a', 10))}\n${JSON.stringify(entry('b', 5))}`,
+  );
+  assert.equal(await output(), 15);
+  // The same reply grows, a new one starts, and half a line is still on its way.
+  await appendFile(
+    file,
+    `\n${JSON.stringify(entry('b', 7))}\n${JSON.stringify(entry('c', 3))}\n{"type":"assist`,
+  );
+  assert.equal(await output(), 20);
+  // A log that was rewritten shorter is read again from the start.
+  await writeFile(file, `${JSON.stringify(entry('z', 2))}\n`);
+  assert.equal(await output(), 2);
 });

@@ -40,6 +40,7 @@ import { Cached } from './cached';
 import { localMachine, type Machine } from './machines';
 import type { Store } from './persistence';
 import { MAX_TOOL_OUTPUT } from './tool-text';
+import { sendable, type PaneView, type ProjectView } from './state';
 
 export type ChooseImage = () => Promise<
   { name: string; path: string } | undefined
@@ -53,10 +54,24 @@ export type AssistantHost = {
   /** Shared between providers, so a pane keeps its attachments when its provider changes. */
   attachments?: PendingAttachments;
   /** The machine a project's folder is on, where its agent runs; this computer by default. */
-  machineOf?: (project: Project) => Machine;
+  machineOf?: (project: ProjectView) => Machine;
 };
 
 export type { PendingAttachment };
+
+/**
+ * What an assistant needs of the state: lookups, and the changes a turn makes. The Store
+ * provides it; so can a stand-in that passes the changes on to the Store elsewhere.
+ */
+export type AgentStore = Pick<
+  Store,
+  'preferences' | 'project' | 'pane' | 'save'
+> & {
+  readonly panes: Pick<Store['panes'], 'update' | 'putMessage' | 'append'>;
+  readonly settings: Pick<Store['settings'], 'rememberTurn'>;
+  /** A turn is over and everything it changed is saved or on its way. */
+  release?(pane: PaneView): void;
+};
 
 /** A message from the user, as handed to a provider. */
 export type Prompt = {
@@ -70,8 +85,8 @@ export type Prompt = {
 export type Steer = (prompt: Prompt) => Promise<void>;
 
 export type Turn = {
-  pane: Pane;
-  project: Project;
+  pane: PaneView;
+  project: ProjectView;
   /** Where the project's folder is, and so where the provider's CLI runs. */
   machine: Machine;
   input: AssistantSendInput;
@@ -195,7 +210,7 @@ export abstract class ChatAssistant {
   /** Messages changed since the last flush, in the order they first changed. */
   private readonly dirty = new Map<
     string,
-    { pane: Pane; message: ConversationMessage }
+    { pane: PaneView; message: ConversationMessage }
   >();
   private readonly sent = new Map<string, Sent>();
   private flushTimer?: NodeJS.Timeout;
@@ -213,7 +228,7 @@ export abstract class ChatAssistant {
   private readonly attachments: PendingAttachments;
 
   constructor(
-    protected readonly store: Store,
+    protected readonly store: AgentStore,
     private readonly emit: (event: AssistantEvent) => void,
     protected readonly host: AssistantHost,
   ) {
@@ -224,7 +239,7 @@ export abstract class ChatAssistant {
   protected abstract listModels(): Promise<ModelOption[]>;
   /** Skills the provider can run in the project's folder, on the machine it is on. */
   protected abstract listSkills(
-    project: Project,
+    project: ProjectView,
     machine: Machine,
   ): Promise<Skill[]>;
   protected abstract readLimits(): Promise<ProviderLimits>;
@@ -274,9 +289,9 @@ export abstract class ChatAssistant {
   }
 
   /** Holds pasted text as an attachment, so a long paste doesn't flood the message. */
-  attachText(paneId: string, text: string): Attachment {
+  attachText(paneId: string, text: string, name?: string): Attachment {
     this.paneFor(paneId);
-    return this.attachments.addText(paneId, text);
+    return this.attachments.addText(paneId, text, name);
   }
 
   /**
@@ -355,7 +370,7 @@ export abstract class ChatAssistant {
     this.flush();
     return {
       running: this.turns.has(paneId),
-      messages: pane.messages,
+      messages: sendable<ConversationMessage[]>(pane.messages),
       usage: pane.usage,
       requests: [...this.requests.values()]
         .filter((pending) => pending.paneId === paneId)
@@ -445,24 +460,28 @@ export abstract class ChatAssistant {
     this.flush();
   }
 
-  private async start(pane: Pane, input: AssistantSendInput, skills: Skill[]) {
+  private async start(
+    pane: PaneView,
+    input: AssistantSendInput,
+    skills: Skill[],
+  ) {
     if (!pane.projectId) throw Error('Select a project first');
     const project = this.store.project(pane.projectId);
     const attachments = this.attachmentsFor(pane, input.attachmentIds);
     const shown = withoutMarkers(promptText(input.text, skills));
 
-    pane.model = input.model;
-    pane.reasoningEffort = input.reasoningEffort;
-    pane.fastMode = input.fastMode;
-    pane.approvals = input.approvals;
-    if (isDefaultTitle(pane.title)) pane.title = titleFrom(shown);
-    const { settings } = this.store.state;
-    settings.lastProvider = this.provider;
-    settings.lastReasoningEffort = input.reasoningEffort;
-    settings.lastModels = {
-      ...settings.lastModels,
-      [this.provider]: input.model,
-    };
+    this.store.panes.update(pane, {
+      model: input.model,
+      reasoningEffort: input.reasoningEffort,
+      fastMode: input.fastMode,
+      approvals: input.approvals,
+      ...(isDefaultTitle(pane.title) && { title: titleFrom(shown) }),
+    });
+    this.store.settings.rememberTurn(
+      this.provider,
+      input.model,
+      input.reasoningEffort,
+    );
     this.publishPrompt(pane, { text: input.text, attachments, skills });
 
     const turn: ActiveTurn = {
@@ -502,6 +521,7 @@ export abstract class ChatAssistant {
       else if (!turn.cancelled)
         this.notify({ paneId: pane.id, type: 'status', status: 'completed' });
       this.notify({ paneId: pane.id, type: 'status', status: 'idle' });
+      this.store.release?.(pane);
       // After a stop or a failure the queue waits, so the user decides what runs next.
       if (!turn.errored && !turn.cancelled) this.startNext(pane);
     }
@@ -519,7 +539,7 @@ export abstract class ChatAssistant {
     )?.supportsFast;
     if (supported) return;
     turn.input = { ...turn.input, fastMode: false };
-    turn.pane.fastMode = false;
+    this.store.panes.update(turn.pane, { fastMode: false });
   }
 
   private async steerTurn(
@@ -535,7 +555,7 @@ export abstract class ChatAssistant {
     this.attachments.delete(attachments.map(({ id }) => id));
   }
 
-  private enqueue(pane: Pane, input: AssistantSendInput, skills: Skill[]) {
+  private enqueue(pane: PaneView, input: AssistantSendInput, skills: Skill[]) {
     // Checked now, so a bad attachment is reported to the sender rather than lost later.
     this.attachmentsFor(pane, input.attachmentIds);
     const queue = this.queues.get(pane.id) ?? [];
@@ -544,7 +564,7 @@ export abstract class ChatAssistant {
     this.notifyQueue(pane.id);
   }
 
-  private startNext(pane: Pane) {
+  private startNext(pane: PaneView) {
     const next = this.queues.get(pane.id)?.shift();
     if (!next) return;
     this.notifyQueue(pane.id);
@@ -576,12 +596,12 @@ export abstract class ChatAssistant {
     this.notify({ paneId, type: 'queue', queue: this.queueOf(paneId) });
   }
 
-  private attachmentsFor(pane: Pane, ids: string[]) {
+  private attachmentsFor(pane: PaneView, ids: string[]) {
     return this.attachments.get(pane.id, ids);
   }
 
   /** The named skills, refused if the provider no longer offers one. */
-  private async skillsFor(pane: Pane, names: string[]): Promise<Skill[]> {
+  private async skillsFor(pane: PaneView, names: string[]): Promise<Skill[]> {
     if (!names.length) return [];
     const offered = await this.skills(pane.id);
     return [...new Set(names)].map((name) => {
@@ -591,7 +611,7 @@ export abstract class ChatAssistant {
     });
   }
 
-  private publishPrompt(pane: Pane, { text, attachments, skills }: Prompt) {
+  private publishPrompt(pane: PaneView, { text, attachments, skills }: Prompt) {
     for (const { id, name, size, previewUrl } of attachments)
       this.publish(pane, {
         id,
@@ -611,13 +631,24 @@ export abstract class ChatAssistant {
     });
   }
 
-  /** Inserts or replaces a message, optionally persisting, and notifies the renderer. */
-  protected publish(pane: Pane, message: ConversationMessage, persist = true) {
-    const index = pane.messages.findLastIndex((item) => item.id === message.id);
-    if (index === -1) pane.messages.push(message);
-    else pane.messages[index] = message;
+  /**
+   * Inserts or replaces a message, optionally persisting, and notifies the renderer. A
+   * changed message must be a new object: saving reuses a finished message's JSON while it
+   * is the same one.
+   */
+  protected publish(
+    pane: PaneView,
+    message: ConversationMessage,
+    persist = true,
+  ) {
+    this.store.panes.putMessage(pane, message);
     if (persist) this.store.save(pane);
     this.markDirty(pane, message);
+    // Outside a turn, as for a late update or a failure to start, nothing will release it.
+    if (!this.turns.has(pane.id)) {
+      this.flush();
+      this.store.release?.(pane);
+    }
     // Finished messages go out at once; streaming ones are batched.
     if (message.status !== 'streaming') this.flush();
   }
@@ -627,39 +658,37 @@ export abstract class ChatAssistant {
    * Ignored unless the message is still streaming, so late deltas can't alter a finished one.
    */
   protected append(
-    pane: Pane,
+    pane: PaneView,
     id: string,
     field: 'text' | 'output',
     text: string,
   ) {
-    const message = pane.messages.findLast((item) => item.id === id);
-    if (message?.status !== 'streaming' || !text) return;
-    if (field === 'text') message.text += text;
-    else if (message.tool) {
-      // Past the cap the rest is dropped; the finished message carries a clipped copy.
-      if (message.tool.output.length >= MAX_TOOL_OUTPUT) return;
-      message.tool.output += text;
-    } else return;
-    this.markDirty(pane, message);
+    if (!text) return;
+    const current = pane.messages.findLast((item) => item.id === id);
+    // Past the cap the rest is dropped; the finished message carries a clipped copy.
+    if (
+      field === 'output' &&
+      (current?.tool?.output.length ?? 0) >= MAX_TOOL_OUTPUT
+    )
+      return;
+    const message = this.store.panes.append(pane, id, field, text);
+    if (message) this.markDirty(pane, message);
   }
 
-  protected publishError(pane: Pane, text: string) {
+  protected publishError(pane: PaneView, text: string) {
     const turn = this.turns.get(pane.id);
     if (turn) turn.errored = true;
     const kind = CAPACITY_PATTERN.test(text) ? 'capacity' : 'error';
     this.publish(pane, assistantMessage(randomUUID(), kind, text, 'failed'));
   }
 
-  protected publishUsage(pane: Pane, usage: Usage) {
-    pane.usage = usage;
-    this.store.save();
+  protected publishUsage(pane: PaneView, usage: Usage) {
+    this.store.panes.update(pane, { usage });
     this.notify({ paneId: pane.id, type: 'usage', usage });
   }
 
-  protected rememberThread(pane: Pane, threadId: string) {
-    if (pane.threadId === threadId) return;
-    pane.threadId = threadId;
-    this.store.save();
+  protected rememberThread(pane: PaneView, threadId: string) {
+    if (pane.threadId !== threadId) this.store.panes.update(pane, { threadId });
   }
 
   /**
@@ -667,7 +696,7 @@ export abstract class ChatAssistant {
    * cancelled first, which callers should treat as a refusal.
    */
   protected ask(
-    pane: Pane,
+    pane: PaneView,
     request: RequestInput,
   ): Promise<RequestAnswer | undefined> {
     const full = { ...request, id: randomUUID() } as AssistantRequest;
@@ -695,7 +724,7 @@ export abstract class ChatAssistant {
   }
 
   /** Marks whatever the turn left mid-flight as finished, so nothing keeps shimmering. */
-  private settle(pane: Pane, failed: boolean) {
+  private settle(pane: PaneView, failed: boolean) {
     for (const message of pane.messages) {
       if (message.status !== 'streaming') continue;
       const next: MessageStatus =
@@ -710,7 +739,7 @@ export abstract class ChatAssistant {
     this.emit(event);
   }
 
-  private markDirty(pane: Pane, message: ConversationMessage) {
+  private markDirty(pane: PaneView, message: ConversationMessage) {
     this.dirty.set(`${pane.id}:${message.id}`, { pane, message });
     this.flushTimer ??= setTimeout(() => this.flush(), FLUSH_DELAY_MS);
   }

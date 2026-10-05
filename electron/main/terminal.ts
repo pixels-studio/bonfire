@@ -1,39 +1,35 @@
-import * as pty from 'node-pty';
-import { randomUUID } from 'node:crypto';
+import type { MessagePortMain } from 'electron';
 import type {
   TerminalCreateInput,
   TerminalEvent,
-  TerminalSnapshot,
 } from '../../shared/contracts';
 import { isAssistantPane } from '../../shared/domain';
+import { HostProcess } from './host-process';
 import type { Machine, Program } from './machines';
 import type { Store } from './persistence';
+import type { PtyHost } from './pty-host';
 import { defaultShell, isWindows } from './shell';
 
-const SCROLLBACK_BYTES = 1024 * 1024;
-/** Scrollback may run this far past its cap before it is trimmed, so output isn't copied per chunk. */
-const SCROLLBACK_SLACK = SCROLLBACK_BYTES / 4;
-/**
- * How long output is gathered before it is sent to the window. A busy program writes
- * thousands of small chunks a second; batching them, as VS Code does, keeps the window
- * from handling each one, at a delay too short to notice while typing.
- */
-const OUTPUT_BATCH_MS = 5;
-/** How long a stopped script gets to exit after Ctrl-C before it is hung up on. */
-const STOP_GRACE_MS = 3000;
+/** The terminal host's methods, as main calls them. */
+type PtyMethods = Pick<
+  PtyHost,
+  | 'create'
+  | 'run'
+  | 'stop'
+  | 'snapshot'
+  | 'ack'
+  | 'write'
+  | 'resize'
+  | 'closePane'
+  | 'closeProject'
+  | 'close'
+>;
 
-type TerminalRecord = TerminalSnapshot & {
-  paneId: string;
-  projectId: string;
-  /** `script` runs a project's run script rather than a shell or CLI. */
-  type: TerminalCreateInput['type'] | 'script';
-  process: pty.IPty;
-  /** Settles once the process has exited. */
-  exited: Promise<void>;
-  /** Output not yet sent to the window. */
-  pending: string;
-  flushTimer?: NodeJS.Timeout;
-};
+/** Whose a terminal the host runs is. */
+type Known = { paneId: string; projectId: string; type: string };
+
+/** The exit code a terminal reports when the terminal host stopped under it. */
+const HOST_STOPPED_EXIT_CODE = -1;
 
 /**
  * Runs a command through the user's shell, so their PATH and version managers apply. Over
@@ -47,42 +43,68 @@ function scriptProgram(machine: Machine, command: string): Program {
   return { file: defaultShell(), args: ['-ilc', command] };
 }
 
-export class Terminals {
-  private readonly records = new Map<string, TerminalRecord>();
+type TerminalOptions = {
+  store: Store;
+  /** The machine the project's folder is on. */
+  machine: (projectId: string) => Machine;
+  /** The bundled terminal host. */
+  modulePath: string;
+  /** A terminal's process ended. */
+  exited: (event: TerminalEvent) => void;
+  /** Tells the window of an exit it can't hear from the terminal host, which has stopped. */
+  toWindow: (event: TerminalEvent) => void;
+  /** Opens a channel between the window and the terminal host, which starts the host. */
+  connectWindow: () => void;
+  log?: (message: string) => void;
+};
 
-  constructor(
-    private readonly store: Store,
-    private readonly emit: (event: TerminalEvent) => void,
-    /** The machine the project's folder is on. */
-    private readonly machine: (projectId: string) => Machine,
-  ) {}
+/**
+ * The terminals, as main sees them. Their processes and output live in the terminal host;
+ * main checks each request against the projects and panes, works out the command for the
+ * project's machine, and supervises the host.
+ */
+export class Terminals {
+  private readonly host: HostProcess<PtyMethods>;
+  /** The terminals the host runs, so their views can be told if it stops. */
+  private readonly known = new Map<string, Known>();
+
+  constructor(private readonly options: TerminalOptions) {
+    this.host = new HostProcess<PtyMethods>({
+      name: 'Bonfire Terminals',
+      modulePath: options.modulePath,
+      log: options.log,
+      started: (rpc) => rpc.on<TerminalEvent>('exit', options.exited),
+      stopped: () => this.hostStopped(),
+    });
+  }
 
   /**
    * Starts a PTY for the pane, or returns its running one. Any pane may run a
    * shell; an agent pane may also run its provider's CLI.
    */
-  create({ projectId, paneId, type }: TerminalCreateInput) {
-    const project = this.store.project(projectId);
-    const pane = this.store.pane(paneId);
+  async create({ projectId, paneId, type }: TerminalCreateInput) {
+    const { store } = this.options;
+    const project = store.project(projectId);
+    const pane = store.pane(paneId);
     const cli = isAssistantPane(pane) ? pane.type : undefined;
     if (pane.projectId !== project.id || (type !== 'shell' && type !== cli))
       throw Error('Pane/project mismatch');
-
+    const machine = this.options.machine(project.id);
+    const program =
+      type === 'shell' ? machine.shell() : { file: type, args: [] };
     const owner = { projectId: project.id, paneId, type };
-    const running = this.find(
-      (record) =>
-        record.paneId === owner.paneId &&
-        record.type === owner.type &&
-        record.exitCode === undefined,
-    );
-    if (running) return running;
-
-    const machine = this.machine(project.id);
-    return this.spawn(
+    const id = await this.call(
+      'create',
       owner,
-      type === 'shell' ? machine.shell() : { file: type, args: [] },
-      project.path,
+      machine.terminal(program, { cwd: project.path }),
     );
+    // A relaunch replaces the pane's terminal of that kind, which the host has let go.
+    this.forget(
+      (known, knownId) =>
+        knownId !== id && known.paneId === paneId && known.type === type,
+    );
+    this.known.set(id, owner);
+    return id;
   }
 
   /**
@@ -90,146 +112,100 @@ export class Terminals {
    * waited for, so a restarted server finds its port free.
    */
   async run(projectId: string, paneId: string, command: string) {
-    const project = this.store.project(projectId);
-    const previous = [...this.records].filter(
-      ([, record]) => record.paneId === paneId,
+    const project = this.options.store.project(projectId);
+    const machine = this.options.machine(project.id);
+    const owner = { projectId: project.id, paneId, type: 'script' as const };
+    const id = await this.call(
+      'run',
+      owner,
+      machine.terminal(scriptProgram(machine, command), { cwd: project.path }),
     );
-    await Promise.all(previous.map(([id]) => this.stop(id)));
-    for (const [id] of previous) this.records.delete(id);
-    return this.spawn(
-      { projectId: project.id, paneId, type: 'script' },
-      scriptProgram(this.machine(project.id), command),
-      project.path,
-    );
-  }
-
-  /**
-   * Ends a terminal's process the way a person would: Ctrl-C, so servers shut down cleanly,
-   * then a hang-up if it is still running after a moment. Its output stays on screen.
-   */
-  async stop(id: string) {
-    const record = this.get(id);
-    if (record.exitCode !== undefined) return;
-    record.process.write('\x03');
-    let timer: NodeJS.Timeout | undefined;
-    const grace = new Promise<void>((resolve) => {
-      timer = setTimeout(resolve, STOP_GRACE_MS);
-    });
-    await Promise.race([record.exited, grace]);
-    clearTimeout(timer);
-    this.kill(id);
-  }
-
-  private find(matches: (record: TerminalRecord) => boolean) {
-    for (const [id, record] of this.records) if (matches(record)) return id;
-  }
-
-  private spawn(
-    owner: Pick<TerminalRecord, 'projectId' | 'paneId' | 'type'>,
-    program: Program,
-    cwd: string,
-  ) {
-    const command = this.machine(owner.projectId).terminal(program, { cwd });
-    let process: pty.IPty;
-    try {
-      process = pty.spawn(command.file, command.args, {
-        name: 'xterm-256color',
-        cols: 80,
-        rows: 24,
-        cwd: command.cwd,
-        env: command.env,
-      });
-    } catch (cause) {
-      throw Error(
-        `Could not launch ${command.file}. Install the CLI and ensure it is on PATH. ${String(cause)}`,
-      );
-    }
-
-    const id = randomUUID();
-    let markExited!: () => void;
-    const record: TerminalRecord = {
-      ...owner,
-      process,
-      sequence: 0,
-      data: '',
-      exited: new Promise((resolve) => (markExited = resolve)),
-      pending: '',
-    };
-    this.records.set(id, record);
-    process.onData((data) => {
-      record.pending += data;
-      record.flushTimer ??= setTimeout(
-        () => this.flushOutput(id, record),
-        OUTPUT_BATCH_MS,
-      );
-    });
-    process.onExit(({ exitCode }) => {
-      this.flushOutput(id, record);
-      record.exitCode = exitCode;
-      markExited();
-      this.emit({ terminalId: id, sequence: ++record.sequence, exitCode });
-    });
+    this.forget((known) => known.paneId === paneId);
+    this.known.set(id, owner);
     return id;
   }
 
-  snapshot(id: string): TerminalSnapshot {
-    const { data, sequence, exitCode } = this.get(id);
-    return { data: data.slice(-SCROLLBACK_BYTES), sequence, exitCode };
+  /** Ends a terminal's process: Ctrl-C, then a hang-up. Its output stays on screen. */
+  stop(id: string) {
+    return this.call('stop', id);
   }
 
-  /** Sends the output gathered since the last batch, and keeps it for later snapshots. */
-  private flushOutput(id: string, record: TerminalRecord) {
-    clearTimeout(record.flushTimer);
-    record.flushTimer = undefined;
-    const data = record.pending;
-    if (!data) return;
-    record.pending = '';
-    record.data += data;
-    if (record.data.length > SCROLLBACK_BYTES + SCROLLBACK_SLACK)
-      record.data = record.data.slice(-SCROLLBACK_BYTES);
-    this.emit({ terminalId: id, sequence: ++record.sequence, data });
+  snapshot(id: string) {
+    return this.call('snapshot', id);
+  }
+
+  ack(id: string, chars: number) {
+    return this.call('ack', id, chars);
   }
 
   write(id: string, data: string) {
-    const record = this.get(id);
-    if (record.exitCode === undefined) record.process.write(data);
+    return this.call('write', id, data);
   }
 
   resize(id: string, cols: number, rows: number) {
-    const record = this.get(id);
-    if (record.exitCode === undefined) record.process.resize(cols, rows);
+    return this.call('resize', id, cols, rows);
   }
 
   closeProject(projectId: string) {
-    this.closeWhere((record) => record.projectId === projectId);
+    this.forget((known) => known.projectId === projectId);
+    this.whenRunning('closeProject', projectId);
   }
 
   /** Ends the pane's terminals; their scrollback goes with them. */
   closePane(paneId: string) {
-    this.closeWhere((record) => record.paneId === paneId);
+    this.forget((known) => known.paneId === paneId);
+    this.whenRunning('closePane', paneId);
   }
 
-  private closeWhere(matches: (record: TerminalRecord) => boolean) {
-    for (const [id, record] of this.records)
-      if (matches(record)) {
-        clearTimeout(record.flushTimer);
-        this.kill(id);
-        this.records.delete(id);
-      }
+  /** Whether the terminal host runs; until a terminal is asked for, it doesn't. */
+  get running() {
+    return this.host.running;
+  }
+
+  /** Gives the window its own channel to the terminal host, for output and typing. */
+  attachWindow(port: MessagePortMain) {
+    this.host.postPort({ kind: 'window' }, port);
   }
 
   close() {
-    for (const id of this.records.keys()) this.kill(id);
+    return this.host.close();
   }
 
-  private get(id: string) {
-    const record = this.records.get(id);
-    if (!record) throw Error('Terminal not found');
-    return record;
+  /** Something only a running host has to do; one that isn't running has no terminals. */
+  private whenRunning(method: 'closePane' | 'closeProject', id: string) {
+    if (this.host.running) this.host.call(method, id).catch(() => {});
   }
 
-  private kill(id: string) {
-    const record = this.get(id);
-    if (record.exitCode === undefined) record.process.kill();
+  private forget(matches: (known: Known, id: string) => boolean) {
+    for (const [id, known] of this.known)
+      if (matches(known, id)) this.known.delete(id);
+  }
+
+  /** Every terminal ended with the host; their views and run scripts hear so. */
+  private hostStopped() {
+    for (const terminalId of this.known.keys()) {
+      const event: TerminalEvent = {
+        terminalId,
+        sequence: 0,
+        exitCode: HOST_STOPPED_EXIT_CODE,
+        hostStopped: true,
+      };
+      this.options.toWindow(event);
+      this.options.exited(event);
+    }
+    this.known.clear();
+  }
+
+  /**
+   * Calls the terminal host. One that isn't running starts with a channel to the window, so
+   * the terminals it runs reach their views; after a crash, that waits for the next request,
+   * which keeps a host that fails as it starts from restarting in a loop.
+   */
+  private call<Method extends keyof PtyMethods & string>(
+    method: Method,
+    ...args: Parameters<PtyMethods[Method]>
+  ) {
+    if (!this.host.running) this.options.connectWindow();
+    return this.host.call(method, ...args);
   }
 }

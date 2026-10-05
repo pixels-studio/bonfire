@@ -42,6 +42,7 @@ import { Channel } from './channel';
 import { claudeLimits } from './limits';
 import type { Machine } from './machines';
 import { clipOutput, partialToolInput, toolInput } from './tool-text';
+import type { PaneView, ProjectView } from './state';
 
 const execFileAsync = promisify(execFile);
 
@@ -57,6 +58,8 @@ type StreamedBlock = {
   name: string;
   /** A tool call's input JSON as it arrives; unused for text and thinking. */
   json: string;
+  /** How much of `json` had arrived when it was last read for the call's key argument. */
+  parsed: number;
   /** Set once the complete assistant message has replaced the streamed text. */
   settled: boolean;
   /** When the block started, to time it once its finishing message arrives. */
@@ -75,6 +78,8 @@ type StreamState = {
 const EXTENDED_CONTEXT_MODEL = 'sonnet-1m';
 const EXTENDED_CONTEXT_BETA = 'context-1m-2025-08-07';
 const SESSION_TIMEOUT_MS = 20_000;
+/** How many characters of a tool call's input arrive before it is looked at again. */
+const INPUT_PARSE_STEP = 64;
 const DEFAULT_OUTPUT_STYLE = 'default';
 
 // Newer models omit thinking text unless a summarized display is requested.
@@ -182,7 +187,10 @@ export class ClaudeAssistant extends ChatAssistant {
   }
 
   /** The CLI's skills and prompt commands: the user's, the project's, plugins', and its own. */
-  protected listSkills(project: Project, machine: Machine): Promise<Skill[]> {
+  protected listSkills(
+    project: ProjectView,
+    machine: Machine,
+  ): Promise<Skill[]> {
     return this.withIdleSession(
       async (run) =>
         (await run.supportedCommands())
@@ -454,7 +462,7 @@ export class ClaudeAssistant extends ChatAssistant {
   }
 
   /** Publishes in-progress text, thinking, and tool input as deltas arrive. */
-  private handleStream(pane: Pane, event: StreamEvent, state: StreamState) {
+  private handleStream(pane: PaneView, event: StreamEvent, state: StreamState) {
     switch (event.type) {
       case 'message_start': {
         state.blocks.set(event.message.id, new Map());
@@ -490,6 +498,7 @@ export class ClaudeAssistant extends ChatAssistant {
           kind,
           name: block.type === 'tool_use' ? block.name : '',
           json: '',
+          parsed: 0,
           settled: false,
           startedAt: Date.now(),
         };
@@ -507,6 +516,15 @@ export class ClaudeAssistant extends ChatAssistant {
           this.append(pane, entry.id, 'text', delta.thinking);
         else if (delta.type === 'input_json_delta') {
           entry.json += delta.partial_json;
+          // Each look reads the whole input so far, and a large edit arrives in thousands of
+          // deltas. A long input is looked at again only once enough more has arrived, which
+          // keeps that from growing as its square; the final input replaces what was shown.
+          if (
+            entry.json.length > INPUT_PARSE_STEP * 8 &&
+            entry.json.length - entry.parsed < INPUT_PARSE_STEP
+          )
+            break;
+          entry.parsed = entry.json.length;
           const input = partialToolInput(entry.json);
           const current = pane.messages.findLast(
             (item) => item.id === entry.id,
@@ -526,7 +544,7 @@ export class ClaudeAssistant extends ChatAssistant {
 
   /** Attaches tool output to the matching tool-use message and settles its status. */
   private attachToolResults(
-    pane: Pane,
+    pane: PaneView,
     event: Extract<SDKMessage, { type: 'user' }>,
   ) {
     const { content } = event.message;

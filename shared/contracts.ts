@@ -568,6 +568,11 @@ export type TerminalEvent = {
   sequence: number;
   data?: string;
   exitCode?: number;
+  /**
+   * The terminal ended because the terminal host stopped. Main sends this, not the host, so
+   * it stands outside the terminal's own sequence.
+   */
+  hostStopped?: true;
 };
 /**
  * Something changed in a project's folder: its `files`, including what Git has staged; the
@@ -676,12 +681,6 @@ export const requests = {
   'scripts.stop': z.tuple([id, id]),
   'scripts.runs': z.tuple([id]),
   'terminal.create': z.tuple([terminalCreateInput]),
-  'terminal.write': z.tuple([id, z.string().max(1_048_576)]),
-  'terminal.resize': z.tuple([
-    id,
-    z.number().int().min(2).max(500),
-    z.number().int().min(1).max(300),
-  ]),
   'terminal.snapshot': z.tuple([id]),
   'git.status': z.tuple([id]),
   'git.head': z.tuple([id]),
@@ -698,9 +697,32 @@ export const requests = {
   'filesystem.unwatch': z.tuple([id]),
 };
 
+/**
+ * Calls the window sends straight to the terminal host over its own channel, not to main.
+ * The host checks each as main checks its requests.
+ */
+export const terminalHostRequests = {
+  'terminal.write': z.tuple([id, z.string().max(1_048_576)]),
+  'terminal.resize': z.tuple([
+    id,
+    z.number().int().min(2).max(500),
+    z.number().int().min(1).max(300),
+  ]),
+  'terminal.ack': z.tuple([
+    id,
+    z
+      .number()
+      .int()
+      .min(0)
+      .max(1 << 30),
+  ]),
+};
+
 /** Push channels from main to the renderer. */
 export const events = {
   terminalData: 'terminal:data',
+  /** Hands the window its own channel to the terminal host; asked for by the preload. */
+  terminalPort: 'terminal:port',
   assistantEvent: 'assistant:event',
   fileChange: 'filesystem:change',
   fullscreen: 'window:fullscreen',
@@ -731,7 +753,10 @@ export type API = {
     /** The enabled providers' CLI versions on this computer and on the open project's machine. */
     cliVersions(): Promise<CliVersion[]>;
     /** Updates a provider's CLI on a machine (`local` or a connection id); returns its new version. */
-    updateCli(provider: AssistantProvider, machineId: string): Promise<CliVersion>;
+    updateCli(
+      provider: AssistantProvider,
+      machineId: string,
+    ): Promise<CliVersion>;
   };
   github: {
     status(): Promise<GithubStatus>;
@@ -897,6 +922,11 @@ export type API = {
     write(id: string, data: string): Promise<void>;
     resize(id: string, cols: number, rows: number): Promise<void>;
     snapshot(id: string): Promise<TerminalSnapshot>;
+    /**
+     * Says how much of the output the window has shown, so a program writing faster than
+     * it can be shown is paused rather than piling up in the window.
+     */
+    ack(id: string, chars: number): Promise<void>;
     onData(listener: (event: TerminalEvent) => void): Unsubscribe;
   };
   git: {
@@ -929,11 +959,24 @@ export type API = {
   };
 };
 
-/** The request/response half of the API that main implements (no push subscriptions or preload-only helpers). */
+/** Methods the preload sends to the terminal host rather than to main. */
+type TerminalHostMethods = {
+  [
+    Channel in keyof typeof terminalHostRequests
+  ]: Channel extends `terminal.${infer Method}` ? Method : never;
+}[keyof typeof terminalHostRequests];
+
+/**
+ * The request/response half of the API that main implements: no push subscriptions,
+ * preload-only helpers, or calls that go to the terminal host.
+ */
 export type Backend = {
   [Group in keyof API]: {
     [
-      Method in keyof API[Group] as Method extends `on${string}` | 'pathForFile'
+      Method in keyof API[Group] as Method extends
+        | `on${string}`
+        | 'pathForFile'
+        | (Group extends 'terminal' ? TerminalHostMethods : never)
         ? never
         : Method
     ]: API[Group][Method];

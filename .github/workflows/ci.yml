@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      # Installing rebuilds node-pty for Electron.
+      - run: npm ci
+      - run: npm run check
+      - run: npm run test:unit
+      - run: npm run build
+      # The full smoke test types POSIX shell commands; Windows runs the checks every
+      # platform can: terminals and agents in their own processes, and their restarts.
+      - name: Smoke test
+        if: runner.os == 'macOS'
+        run: npm test
+      - name: Smoke test (hosts)
+        if: runner.os == 'Windows'
+        run: npm test
+        env:
+          BONFIRE_SMOKE_PHASES: hosts

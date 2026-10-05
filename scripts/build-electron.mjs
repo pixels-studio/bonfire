@@ -1,10 +1,16 @@
 import { build } from 'esbuild';
+// Main, and the utility processes it moves work out to.
 await build({
-  entryPoints: ['electron/main/index.ts'],
+  entryPoints: {
+    index: 'electron/main/index.ts',
+    'terminal-host': 'electron/main/terminal-host.ts',
+    'agent-host': 'electron/main/agent-host.ts',
+  },
   bundle: true,
   platform: 'node',
   format: 'cjs',
-  outfile: 'dist/main/index.cjs',
+  outdir: 'dist/main',
+  outExtension: { '.js': '.cjs' },
   external: [
     'electron',
     'node-pty',
