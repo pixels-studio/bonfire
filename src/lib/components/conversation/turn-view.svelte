@@ -50,7 +50,7 @@
 </script>
 
 {#snippet entry(message: ConversationMessage)}
-  {#if message.kind === 'text' || message.kind === 'error'}
+  {#if message.kind === 'text' || message.kind === 'error' || message.kind === 'capacity'}
     <TextView {message} />
   {:else if message.kind === 'thinking'}
     <!-- Thinking without text (e.g. redacted) has nothing to expand. -->

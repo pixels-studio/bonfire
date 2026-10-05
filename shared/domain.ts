@@ -17,6 +17,12 @@ export const PROVIDER_LABELS: Record<AssistantProvider, string> = {
   codex: 'Codex',
 };
 
+/** What each provider's command-line tool is called. */
+export const CLI_NAMES: Record<AssistantProvider, string> = {
+  claude: 'Claude Code',
+  codex: 'Codex',
+};
+
 const PROVIDERS = Object.keys(PROVIDER_LABELS) as AssistantProvider[];
 
 /** The provider new panes start with: the chosen default, else the last used, else the first enabled. */

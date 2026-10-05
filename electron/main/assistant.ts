@@ -121,6 +121,9 @@ const LOGIN_TIMEOUT_MS = 3 * 60_000;
 const GENERATE_TIMEOUT_MS = 60_000;
 /** How long a project's skill list is reused; skills change only when files on disk do. */
 const SKILLS_TTL_MS = 60_000;
+/** Matches a provider's way of saying its model is overloaded or rate-limited, across vendors. */
+const CAPACITY_PATTERN =
+  /\b(at capacity|overloaded|rate.?limit|too many requests|try again later|temporarily unavailable)\b/i;
 
 export function assistantMessage(
   id: string,
@@ -643,7 +646,8 @@ export abstract class ChatAssistant {
   protected publishError(pane: Pane, text: string) {
     const turn = this.turns.get(pane.id);
     if (turn) turn.errored = true;
-    this.publish(pane, assistantMessage(randomUUID(), 'error', text, 'failed'));
+    const kind = CAPACITY_PATTERN.test(text) ? 'capacity' : 'error';
+    this.publish(pane, assistantMessage(randomUUID(), kind, text, 'failed'));
   }
 
   protected publishUsage(pane: Pane, usage: Usage) {

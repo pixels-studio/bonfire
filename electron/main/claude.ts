@@ -634,7 +634,7 @@ function modelOptions(model: string): Pick<Options, 'model' | 'betas'> {
  * The CLI binary bundled with the SDK; the installed `claude` otherwise, as in the packaged
  * app, which leaves the bundled binary out. Both keep credentials in the same place.
  */
-function claudeExecutable() {
+export function claudeExecutable() {
   const require = createRequire(__filename);
   const executable = process.platform === 'win32' ? 'claude.exe' : 'claude';
   const variants = process.platform === 'linux' ? ['', '-musl'] : [''];

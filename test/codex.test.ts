@@ -197,6 +197,22 @@ test('a failed turn shows one readable error', async () => {
   );
 });
 
+test('a capacity error is flagged separately from a regular one', async () => {
+  const { pane, events, send } = codex();
+  await send('capacity');
+  assert(!pane.messages.some((item) => item.kind === 'error'));
+  const capacity = pane.messages.filter((item) => item.kind === 'capacity');
+  assert.deepEqual(
+    capacity.map((item) => item.text),
+    ['The selected model is at capacity. Please try again.'],
+  );
+  assert(
+    events.some(
+      (event) => event.type === 'status' && event.status === 'failed',
+    ),
+  );
+});
+
 test('an error that Codex retries is not shown', async () => {
   const { pane, send } = codex();
   await send('retry');
