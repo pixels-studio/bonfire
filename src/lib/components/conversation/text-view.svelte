@@ -1,18 +1,31 @@
 <script lang="ts">
   import Icon from '$lib/components/icon/icon.svelte';
   import { Button } from '$lib/components/ui/button';
+  import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
   import * as Tooltip from '$lib/components/ui/tooltip';
   import Markdown from './markdown.svelte';
+  import { fork } from '$lib/stores/fork.svelte';
+  import { preferences } from '$lib/stores/preferences.svelte';
   import { toast } from '$lib/stores/toast.svelte';
-  import { errorMessage } from '$shared/domain';
-  import type { ConversationMessage } from '$shared/contracts';
+  import { PROVIDER_LABELS, errorMessage } from '$shared/domain';
+  import type { AssistantProvider, ConversationMessage } from '$shared/contracts';
 
   let {
     message,
+    paneId = '',
     isLastReply = false,
-  }: { message: ConversationMessage; isLastReply?: boolean } = $props();
+  }: {
+    message: ConversationMessage;
+    paneId?: string;
+    isLastReply?: boolean;
+  } = $props();
 
   let copied = $state(false);
+  const forking = $derived(fork.running === message.id);
+
+  function forkTo(provider: AssistantProvider) {
+    void fork.run(paneId, message.id, provider);
+  }
 
   const seconds = $derived(
     message.durationMs === undefined
@@ -80,6 +93,31 @@
         </Tooltip.Trigger>
         <Tooltip.Content>{copied ? 'Copied' : 'Copy'}</Tooltip.Content>
       </Tooltip.Root>
+      <DropdownMenu.Root>
+        <DropdownMenu.Trigger disabled={forking}>
+          {#snippet child({ props })}
+            <Button
+              {...props}
+              variant="ghost"
+              size="icon-xs"
+              aria-label="Fork to new pane"
+              loading={forking}
+              class="text-muted-foreground hover:text-foreground"
+            >
+              <Icon name="fork" />
+            </Button>
+          {/snippet}
+        </DropdownMenu.Trigger>
+        <DropdownMenu.Content align="start" class="w-52">
+          <DropdownMenu.Label>Fork to new pane</DropdownMenu.Label>
+          {#each preferences.enabledProviders as provider (provider)}
+            <DropdownMenu.Item onclick={() => forkTo(provider)}>
+              <Icon name={provider} />
+              {PROVIDER_LABELS[provider]}
+            </DropdownMenu.Item>
+          {/each}
+        </DropdownMenu.Content>
+      </DropdownMenu.Root>
     </div>
   {/if}
 {/if}

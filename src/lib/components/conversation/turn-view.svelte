@@ -9,10 +9,13 @@
 
   let {
     messages,
+    paneId,
     expanded,
   }: {
     /** A prompt (with its attachments) followed by the assistant's replies. */
     messages: ConversationMessage[];
+    /** The pane the turn belongs to, so its last reply can be forked into a new one. */
+    paneId: string;
     /** Keeps the turn as it streamed, rather than folding its work away. */
     expanded: boolean;
   } = $props();
@@ -56,7 +59,7 @@
 
 {#snippet entry(message: ConversationMessage)}
   {#if message.kind === 'text' || message.kind === 'error' || message.kind === 'capacity'}
-    <TextView {message} isLastReply={message.id === lastReplyId} />
+    <TextView {message} {paneId} isLastReply={message.id === lastReplyId} />
   {:else if message.kind === 'thinking'}
     <!-- Thinking without text (e.g. redacted) has nothing to expand. -->
     {#if message.text || message.status === 'streaming'}

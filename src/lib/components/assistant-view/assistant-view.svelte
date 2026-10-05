@@ -13,6 +13,7 @@
   import ModelPicker from './model-picker.svelte';
   import QueuedPrompts from './queued-prompts.svelte';
   import { DEFAULT_CONTEXT_WINDOWS } from '$lib/models';
+  import { forkSeeds } from '$lib/stores/fork.svelte';
   import { catalog } from '$lib/stores/models.svelte';
   import { preferences } from '$lib/stores/preferences.svelte';
   import {
@@ -45,6 +46,7 @@
     pane,
     provider,
     dragHandle,
+    size,
     onclose,
     onresize,
     onrename,
@@ -348,6 +350,15 @@
       .catch(() => {});
     return stop;
   });
+
+  // A pane opened by forking another's conversation starts with its summary attached.
+  $effect(() => {
+    if (!composer) return;
+    const seed = forkSeeds.get(pane.id);
+    if (!seed) return;
+    forkSeeds.delete(pane.id);
+    composer.seed(seed);
+  });
 </script>
 
 <!-- Dropping files anywhere on the pane attaches them. -->
@@ -381,6 +392,7 @@
       {badge}
       menuLabel="Conversation options"
       {dragHandle}
+      {size}
       {onresize}
       {onclose}
       {onrename}
@@ -403,7 +415,11 @@
           class="@container mx-auto flex w-full max-w-3xl flex-1 flex-col gap-6"
         >
           {#each turns.slice(0, -1) as turn (turn[0].id)}
-            <TurnView messages={turn} expanded={!!watched[turn[0].id]} />
+            <TurnView
+              messages={turn}
+              paneId={pane.id}
+              expanded={!!watched[turn[0].id]}
+            />
           {/each}
           {#if messages.length}
             <!-- The latest turn fills the feed so a new prompt can sit at the top. -->
@@ -415,6 +431,7 @@
               <div bind:this={latestContent} class="flex flex-col gap-6">
                 <TurnView
                   messages={lastTurn}
+                  paneId={pane.id}
                   expanded={!!watched[lastTurn[0].id]}
                 />
                 {#if running && !assistantStarted && !requests.length}

@@ -583,6 +583,16 @@ export type PanesClosedEvent = {
   reason: 'merged';
 };
 
+/** What the dictation helper reports while it listens; `session` is the id `start` returned. */
+export type DictationEvent = { session: string } & (
+  | { type: 'ready' }
+  /** Everything heard so far; earlier words may be revised as recognition firms up. */
+  | { type: 'result'; text: string }
+  | { type: 'level'; level: number }
+  | { type: 'error'; error: string }
+  | { type: 'end' }
+);
+
 /** IPC argument schemas, keyed by `group.method`. Every channel is validated in main. */
 export const requests = {
   'state.get': z.tuple([]),
@@ -623,6 +633,7 @@ export const requests = {
   'connections.chooseIdentity': z.tuple([]),
   'connections.browse': z.tuple([id, filePath.optional()]),
   'panes.add': z.tuple([paneType.optional(), z.boolean().optional()]),
+  'panes.fork': z.tuple([id, z.string().min(1).max(200), assistantProvider]),
   'panes.archive': z.tuple([id]),
   'panes.reorder': z.tuple([z.array(id).max(100)]),
   'panes.rename': z.tuple([id, z.string().trim().min(1).max(200)]),
@@ -654,6 +665,9 @@ export const requests = {
   'navigation.help': z.tuple([]),
   'app.isFullscreen': z.tuple([]),
   'app.copyText': z.tuple([z.string().max(1_048_576)]),
+  'dictation.available': z.tuple([]),
+  'dictation.start': z.tuple([z.string().max(64)]),
+  'dictation.stop': z.tuple([id]),
   'scripts.list': z.tuple([id]),
   'scripts.detect': z.tuple([id]),
   'scripts.save': z.tuple([id, runScriptInput]),
@@ -695,6 +709,7 @@ export const events = {
   panesClosed: 'panes:closed',
   githubSignInEnd: 'github:sign-in-end',
   scriptRun: 'scripts:run',
+  dictationEvent: 'dictation:event',
 } as const;
 
 type Unsubscribe = () => void;
@@ -786,6 +801,15 @@ export type API = {
      * With `other`, the agent is the enabled provider that new panes don't start with.
      */
     add(type?: PaneType, other?: boolean): Promise<Pane>;
+    /**
+     * Summarizes the conversation up to `messageId` and opens a new pane with `provider`,
+     * the summary attached so the user can continue the work with a different agent.
+     */
+    fork(
+      paneId: string,
+      messageId: string,
+      provider: AssistantProvider,
+    ): Promise<{ pane: Pane; attachment: Attachment }>;
     onClosed(listener: (event: PanesClosedEvent) => void): Unsubscribe;
     archive(id: string): Promise<void>;
     /** Reorders the given panes among the layout slots they already occupy. */
@@ -836,6 +860,18 @@ export type API = {
     onFocusPane(listener: (paneId: string) => void): Unsubscribe;
     /** The OS refused a notification; carries the app name to allow in its settings. */
     onNotificationsBlocked(listener: (appName: string) => void): Unsubscribe;
+  };
+  dictation: {
+    /** Whether this computer can dictate (macOS, with the helper built). */
+    available(): Promise<boolean>;
+    /**
+     * Starts listening in the given language (BCP 47; empty for the system's) and resolves
+     * with the session id its events carry. Starting again ends the previous session.
+     */
+    start(language: string): Promise<string>;
+    /** Stops listening; the last words and an `end` event follow shortly. */
+    stop(session: string): Promise<void>;
+    onEvent(listener: (event: DictationEvent) => void): Unsubscribe;
   };
   scripts: {
     /** The project's run scripts; the first time, those detected from its files. */

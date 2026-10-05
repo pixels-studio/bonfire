@@ -10,6 +10,8 @@ export type PaneSize = 'full' | 'half' | 'third';
 export type PaneProps = {
   /** Spread on the pane's grip so it can be dragged, or moved with the arrow keys. */
   dragHandle: HTMLButtonAttributes;
+  /** The pane's current size, so its size menu can leave it out of the list of sizes to switch to. */
+  size: PaneSize;
   onresize: (size: PaneSize) => void;
   onclose: () => void;
   onrename: (title: string) => void;

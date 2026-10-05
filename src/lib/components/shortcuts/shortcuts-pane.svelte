@@ -15,7 +15,7 @@
   import { isMac } from '$lib/utils';
   import ShortcutKeys from './shortcut-keys.svelte';
 
-  let { dragHandle, onresize, onclose }: PanelProps = $props();
+  let { dragHandle, size, onresize, onclose }: PanelProps = $props();
 
   let query = $state('');
   let search = $state<HTMLInputElement | null>(null);
@@ -53,6 +53,7 @@
     title="Keyboard shortcuts"
     icon="keyboard"
     {dragHandle}
+    {size}
     {onresize}
     {onclose}
   />
@@ -76,7 +77,10 @@
       />
     </div>
   </div>
-  <div {@attach overlayScrollbar} class="min-h-0 flex-1 overflow-y-auto px-4 pb-6">
+  <div
+    {@attach overlayScrollbar}
+    class="min-h-0 flex-1 overflow-y-auto px-4 pb-6"
+  >
     {#each groups as { group, ids } (group)}
       <section class="not-first:mt-12" aria-label={group}>
         <h3 class="mb-1 text-sm text-muted-foreground">{group}</h3>
