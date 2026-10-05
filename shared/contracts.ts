@@ -19,7 +19,16 @@ export const reasoningEffort = z.enum([
 export const conversationMessageSchema = z.object({
   id: z.string(),
   role: z.enum(['user', 'assistant']),
-  kind: z.enum(['text', 'thinking', 'tool', 'attachment', 'error', 'notice']),
+  kind: z.enum([
+    'text',
+    'thinking',
+    'tool',
+    'attachment',
+    'error',
+    /** Like `error`, but the provider reported its model was overloaded or rate-limited. */
+    'capacity',
+    'notice',
+  ]),
   text: z.string(),
   status: z.enum(['streaming', 'complete', 'failed']).default('complete'),
   size: z.number().int().nonnegative().optional(),

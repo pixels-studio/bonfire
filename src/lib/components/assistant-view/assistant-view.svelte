@@ -7,6 +7,7 @@
   import RequestView from '../conversation/request-view.svelte';
   import TurnView from '../conversation/turn-view.svelte';
   import PaneHeader from '$lib/components/pane-header/pane-header.svelte';
+  import CapacityRetry from './capacity-retry.svelte';
   import Composer from './composer.svelte';
   import ContextUsage from './context-usage.svelte';
   import ModelPicker from './model-picker.svelte';
@@ -68,6 +69,9 @@
   /** Spoken to screen readers in place of the streaming text, which would be read out token by token. */
   let announcement = $state('');
   let error = $state('');
+  /** The prompt behind the turn most recently sent, so a capacity error can resend it. */
+  let lastSend = $state<{ text: string; skills: string[] }>();
+  let capacityError = $state<{ id: string; text: string }>();
   let feed = $state<HTMLDivElement>();
   let composer = $state<ReturnType<typeof Composer>>();
   let dragging = $state(false);
@@ -179,6 +183,8 @@
     switch (event.type) {
       case 'message':
         upsertMessage(event.message);
+        if (event.message.kind === 'capacity')
+          capacityError = { id: event.message.id, text: event.message.text };
         break;
       case 'delta':
         appendDelta(event.id, event.field, event.text);
@@ -279,6 +285,8 @@
       return;
     }
     error = '';
+    capacityError = undefined;
+    lastSend = { text, skills };
     running = true;
     following = true;
     if (title === DEFAULT_TITLE)
@@ -291,6 +299,12 @@
       running = false;
       throw cause;
     }
+  }
+
+  /** Resends the prompt behind a capacity error, dropping any attachments it had. */
+  function retryCapacity() {
+    if (!lastSend) return;
+    void send(lastSend.text, [], lastSend.skills).catch(() => {});
   }
 
   async function runQueued(action: 'sendQueued' | 'unqueue', id: string) {
@@ -461,6 +475,16 @@
             onsend={(id) => runQueued('sendQueued', id)}
             onremove={(id) => runQueued('unqueue', id)}
           />
+        {/if}
+        {#if capacityError}
+          <div class="pb-3">
+            {#key capacityError.id}
+              <CapacityRetry
+                message={capacityError.text}
+                onretry={retryCapacity}
+              />
+            {/key}
+          </div>
         {/if}
         <Composer
           bind:this={composer}

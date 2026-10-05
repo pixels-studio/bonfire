@@ -11,7 +11,7 @@
   >
     {message.text}
   </p>
-{:else if message.kind === 'error'}
+{:else if message.kind === 'error' || message.kind === 'capacity'}
   <p class="text-sm whitespace-pre-wrap text-destructive wrap-anywhere">
     {message.text}
   </p>

@@ -276,6 +276,14 @@ async function runTurn(threadId, turnId, text, params) {
     });
     notify('error', { threadId, turnId, willRetry: false, error: { message } });
     complete(threadId, turnId, 'failed', { message });
+  } else if (text.startsWith('capacity')) {
+    const message = JSON.stringify({
+      type: 'error',
+      status: 429,
+      error: { message: 'The selected model is at capacity. Please try again.' },
+    });
+    notify('error', { threadId, turnId, willRetry: false, error: { message } });
+    complete(threadId, turnId, 'failed', { message });
   } else if (text.startsWith('retry')) {
     notify('error', {
       threadId,
