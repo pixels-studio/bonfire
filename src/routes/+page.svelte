@@ -4,7 +4,6 @@
   import * as Card from '$lib/components/ui/card';
   import ActivityPane from '$lib/components/activity/activity-pane.svelte';
   import AppHeader from '$lib/components/app-header/app-header.svelte';
-  import AuroraGlow from '$lib/components/aurora-glow/aurora-glow.svelte';
   import AppRail, {
     type AppPanel,
   } from '$lib/components/app-rail/app-rail.svelte';
@@ -31,6 +30,7 @@
   import { PaneStatuses, paneBadge } from '$lib/pane-status.svelte';
   import { playCompletionSound } from '$lib/sounds';
   import { branch } from '$lib/stores/branch.svelte';
+  import { cliVersions } from '$lib/stores/cli-versions.svelte';
   import { preferences } from '$lib/stores/preferences.svelte';
   import { pullRequest } from '$lib/stores/pull-request.svelte';
   import { scripts } from '$lib/stores/scripts.svelte';
@@ -716,16 +716,15 @@
     onboarding = false;
   }
 
-  /** The agents that start a project: Claude and Codex when both are connected, else two of the one. */
+  /** The agent that starts a project: Claude when connected, else whichever provider is. */
   function startingAgents(): AssistantProvider[] {
     const ready = PROVIDERS.filter(
       (provider) =>
         accounts[provider]?.signedIn &&
         workspace.preferences?.providers?.[provider] !== false,
     );
-    if (ready.length >= 2) return ['claude', 'codex'];
-    if (ready.length === 1) return [ready[0], ready[0]];
-    return [];
+    if (!ready.length) return [];
+    return [ready.includes('claude') ? 'claude' : ready[0]];
   }
 
   /** Whether starting panes are being opened; a failed attempt isn't retried until the project changes. */
@@ -762,6 +761,15 @@
     void openStartingPanes();
   });
 
+  // The open project's machine runs its own agent CLIs, so they're checked as projects change.
+  $effect(() => {
+    if (!loaded) return;
+    void projectId;
+    void preferences.current.providers.claude;
+    void preferences.current.providers.codex;
+    void cliVersions.refresh();
+  });
+
   onMount(async () => {
     if (!window.bonfire) {
       showError('Launch Bonfire with npm start or npm run dev.');
@@ -781,7 +789,11 @@
 </script>
 
 <svelte:head><title>Bonfire</title></svelte:head>
-<svelte:window onkeydowncapture={handleKeydown} />
+<!-- The CLIs update themselves in the background; the backend's cached answer keeps focus cheap. -->
+<svelte:window
+  onkeydowncapture={handleKeydown}
+  onfocus={() => loaded && void cliVersions.refresh()}
+/>
 
 {#snippet placeholder()}
   {#if !workspace.projects.length}
@@ -843,11 +855,6 @@
   />
 {:else}
   <div class="flex h-screen">
-    <!-- Glows along the top of the window while an agent carries out a pull request action. -->
-    <AuroraGlow
-      active={!!pullRequest.running}
-      class="fixed inset-x-0 top-0 z-30 h-40"
-    />
     <AppRail
       {panels}
       ontogglePanel={togglePanel}

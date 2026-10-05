@@ -48,9 +48,10 @@
   import ShortcutKeys from '$lib/components/shortcuts/shortcut-keys.svelte';
   import { TOOL_PANES } from '$lib/panes';
   import type { ShortcutId } from '$lib/shortcuts';
+  import { cliVersions } from '$lib/stores/cli-versions.svelte';
   import { preferences } from '$lib/stores/preferences.svelte';
   import { cn } from '$lib/utils';
-  import { PROVIDER_LABELS } from '$shared/domain';
+  import { CLI_NAMES, PROVIDER_LABELS } from '$shared/domain';
   import type { AssistantProvider, PaneType } from '$shared/contracts';
 
   const DOT_STYLES: Record<PaneStatus, { slot: string; dot: string }> = {
@@ -127,6 +128,15 @@
 
   let logoHovered = $state(false);
   const working = $derived(panes.some(({ status }) => status === 'working'));
+
+  /** The CLIs the update button would update, such as `Claude Code and Codex`. */
+  const updateNames = $derived(
+    [
+      ...new Set(
+        cliVersions.outdated.map(({ provider }) => CLI_NAMES[provider]),
+      ),
+    ].join(' and '),
+  );
 
   const openPanels = $derived(
     panels.flatMap((panel) => PANELS.filter((item) => item.panel === panel)),
@@ -250,6 +260,9 @@
     </div>
   </div>
   <div class="flex flex-col items-center gap-3.5">
+    {#if cliVersions.outdated.length}
+      {@render updateButton()}
+    {/if}
     {#each PANELS as item (item.panel)}
       {@render panelButton(item)}
     {/each}
@@ -272,6 +285,40 @@
     </Tooltip.Root>
   </div>
 </nav>
+
+{#snippet updateButton()}
+  <Tooltip.Root>
+    <Tooltip.Trigger>
+      {#snippet child({ props })}
+        <Button
+          {...props}
+          size="icon"
+          aria-label={`Update ${updateNames}`}
+          loading={cliVersions.updating}
+          disabled={cliVersions.updating}
+          onclick={() => cliVersions.update()}
+        >
+          <Icon name="update" />
+        </Button>
+      {/snippet}
+    </Tooltip.Trigger>
+    <Tooltip.Content side="right">
+      <div class="flex flex-col gap-0.5">
+        <span>
+          {cliVersions.updating
+            ? `Updating ${updateNames}…`
+            : `Update ${updateNames} to use Bonfire`}
+        </span>
+        {#each cliVersions.outdated as version (`${version.provider}:${version.machineId}`)}
+          <span class="opacity-70">
+            {CLI_NAMES[version.provider]} on {version.machineName}: {version.installed},
+            needs {version.required}
+          </span>
+        {/each}
+      </div>
+    </Tooltip.Content>
+  </Tooltip.Root>
+{/snippet}
 
 {#snippet panelButton(item: PanelItem)}
   {@const open = panels.includes(item.panel)}

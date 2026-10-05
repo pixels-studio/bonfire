@@ -49,8 +49,10 @@ import {
   removeStalePastes,
   shrinkPreviews,
 } from './attachments';
-import { ClaudeAssistant } from './claude';
+import { ClaudeAssistant, claudeExecutable } from './claude';
+import { CliVersions, type CliTarget } from './cli-version';
 import { CodexAssistant } from './codex';
+import { codexProgram } from './codex-rpc';
 import { favicon } from './favicon';
 import { Filesystem } from './filesystem';
 import * as git from './git';
@@ -84,6 +86,8 @@ export type ServiceOptions = AssistantHost & {
   power: Power;
   /** Whether the window can be seen; work nobody would see waits until it can. */
   inView?: () => boolean;
+  /** Writes a line to the app's log file. */
+  log?: (message: string) => void;
 };
 
 export function services(options: ServiceOptions) {
@@ -99,6 +103,59 @@ export function services(options: ServiceOptions) {
   const attachments = new PendingAttachments();
   const machines = new Machines(() => store.state.connections);
   const machineOf = (project: Project) => machines.get(project.connectionId);
+  const cliVersions = new CliVersions(options.log ?? console.info);
+  /**
+   * Where a provider's CLI runs on a machine. This computer runs the app's bundled copy when
+   * it ships one, and the installed CLI otherwise; another machine runs its own.
+   */
+  const cliTarget = (
+    provider: AssistantProvider,
+    machineId: string,
+  ): CliTarget => {
+    const machine = machines.get(
+      machineId === localMachine.id ? undefined : machineId,
+    );
+    const name = machine.remote
+      ? (store.state.connections.find(({ id }) => id === machineId)?.name ??
+        machineId)
+      : 'This computer';
+    if (provider === 'claude')
+      return {
+        provider,
+        machine,
+        name,
+        file: machine.remote ? 'claude' : claudeExecutable(),
+        args: [],
+      };
+    const { file, args, env } = codexProgram(machine);
+    return {
+      provider,
+      machine,
+      name,
+      file,
+      args,
+      ...(env?.ELECTRON_RUN_AS_NODE && { env: { ELECTRON_RUN_AS_NODE: '1' } }),
+    };
+  };
+  /** Each enabled provider's, on this computer and on the open project's machine if another. */
+  const checkCliVersions = () => {
+    const ids = new Set([localMachine.id]);
+    const open = store.state.projects.find(
+      ({ id }) => id === store.state.lastProjectId,
+    );
+    if (open?.connectionId) ids.add(open.connectionId);
+    const providers = assistantProvider.options.filter(
+      (provider) => store.preferences.providers[provider],
+    );
+    return Promise.all(
+      providers.flatMap((provider) =>
+        [...ids].map((id) => cliVersions.check(cliTarget(provider, id))),
+      ),
+    );
+  };
+  // Logged at startup, so bonfire.log says which CLIs ran when something goes wrong.
+  for (const provider of assistantProvider.options)
+    void cliVersions.check(cliTarget(provider, localMachine.id));
   /** The project folder, on its machine. */
   const placeOf = (project: Project) =>
     machines.place(project.connectionId, project.path);
@@ -594,6 +651,9 @@ export function services(options: ServiceOptions) {
       connect: async (provider) => assistants[provider].connect(),
       cancelConnect: async (provider) => assistants[provider].cancelConnect(),
       outputStyles: async () => assistants.claude.outputStyles(),
+      cliVersions: async () => checkCliVersions(),
+      updateCli: async (provider, machineId) =>
+        cliVersions.update(cliTarget(provider, machineId)),
     },
     github: {
       status: async () => github.status(),

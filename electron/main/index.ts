@@ -357,6 +357,7 @@ app
         return { name: basename(path), path };
       },
       send,
+      log,
       openHelp: () => shell.openExternal(HELP_URL),
       openUrl: (url) => shell.openExternal(url),
       copyText: (text) => clipboard.writeText(text),

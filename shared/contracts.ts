@@ -320,6 +320,19 @@ export type ProviderAccount = {
   email?: string;
   plan?: string;
 };
+/** The CLI of a provider that a machine runs, against the version the app expects. */
+export type CliVersion = {
+  provider: AssistantProvider;
+  /** `local`, or the id of the SSH connection. */
+  machineId: string;
+  machineName: string;
+  /** Unset when the CLI isn't installed there or didn't answer. */
+  installed?: string;
+  /** Unset when the expected version couldn't be read. */
+  required?: string;
+  /** Older than `required`, so it may not do what the app asks or run the newest models. */
+  outdated: boolean;
+};
 export type GithubStatus =
   { installed: false } | { installed: true; login?: string };
 /** A repository the signed-in GitHub account can reach, for cloning. */
@@ -568,6 +581,11 @@ export const requests = {
   'providers.connect': z.tuple([assistantProvider]),
   'providers.cancelConnect': z.tuple([assistantProvider]),
   'providers.outputStyles': z.tuple([]),
+  'providers.cliVersions': z.tuple([]),
+  'providers.updateCli': z.tuple([
+    assistantProvider,
+    z.union([z.literal('local'), id]),
+  ]),
   'github.status': z.tuple([]),
   'github.connect': z.tuple([]),
   'github.cancelConnect': z.tuple([]),
@@ -683,6 +701,10 @@ export type API = {
     cancelConnect(provider: AssistantProvider): Promise<void>;
     /** Output styles Claude offers, built-in and the user's own. */
     outputStyles(): Promise<string[]>;
+    /** The enabled providers' CLI versions on this computer and on the open project's machine. */
+    cliVersions(): Promise<CliVersion[]>;
+    /** Updates a provider's CLI on a machine (`local` or a connection id); returns its new version. */
+    updateCli(provider: AssistantProvider, machineId: string): Promise<CliVersion>;
   };
   github: {
     status(): Promise<GithubStatus>;

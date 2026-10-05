@@ -2,6 +2,7 @@
   import { overlayScrollbar } from '$lib/scrollbar';
   import { onMount, tick, untrack } from 'svelte';
   import * as Card from '$lib/components/ui/card';
+  import { Button } from '$lib/components/ui/button';
   import Icon from '$lib/components/icon/icon.svelte';
   import RequestView from '../conversation/request-view.svelte';
   import TurnView from '../conversation/turn-view.svelte';
@@ -110,7 +111,7 @@
   let latest = $state<HTMLDivElement>();
   let latestContent = $state<HTMLDivElement>();
   /** Whether the feed is kept scrolled to the end as the reply grows; scrolling up lets go. */
-  let following = true;
+  let following = $state(true);
 
   /** The turns last worked out, whose unchanged arrays are handed out again. */
   let previousTurns: ConversationMessage[][] = [];
@@ -237,6 +238,11 @@
   function trackFollowing() {
     if (!feed) return;
     following = feed.scrollHeight - feed.scrollTop - feed.clientHeight < 40;
+  }
+
+  function scrollToBottom() {
+    following = true;
+    feed?.scrollTo({ top: feed.scrollHeight });
   }
 
   $effect(() => {
@@ -403,12 +409,6 @@
                     <span class="shimmer-text">Thinking</span>
                   </p>
                 {/if}
-                {#each requests as request (request.id)}
-                  <RequestView
-                    {request}
-                    onrespond={(response) => respond(request, response)}
-                  />
-                {/each}
                 {#if error}<p class="text-sm text-destructive" role="alert">
                     {error}
                   </p>{/if}
@@ -429,10 +429,31 @@
           {/if}
         </div>
       </div>
+      {#if !following && messages.length}
+        <Button
+          variant="secondary"
+          size="icon"
+          aria-label="Scroll to bottom"
+          onclick={scrollToBottom}
+          class="absolute bottom-4 left-1/2 -translate-x-1/2 shadow-md backdrop-blur-md"
+        >
+          <Icon name="chevron-down" />
+        </Button>
+      {/if}
     </div>
 
     <div class="shrink-0 px-4 pb-4">
       <div class="mx-auto max-w-3xl">
+        {#if requests.length}
+          <div class="flex flex-col gap-3 pb-3">
+            {#each requests as request (request.id)}
+              <RequestView
+                {request}
+                onrespond={(response) => respond(request, response)}
+              />
+            {/each}
+          </div>
+        {/if}
         {#if queue.length}
           <QueuedPrompts
             {queue}

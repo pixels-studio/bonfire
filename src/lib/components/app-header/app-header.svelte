@@ -73,6 +73,7 @@
     size="sm"
     class={cn(ACTION_BUTTON_CLASS, PUSH_BUTTON_CLASS)}
     disabled={disabled || !!pullRequest.running}
+    loading={pullRequest.running === 'push'}
     title="Have an agent commit the changes and push them to the remote"
     onclick={() => void pullRequest.run('push')}
   >
