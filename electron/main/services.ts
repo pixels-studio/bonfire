@@ -53,7 +53,9 @@ import { ClaudeAssistant, claudeExecutable } from './claude';
 import { CliVersions, type CliTarget } from './cli-version';
 import { CodexAssistant } from './codex';
 import { codexProgram } from './codex-rpc';
+import { Dictation } from './dictation';
 import { favicon } from './favicon';
+import { forkSummaryPrompt } from './fork-summary';
 import { Filesystem } from './filesystem';
 import * as git from './git';
 import { GitHub } from './github';
@@ -88,6 +90,8 @@ export type ServiceOptions = AssistantHost & {
   inView?: () => boolean;
   /** Writes a line to the app's log file. */
   log?: (message: string) => void;
+  /** The native dictation helper, where it was built. */
+  dictation?: { program: string; disclaim: boolean };
 };
 
 export function services(options: ServiceOptions) {
@@ -192,6 +196,12 @@ export function services(options: ServiceOptions) {
     addPane: (project) => addPane('terminal', project),
     archivePane,
     emit: (run) => options.send(events.scriptRun, run),
+  });
+  const dictation = new Dictation({
+    program: options.dictation?.program,
+    disclaim: options.dictation?.disclaim ?? false,
+    emit: (event) => options.send(events.dictationEvent, event),
+    log: options.log,
   });
   const notifier = new TurnNotifier(store, options.notify);
   const keepAwake = new KeepAwake(
@@ -762,6 +772,33 @@ export function services(options: ServiceOptions) {
         store.save();
         return pane;
       },
+      fork: async (paneId, messageId, provider) => {
+        requireEnabled(provider);
+        const pane = store.pane(paneId);
+        if (!pane.projectId) throw Error('Select a project first.');
+        const index = pane.messages.findIndex(
+          (message) => message.id === messageId,
+        );
+        if (index === -1) throw Error('That reply is no longer available.');
+        const { provider: textProvider, model: textModel } =
+          store.preferences.textModel;
+        requireEnabled(textProvider);
+        const summary = (
+          await assistants[textProvider].generate(
+            forkSummaryPrompt(pane.messages.slice(0, index + 1)),
+            textModel,
+          )
+        ).trim();
+        if (!summary) throw Error('Could not summarize this conversation.');
+        const forked = addPane(provider, store.project(pane.projectId));
+        const attachment = attachments.addText(
+          forked.id,
+          summary,
+          `Summary from ${pane.title}`,
+        );
+        store.save();
+        return { pane: forked, attachment };
+      },
       archive: async (id) => {
         archivePane(store.pane(id));
         store.save();
@@ -809,6 +846,11 @@ export function services(options: ServiceOptions) {
     app: {
       isFullscreen: async () => options.isFullscreen(),
       copyText: async (text) => options.copyText(text),
+    },
+    dictation: {
+      available: async () => dictation.available(),
+      start: async (language) => dictation.start(language),
+      stop: async (session) => dictation.stop(session),
     },
     scripts: {
       list: async (projectId) => scripts.list(projectId),
@@ -878,6 +920,7 @@ export function services(options: ServiceOptions) {
     close: async () => {
       notifier.close();
       keepAwake.close();
+      dictation.close();
       mergeWatcher.close();
       github.close();
       terminals.close();

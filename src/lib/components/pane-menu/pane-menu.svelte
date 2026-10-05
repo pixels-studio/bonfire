@@ -7,14 +7,17 @@
 
   let {
     label,
+    size,
     onresize,
-    onclose,
   }: {
     /** What the trigger is announced as, e.g. "Terminal options". */
     label: string;
+    /** The pane's current size, left out of the list of sizes to switch to. */
+    size: PaneSize;
     onresize: (size: PaneSize) => void;
-    onclose: () => void;
   } = $props();
+
+  const otherSizes = $derived(PANE_SIZES.filter((item) => item.value !== size));
 </script>
 
 <DropdownMenu.Root>
@@ -31,21 +34,16 @@
       </Button>
     {/snippet}
   </DropdownMenu.Trigger>
-  <DropdownMenu.Content align="end" class="w-56">
+  <DropdownMenu.Content align="end" class="w-48">
     <DropdownMenu.Label class="flex items-center justify-between">
       Pane size
       <ShortcutKeys id="resizePane" />
     </DropdownMenu.Label>
-    {#each PANE_SIZES as size (size.value)}
-      <DropdownMenu.Item onclick={() => onresize(size.value)}>
-        <Icon name={size.icon} />
-        {size.label}
+    {#each otherSizes as option (option.value)}
+      <DropdownMenu.Item onclick={() => onresize(option.value)}>
+        <Icon name={option.icon} />
+        {option.label}
       </DropdownMenu.Item>
     {/each}
-    <DropdownMenu.Separator />
-    <DropdownMenu.Item variant="destructive" onclick={onclose}>
-      <Icon name="close" /> Close
-      <ShortcutKeys id="closePane" class="ml-auto" />
-    </DropdownMenu.Item>
   </DropdownMenu.Content>
 </DropdownMenu.Root>

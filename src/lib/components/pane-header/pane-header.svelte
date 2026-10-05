@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { Snippet } from 'svelte';
   import type { HTMLButtonAttributes } from 'svelte/elements';
+  import { Button } from '$lib/components/ui/button';
   import Icon from '$lib/components/icon/icon.svelte';
   import PaneMenu from '$lib/components/pane-menu/pane-menu.svelte';
   import type { PaneSize } from '$lib/panes';
@@ -29,6 +30,7 @@
     dragHandle,
     actions,
     onrename,
+    size,
     onresize,
     onclose,
   }: {
@@ -47,6 +49,7 @@
     actions?: Snippet;
     /** Lets the title be renamed by double-clicking it; fixed titles have none. */
     onrename?: (title: string) => void;
+    size: PaneSize;
     onresize: (size: PaneSize) => void;
     onclose: () => void;
   } = $props();
@@ -176,6 +179,15 @@
   </div>
   <div class="flex shrink-0 items-center gap-2">
     {@render actions?.()}
-    <PaneMenu {label} {onresize} {onclose} />
+    <PaneMenu {label} {size} {onresize} />
+    <Button
+      variant="secondary"
+      size="icon"
+      class="shrink-0 text-muted-foreground hover:text-foreground"
+      aria-label={`Close ${title}`}
+      onclick={onclose}
+    >
+      <Icon name="close" />
+    </Button>
   </div>
 </header>

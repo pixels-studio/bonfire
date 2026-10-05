@@ -6,10 +6,11 @@ import type { NativeImage } from 'electron';
 import type { Attachment, ConversationMessage } from '../../shared/contracts';
 
 /**
- * The side, in pixels, of the square preview kept for an image. Chips draw it at 16px, so
- * this stays sharp at 4x while weighing a few kilobytes instead of the whole image.
+ * The longer side, in pixels, of the preview kept for an image. Its chip crops it to a
+ * 16px square with CSS; a hover hands the same preview to the full image, uncropped, so
+ * this is sized for that larger use rather than the chip.
  */
-const PREVIEW_SIZE = 64;
+const PREVIEW_MAX_SIZE = 480;
 /** Images the preview can't be made from are kept as they are only up to this size. */
 const MAX_RAW_PREVIEW_BYTES = 128_000;
 
@@ -36,27 +37,20 @@ export async function readImage(path: string) {
   };
 }
 
-/** A centred square of the image, scaled down to the preview size, as a PNG data URL. */
-function squarePreview(image: NativeImage) {
+/** The image scaled down to fit within the preview size, kept at its own aspect ratio. */
+function scaledPreview(image: NativeImage) {
   if (image.isEmpty()) return undefined;
   const { width, height } = image.getSize();
-  const side = Math.min(width, height);
-  const square = image.crop({
-    x: Math.floor((width - side) / 2),
-    y: Math.floor((height - side) / 2),
-    width: side,
-    height: side,
-  });
-  const size = Math.min(side, PREVIEW_SIZE);
-  return square
-    .resize({ width: size, height: size, quality: 'good' })
-    .toDataURL();
+  if (Math.max(width, height) <= PREVIEW_MAX_SIZE) return image.toDataURL();
+  // Only the longer side is given, so Electron scales the other to match it.
+  const long = width >= height ? 'width' : 'height';
+  return image.resize({ [long]: PREVIEW_MAX_SIZE, quality: 'good' }).toDataURL();
 }
 
 /**
- * A small preview of an image for its chip. PNG and JPEG are scaled directly; other formats
- * go through the system's thumbnailer when the file is at hand, and are otherwise kept
- * whole if small, or left without a preview.
+ * A preview of an image, for its chip and the larger view hovering it shows. PNG and JPEG
+ * are scaled directly; other formats go through the system's thumbnailer when the file is
+ * at hand, and are otherwise kept whole if small, or left without a preview.
  */
 export async function imagePreview(
   data: Buffer,
@@ -65,14 +59,14 @@ export async function imagePreview(
 ): Promise<string | undefined> {
   // Loaded on use, so code that never handles an image runs outside Electron, as in tests.
   const { nativeImage } = await import('electron');
-  const preview = squarePreview(nativeImage.createFromBuffer(data));
+  const preview = scaledPreview(nativeImage.createFromBuffer(data));
   if (preview) return preview;
   if (path && process.platform !== 'linux') {
-    const size = { width: PREVIEW_SIZE, height: PREVIEW_SIZE };
+    const size = { width: PREVIEW_MAX_SIZE, height: PREVIEW_MAX_SIZE };
     const thumbnail = await nativeImage
       .createThumbnailFromPath(path, size)
       .catch(() => undefined);
-    const fromThumbnail = thumbnail && squarePreview(thumbnail);
+    const fromThumbnail = thumbnail && scaledPreview(thumbnail);
     if (fromThumbnail) return fromThumbnail;
   }
   return data.byteLength <= MAX_RAW_PREVIEW_BYTES
@@ -161,10 +155,10 @@ export class PendingAttachments {
   }
 
   /** Holds pasted text as an attachment, so a long paste doesn't flood the message. */
-  addText(paneId: string, text: string): Attachment {
+  addText(paneId: string, text: string, name = PASTED_TEXT_NAME): Attachment {
     const attachment = {
       id: randomUUID(),
-      name: PASTED_TEXT_NAME,
+      name,
       size: Buffer.byteLength(text),
     };
     this.items.set(attachment.id, {

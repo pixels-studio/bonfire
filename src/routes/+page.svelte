@@ -31,6 +31,7 @@
   import { playCompletionSound } from '$lib/sounds';
   import { branch } from '$lib/stores/branch.svelte';
   import { cliVersions } from '$lib/stores/cli-versions.svelte';
+  import { fork } from '$lib/stores/fork.svelte';
   import { preferences } from '$lib/stores/preferences.svelte';
   import { pullRequest } from '$lib/stores/pull-request.svelte';
   import { scripts } from '$lib/stores/scripts.svelte';
@@ -226,7 +227,12 @@
   }
 
   /** The size of anything in the strip that hasn't been resized. */
-  const autoSizeClass = $derived(sizeClass(defaultPaneSize(stripCount)));
+  const autoSize = $derived(defaultPaneSize(stripCount));
+  const autoSizeClass = $derived(sizeClass(autoSize));
+
+  function paneSize(id: string): PaneSize {
+    return sizeOverrides[id] ?? autoSize;
+  }
 
   function paneSizeClass(pane: Pane) {
     return sizeOverrides[pane.id]
@@ -368,6 +374,7 @@
   function panelProps(panel: AppPanel) {
     return {
       dragHandle: gripOf(panel),
+      size: paneSize(panel),
       onclose: () => togglePanel(panel),
       onresize: (size: PaneSize) => (sizeOverrides[panel] = size),
     };
@@ -433,6 +440,17 @@
       void focusPane(paneId);
     };
     return () => (pullRequest.onAgentPane = undefined);
+  });
+
+  // A fork opens its summary in a new pane, which is brought on screen.
+  $effect(() => {
+    fork.onForked = async (paneId) => {
+      await refresh();
+      await tick();
+      paneStrip?.scrollTo({ left: 0, behavior: scrollBehavior() });
+      void focusPane(paneId);
+    };
+    return () => (fork.onForked = undefined);
   });
 
   // Closing the agent's pane ends the action it was carrying out.
@@ -970,6 +988,7 @@
                       projectId={project!.id}
                       badge={paneBadge(statuses.get(pane.id))}
                       dragHandle={gripOf(pane.id)}
+                      size={paneSize(pane.id)}
                       onclose={() =>
                         runAction(() => window.bonfire.panes.archive(pane.id))}
                       onresize={(size) => (sizeOverrides[pane.id] = size)}
@@ -1002,6 +1021,7 @@
                 >
                   <PullRequestView
                     projectId={project.id}
+                    size={pullRequestSize ?? autoSize}
                     onresize={(size) => (pullRequestSize = size)}
                     onclose={() => (pullRequestOpen = false)}
                   />

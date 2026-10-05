@@ -27,5 +27,6 @@ api.app.onNotificationsBlocked = subscribe(events.notificationsBlocked);
 api.panes.onClosed = subscribe(events.panesClosed);
 api.github.onSignInEnd = subscribe(events.githubSignInEnd);
 api.scripts.onRun = subscribe(events.scriptRun);
+api.dictation.onEvent = subscribe(events.dictationEvent);
 
 contextBridge.exposeInMainWorld('bonfire', api as unknown as API);

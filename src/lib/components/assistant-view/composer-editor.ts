@@ -44,7 +44,7 @@ const AttachmentNode = Node.create({
   },
 
   addNodeView() {
-    return ({ node }) => {
+    return ({ node, editor, getPos }) => {
       const dom = document.createElement('span');
       dom.contentEditable = 'false';
       dom.className = 'composer-attachment';
@@ -53,6 +53,11 @@ const AttachmentNode = Node.create({
         props: {
           name: node.attrs.name,
           previewUrl: node.attrs.previewUrl ?? undefined,
+          onremove: () => {
+            const pos = getPos();
+            if (pos === undefined) return;
+            editor.commands.deleteRange({ from: pos, to: pos + node.nodeSize });
+          },
         },
       });
       return {

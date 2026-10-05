@@ -17,6 +17,7 @@
   let {
     tab = $bindable('tokens'),
     dragHandle,
+    size,
     onresize,
     onclose,
   }: { tab?: string } & PanelProps = $props();
@@ -29,6 +30,7 @@
     title="Insights"
     icon="insights"
     {dragHandle}
+    {size}
     {onresize}
     {onclose}
   >

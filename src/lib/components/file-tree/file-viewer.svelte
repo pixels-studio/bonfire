@@ -4,6 +4,7 @@
   import { fly } from 'svelte/transition';
   import ChevronDown from '@lucide/svelte/icons/chevron-down';
   import { Button } from '$lib/components/ui/button';
+  import Icon from '$lib/components/icon/icon.svelte';
   import PaneMenu from '$lib/components/pane-menu/pane-menu.svelte';
   import type { PaneSize } from '$lib/panes';
   import { watchFiles } from '$lib/file-watch';
@@ -15,6 +16,7 @@
     projectId,
     path,
     onclose,
+    size,
     onresize,
     onclosepanel,
   }: {
@@ -22,6 +24,8 @@
     path: string;
     /** Closes the file, back to the tree. */
     onclose: () => void;
+    /** The panel's current size, left out of the pane menu's list of sizes to switch to. */
+    size: PaneSize;
     onresize: (size: PaneSize) => void;
     /** Closes the whole panel. */
     onclosepanel: () => void;
@@ -107,10 +111,22 @@
       >
         <ChevronDown />
       </Button>
-      <PaneMenu label="Files options" {onresize} onclose={onclosepanel} />
+      <PaneMenu label="Files options" {size} {onresize} />
+      <Button
+        variant="secondary"
+        size="icon"
+        class="shrink-0 text-muted-foreground hover:text-foreground"
+        aria-label="Close Files"
+        onclick={onclosepanel}
+      >
+        <Icon name="close" />
+      </Button>
     </div>
   </header>
-  <div {@attach overlayScrollbar} class="min-h-0 flex-1 overflow-x-hidden overflow-y-auto pb-3">
+  <div
+    {@attach overlayScrollbar}
+    class="min-h-0 flex-1 overflow-x-hidden overflow-y-auto pb-3"
+  >
     {#if error}
       <p class="px-4 text-sm text-muted-foreground">{error}</p>
     {:else if content !== undefined}

@@ -59,11 +59,11 @@
 <Popover.Root bind:open>
   <Popover.Trigger
     aria-label="Select model and thinking effort"
-    class="flex items-center gap-2 rounded-md text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+    class="flex min-w-0 items-center gap-2 rounded-md text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
   >
-    <span>{selected?.label ?? 'Default'}</span>
-    <span class="text-muted-foreground">{effortLabel}</span>
-    <ChevronDown class="-ml-0.5 size-3.5 text-muted-foreground" />
+    <span class="min-w-0 truncate">{selected?.label ?? 'Default'}</span>
+    <span class="shrink-0 text-muted-foreground">{effortLabel}</span>
+    <ChevronDown class="-ml-0.5 size-3.5 shrink-0 text-muted-foreground" />
   </Popover.Trigger>
   <Popover.Content class="w-72 gap-0 p-1" align="start" side="top">
     <div

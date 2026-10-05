@@ -73,12 +73,14 @@ set('CFBundleVersion', pkg.version);
 // wording to show for a request, and the window denies every permission anyway.
 for (const key of [
   'NSCameraUsageDescription',
-  'NSMicrophoneUsageDescription',
   'NSAudioCaptureUsageDescription',
   'NSBluetoothAlwaysUsageDescription',
   'NSBluetoothPeripheralUsageDescription',
 ])
   spawnSync('plutil', ['-remove', key, plist], { stdio: 'ignore' });
+// The dictation helper listens through the app, so the app carries the wording macOS shows.
+set('NSMicrophoneUsageDescription', 'Bonfire listens to the microphone while you dictate a message.');
+set('NSSpeechRecognitionUsageDescription', 'Bonfire turns what you dictate into text.');
 // Agents work in the projects opened here, which may sit in a protected folder.
 const projectAccess =
   'Bonfire and the coding agents it runs read and edit the projects you open in it.';

@@ -12,6 +12,7 @@
     scriptId,
     title,
     dragHandle,
+    size,
     onresize,
     onclose,
     onrename,
@@ -66,6 +67,7 @@
     icon={toolPaneIcon('terminal')}
     actions={scriptId ? scriptActions : undefined}
     {dragHandle}
+    {size}
     {onresize}
     {onclose}
     {onrename}

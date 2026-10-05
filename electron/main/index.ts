@@ -358,6 +358,10 @@ app
       },
       send,
       log,
+      dictation: {
+        program: resolve(__dirname, '../bin/bonfire-dictation'),
+        disclaim: !app.isPackaged,
+      },
       openHelp: () => shell.openExternal(HELP_URL),
       openUrl: (url) => shell.openExternal(url),
       copyText: (text) => clipboard.writeText(text),
