@@ -237,13 +237,7 @@
                 onclick={() => onselectPane(pane.id)}
               >
                 <span class="grid size-6 shrink-0 place-content-center">
-                  <span
-                    class={cn(
-                      DOT_CLASS,
-                      style.dot,
-                      pane.status === 'working' && 'dot-working',
-                    )}
-                  ></span>
+                  <span class={cn(DOT_CLASS, style.dot)}></span>
                 </span>
                 <!-- Finished turns awaiting review stand out, like unread mail. -->
                 <span
