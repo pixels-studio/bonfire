@@ -4,8 +4,13 @@
   import Icon from '$lib/components/icon/icon.svelte';
   import { shortcutText } from '$lib/shortcuts';
   import { pullRequest } from '$lib/stores/pull-request.svelte';
+  import { TOOL_PANES } from '$lib/panes';
   import { cn, isMac } from '$lib/utils';
-  import { ACTION_LABELS } from '$shared/domain';
+  import {
+    ACTION_LABELS,
+    VIEW_PANE_TYPES,
+    type ViewPaneType,
+  } from '$shared/domain';
   import RunButton from './run-button.svelte';
 
   let {
@@ -15,7 +20,13 @@
     trafficLightInset = false,
     paneCount = 0,
     onclosePanes,
+    openViews = [],
+    ontoggleView,
   }: {
+    /** The view panes open in the strip, whose toggles show as pressed. */
+    openViews?: ViewPaneType[];
+    /** Opens a view pane at the end of the strip, or closes it. */
+    ontoggleView?: (type: ViewPaneType) => void;
     /** How many panes are open, which the close button acts on. */
     paneCount?: number;
     /** Closes every open pane. */
@@ -55,7 +66,14 @@
   );
 
   const pullRequestHint = `(${shortcutText('pullRequest', isMac())})`;
-  const UTILITY_BUTTON_CLASS = 'text-foreground';
+
+  const VIEW_SHORTCUTS = { files: 'newFiles', diff: 'newDiff' } as const;
+  const viewToggles = VIEW_PANE_TYPES.map((type) => ({
+    ...TOOL_PANES.find((pane) => pane.type === type)!,
+    type,
+    shortcut: shortcutText(VIEW_SHORTCUTS[type], isMac()),
+  }));
+  const UTILITY_BUTTON_CLASS = 'text-muted-foreground hover:text-foreground';
   const CLOSE_BUTTON_CLASS =
     'bg-amber-500/10 text-amber-500 hover:bg-amber-500/20';
   const ACTION_BUTTON_CLASS = 'h-auto px-2 py-1';
@@ -93,6 +111,20 @@
   </div>
   <div class="flex items-center gap-3 app-no-drag">
     {#if !disabled}
+      {#each viewToggles as view (view.type)}
+        {@const open = openViews.includes(view.type)}
+        <Button
+          variant={open ? 'default' : 'secondary'}
+          size="icon-sm"
+          class={cn(!open && UTILITY_BUTTON_CLASS)}
+          aria-label={view.label}
+          aria-pressed={open}
+          title={`${open ? 'Close' : 'Open'} ${view.label.toLowerCase()} (${view.shortcut})`}
+          onclick={() => ontoggleView?.(view.type)}
+        >
+          <Icon name={view.icon} />
+        </Button>
+      {/each}
       <RunButton />
     {/if}
     {#if pull?.state === 'open'}

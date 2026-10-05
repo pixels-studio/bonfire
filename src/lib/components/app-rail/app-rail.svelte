@@ -51,7 +51,7 @@
   import { cliVersions } from '$lib/stores/cli-versions.svelte';
   import { preferences } from '$lib/stores/preferences.svelte';
   import { cn } from '$lib/utils';
-  import { CLI_NAMES, PROVIDER_LABELS } from '$shared/domain';
+  import { CLI_NAMES, PROVIDER_LABELS, isViewPaneType } from '$shared/domain';
   import type { AssistantProvider, PaneType } from '$shared/contracts';
 
   const DOT_STYLES: Record<PaneStatus, { slot: string; dot: string }> = {
@@ -113,12 +113,14 @@
     trafficLightInset?: boolean;
   } = $props();
 
-  /** The shortcut a tool pane's menu item shows. */
+  /** The shortcut a tool pane's menu item shows; view panes are toggled from the header instead. */
   const TOOL_SHORTCUTS: Record<string, ShortcutId> = {
-    files: 'newFiles',
     terminal: 'newTerminal',
-    diff: 'newDiff',
   };
+  /** The tool panes a project can have several of. */
+  const ADDABLE_TOOL_PANES = TOOL_PANES.filter(
+    ({ type }) => !isViewPaneType(type),
+  );
 
   const BUTTON_CLASS = 'text-muted-foreground hover:text-foreground';
   /** A minimap row: the dot sits in the first 24px so the collapsed pill shows only dots. */
@@ -198,7 +200,7 @@
             </DropdownMenu.Item>
           {/each}
           <DropdownMenu.Separator />
-          {#each TOOL_PANES as pane (pane.type)}
+          {#each ADDABLE_TOOL_PANES as pane (pane.type)}
             <DropdownMenu.Item onclick={() => onaddPane(pane.type)}>
               <Icon name={pane.icon} />
               {pane.label}
@@ -361,7 +363,9 @@
 
   .minimap:hover,
   .minimap:has(:focus-visible) {
-    background-color: rgb(44 44 44 / 70%); /* Mid-grey glass: mutes the blurred text behind without going black. */
+    background-color: rgb(
+      44 44 44 / 70%
+    ); /* Mid-grey glass: mutes the blurred text behind without going black. */
     box-shadow: inset 0 0 0 1px rgb(255 255 255 / 8%);
     clip-path: inset(0 0 0 0 round 0.875rem);
     /* A beat of hover intent, so sweeping the cursor past doesn't flash it open. */

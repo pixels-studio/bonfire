@@ -12,7 +12,8 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { Store } from '../electron/main/persistence';
+import { Store, settleLayout } from '../electron/main/persistence';
+import type { State } from '../shared/contracts';
 
 const uuid = () => crypto.randomUUID();
 
@@ -285,4 +286,43 @@ test('an older version run afterwards neither loses nor hides conversations', ()
     store.pane(continued).messages.map(({ text }) => text),
     ['one', 'two'],
   );
+});
+
+test('a project keeps only its first files and code diff panes, where they sit', () => {
+  const view = (id: string, projectId: string, type: string) => ({
+    ...pane(id, projectId, []),
+    type,
+  });
+  const state = {
+    panes: [
+      view('agent', 'a', 'claude'),
+      view('files', 'a', 'files'),
+      view('files-again', 'a', 'files'),
+      view('diff', 'a', 'diff'),
+      view('terminal', 'a', 'terminal'),
+      view('terminal-again', 'a', 'terminal'),
+      view('other-files', 'b', 'files'),
+    ],
+    layout: {
+      paneIds: [
+        'files',
+        'agent',
+        'files-again',
+        'diff',
+        'terminal',
+        'terminal-again',
+        'other-files',
+      ],
+    },
+  } as unknown as State;
+  settleLayout(state);
+  assert.deepEqual(state.layout.paneIds, [
+    'files',
+    'agent',
+    'diff',
+    'terminal',
+    'terminal-again',
+    'other-files',
+  ]);
+  assert.ok(state.panes.find(({ id }) => id === 'files-again')!.archived);
 });

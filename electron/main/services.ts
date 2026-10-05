@@ -37,6 +37,7 @@ import {
   repositoryName,
   ACTION_LABELS,
   actionPrompt,
+  isViewPaneType,
   otherProvider,
   resolvePreferences,
   startingProvider,
@@ -440,7 +441,11 @@ export function services(options: ServiceOptions) {
     delete store.state.lastProjectId;
   }
 
-  /** Adds a pane to the project on screen, at the front; agents start with the last-used provider and model. */
+  /**
+   * Adds a pane to the project on screen, at the front; agents start with the last-used
+   * provider and model. A view pane goes at the end instead, and only once: an open one is
+   * returned as it is.
+   */
   function addPane(
     type?: PaneType,
     project = store.state.lastProjectId
@@ -449,6 +454,11 @@ export function services(options: ServiceOptions) {
     other = false,
   ) {
     if (!project) throw Error('Add a project first.');
+    const view = type && isViewPaneType(type);
+    const open = view
+      ? openPanesOf(project).find((pane) => pane.type === type)
+      : undefined;
+    if (open) return open;
     if (openPanesOf(project).length >= MAX_PANES)
       throw new Error(`A project can have up to ${MAX_PANES} panes open.`);
     const starting = startingModel();
@@ -472,7 +482,8 @@ export function services(options: ServiceOptions) {
       archived: false,
     };
     store.state.panes.push(pane);
-    store.state.layout.paneIds.unshift(pane.id);
+    if (view) store.state.layout.paneIds.push(pane.id);
+    else store.state.layout.paneIds.unshift(pane.id);
     return pane;
   }
 

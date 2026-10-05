@@ -16,6 +16,7 @@
     {size}
     {onresize}
     {onclose}
+    resizable={false}
   />
   <div
     {@attach overlayScrollbar}

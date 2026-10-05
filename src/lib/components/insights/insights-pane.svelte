@@ -33,6 +33,7 @@
     {size}
     {onresize}
     {onclose}
+    resizable={false}
   >
     {#snippet actions()}
       <SegmentedControl
