@@ -78,6 +78,7 @@
     autofocus = false,
     onsend,
     children,
+    end,
   }: {
     /** The pane the composer sends to; unset when it starts something new. */
     paneId?: string;
@@ -104,6 +105,8 @@
       followUp?: FollowUpMode,
     ) => Promise<void>;
     children: Snippet;
+    /** Rendered on the right, before the attach/dictate/send controls. */
+    end?: Snippet;
   } = $props();
 
   let element = $state<HTMLDivElement>();
@@ -678,6 +681,7 @@
       {@render children()}
     </div>
     <div class="flex items-center gap-2.5">
+      {@render end?.()}
       <Tooltip.Root>
         <Tooltip.Trigger>
           {#snippet child({ props })}

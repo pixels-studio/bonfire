@@ -12,7 +12,6 @@
   import ContextUsage from './context-usage.svelte';
   import ModelPicker from './model-picker.svelte';
   import QueuedPrompts from './queued-prompts.svelte';
-  import { DEFAULT_CONTEXT_WINDOWS } from '$lib/models';
   import { forkSeeds } from '$lib/stores/fork.svelte';
   import { catalog } from '$lib/stores/models.svelte';
   import { preferences } from '$lib/stores/preferences.svelte';
@@ -107,11 +106,8 @@
   const FEED_PADDING = 52;
   /** Space kept above a new prompt when it is scrolled to the top (`scroll-mt-6`). */
   const TURN_MARGIN = 24;
-  const contextWindow = $derived(
-    usage?.contextWindow ??
-      catalog.find(model)?.contextWindow ??
-      DEFAULT_CONTEXT_WINDOWS[provider],
-  );
+  /** Undefined until the provider reports the real window size; never guessed. */
+  const contextWindow = $derived(usage?.contextWindow);
 
   let feedHeight = $state(0);
   let latest = $state<HTMLDivElement>();
@@ -518,14 +514,16 @@
             {fastSupported}
             onmodel={changeModel}
           />
-          <ContextUsage
-            {usage}
-            {contextWindow}
-            disabled={running || !usage}
-            oncompact={provider === 'claude'
-              ? () => send('/compact', [], []).catch(() => {})
-              : undefined}
-          />
+          {#snippet end()}
+            <ContextUsage
+              {usage}
+              {contextWindow}
+              disabled={running || !usage}
+              oncompact={provider === 'claude'
+                ? () => send('/compact', [], []).catch(() => {})
+                : undefined}
+            />
+          {/snippet}
         </Composer>
       </div>
     </div>
