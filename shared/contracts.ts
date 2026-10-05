@@ -33,8 +33,10 @@ export const conversationMessageSchema = z.object({
   status: z.enum(['streaming', 'complete', 'failed']).default('complete'),
   size: z.number().int().nonnegative().optional(),
   previewUrl: z.string().optional(),
-  /** How long a thinking message took to stream, once complete. */
+  /** How long a thinking or text message took to stream, once complete. */
   durationMs: z.number().int().nonnegative().optional(),
+  /** When a thinking or text message finished streaming, once complete. */
+  createdAt: z.number().int().nonnegative().optional(),
   /** Structured details for tool-call messages. */
   tool: z
     .object({
@@ -651,6 +653,7 @@ export const requests = {
   'tokens.get': z.tuple([tokenRange]),
   'navigation.help': z.tuple([]),
   'app.isFullscreen': z.tuple([]),
+  'app.copyText': z.tuple([z.string().max(1_048_576)]),
   'scripts.list': z.tuple([id]),
   'scripts.detect': z.tuple([id]),
   'scripts.save': z.tuple([id, runScriptInput]),
@@ -824,6 +827,8 @@ export type API = {
   navigation: { help(): Promise<void> };
   app: {
     isFullscreen(): Promise<boolean>;
+    /** Puts text on the system clipboard; the sandboxed renderer can't write to it directly. */
+    copyText(text: string): Promise<void>;
     /** The path on disk of a file from a drop or file input. */
     pathForFile(file: File): string;
     onFullscreenChange(listener: (fullscreen: boolean) => void): Unsubscribe;
