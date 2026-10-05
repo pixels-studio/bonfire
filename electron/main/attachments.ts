@@ -25,7 +25,17 @@ export function imageMimeType(path: string): ImageMimeType {
   return 'image/jpeg';
 }
 
-export async function readImage(path: string) {
+/** Makes an image's preview; where Electron's image tools are out of reach, another process's. */
+export type Previewer = (
+  data: Buffer,
+  mimeType: string,
+  path?: string,
+) => Promise<string | undefined>;
+
+export async function readImage(
+  path: string,
+  preview: Previewer = imagePreview,
+) {
   const data = await readFile(path);
   const mimeType = imageMimeType(path);
   const base64 = data.toString('base64');
@@ -33,7 +43,7 @@ export async function readImage(path: string) {
     size: data.byteLength,
     mimeType,
     base64,
-    previewUrl: await imagePreview(data, mimeType, path),
+    previewUrl: await preview(data, mimeType, path),
   };
 }
 
@@ -44,7 +54,9 @@ function scaledPreview(image: NativeImage) {
   if (Math.max(width, height) <= PREVIEW_MAX_SIZE) return image.toDataURL();
   // Only the longer side is given, so Electron scales the other to match it.
   const long = width >= height ? 'width' : 'height';
-  return image.resize({ [long]: PREVIEW_MAX_SIZE, quality: 'good' }).toDataURL();
+  return image
+    .resize({ [long]: PREVIEW_MAX_SIZE, quality: 'good' })
+    .toDataURL();
 }
 
 /**
@@ -79,20 +91,24 @@ const LEGACY_PREVIEW_LENGTH = 32_000;
 
 /**
  * Older versions kept each image's whole data as its preview, which made saved state
- * megabytes per image. Shrinks those in place; returns whether any changed.
+ * megabytes per image. Returns those messages with their previews shrunk, to replace them.
  */
-export async function shrinkPreviews(messages: ConversationMessage[]) {
-  let changed = false;
+export async function shrinkPreviews(
+  messages: readonly Readonly<ConversationMessage>[],
+) {
+  const shrunk: ConversationMessage[] = [];
   for (const message of messages) {
     const url = message.previewUrl;
     if (!url || url.length <= LEGACY_PREVIEW_LENGTH) continue;
     const match = /^data:([^;,]+);base64,/.exec(url);
     if (!match) continue;
     const data = Buffer.from(url.slice(match[0].length), 'base64');
-    message.previewUrl = await imagePreview(data, match[1]);
-    changed = true;
+    shrunk.push({
+      ...(message as ConversationMessage),
+      previewUrl: await imagePreview(data, match[1]),
+    });
   }
-  return changed;
+  return shrunk;
 }
 
 /** Where a pasted image is written, as providers read images from disk. */
@@ -140,8 +156,13 @@ export type PendingAttachment = Attachment & { paneId: string } & (
 export class PendingAttachments {
   private readonly items = new Map<string, PendingAttachment>();
 
+  constructor(private readonly preview: Previewer = imagePreview) {}
+
   async addImage(paneId: string, file: { name: string; path: string }) {
-    const { size, previewUrl, mimeType, base64 } = await readImage(file.path);
+    const { size, previewUrl, mimeType, base64 } = await readImage(
+      file.path,
+      this.preview,
+    );
     const attachment = { id: randomUUID(), name: file.name, size, previewUrl };
     this.items.set(attachment.id, {
       ...attachment,

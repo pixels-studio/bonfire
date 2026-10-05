@@ -38,8 +38,9 @@ export function codexProgram(machine?: Machine): CodexCommand {
       'codex.js',
     );
     // Without this the app binary would start a second Electron app instead of running the script.
+    // A utility process is told the app's binary, as its own may be a helper's.
     return {
-      file: process.execPath,
+      file: process.env.BONFIRE_EXEC_PATH ?? process.execPath,
       args: [bin],
       env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
     };

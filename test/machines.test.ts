@@ -158,3 +158,41 @@ test('an unreachable machine says so by name', async () => {
     /Could not reach Build box: .*refused/,
   );
 });
+
+test('a command without the profile runs in a plain POSIX shell', () => {
+  const command = remoteCommand('printenv', ['GREETING'], {
+    env: { GREETING: 'hi' },
+    profile: false,
+  });
+  assert.equal(
+    execFileSync('/bin/sh', ['-c', command], {
+      encoding: 'utf8',
+      // A login shell that can't run would fail the command if it were used.
+      env: { ...process.env, SHELL: '/nonexistent' },
+    }),
+    'hi\n',
+  );
+});
+
+test('a program only the profile puts on the PATH is found on a second try', () =>
+  withFolder(async (home) => {
+    await mkdir(join(home, 'tools'));
+    const tool = join(home, 'tools', 'profiled-tool');
+    await writeFile(tool, '#!/bin/sh\necho found\n', { mode: 0o755 });
+    await writeFile(
+      join(home, '.profile'),
+      `PATH="${join(home, 'tools')}:$PATH"\nexport PATH\n`,
+    );
+    const previous = process.env.BONFIRE_FAKE_SSH_HOME;
+    process.env.BONFIRE_FAKE_SSH_HOME = home;
+    try {
+      const machine = new SshMachine(connection(), FAKE_SSH);
+      assert.equal(
+        await machine.exec('profiled-tool', [], { profile: false }),
+        'found\n',
+      );
+    } finally {
+      if (previous === undefined) delete process.env.BONFIRE_FAKE_SSH_HOME;
+      else process.env.BONFIRE_FAKE_SSH_HOME = previous;
+    }
+  }));

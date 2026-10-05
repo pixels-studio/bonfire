@@ -21,6 +21,7 @@
   import Onboarding from '$lib/components/onboarding/onboarding.svelte';
   import { PANE_SIZES, defaultPaneSize, type PaneSize } from '$lib/panes';
   import { digitOf, matchShortcut, type ShortcutId } from '$lib/shortcuts';
+  import { assistantEvents } from '$lib/main-events';
   import { PaneDrag } from '$lib/pane-drag.svelte';
   import { StripMotion, leave } from '$lib/strip-motion.svelte';
   import { PaneStatuses, paneBadge } from '$lib/pane-status.svelte';
@@ -46,6 +47,7 @@
   } from '$shared/contracts';
   import {
     MAX_PANES,
+    MAX_TERMINAL_PANES,
     emptyState,
     errorMessage,
     isAssistantPane,
@@ -160,6 +162,12 @@
   );
 
   const canAddPane = $derived(!!project && panes.length < MAX_PANES);
+  /** Terminals stop at the number that can draw with WebGL; the menu then leaves them out. */
+  const canAddTerminal = $derived(
+    canAddPane &&
+      panes.filter((pane) => pane.type === 'terminal').length <
+        MAX_TERMINAL_PANES,
+  );
 
   const SECTION_CLASS = 'h-full shrink-0 snap-start px-1';
 
@@ -242,6 +250,12 @@
     }
     if (!canAddPane) {
       toast(`A project can have up to ${MAX_PANES} panes open.`);
+      return;
+    }
+    if (type === 'terminal' && !canAddTerminal) {
+      toast(
+        `A project can have up to ${MAX_TERMINAL_PANES} terminal panes open.`,
+      );
       return;
     }
     const count = panes.length;
@@ -732,7 +746,7 @@
     window.bonfire.app.isFullscreen().then((value) => (fullscreen = value));
     const subscriptions = [
       window.bonfire.app.onFullscreenChange((value) => (fullscreen = value)),
-      window.bonfire.assistant.onEvent(handleAssistantEvent),
+      assistantEvents.onAll(handleAssistantEvent),
       // A clicked notification brings its pane into view.
       window.bonfire.app.onFocusPane(scrollToPane),
       window.bonfire.panes.onClosed((event) => void handlePanesClosed(event)),
@@ -944,6 +958,7 @@
         status: scripts.runOfPane(id)?.running ? 'working' : statuses.get(id),
       }))}
       {canAddPane}
+      {canAddTerminal}
       onselectPane={scrollToPane}
       onselectPanel={scrollToPanel}
     />

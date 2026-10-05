@@ -23,6 +23,17 @@ import {
   isViewPaneType,
   resolvePreferences,
 } from '../../shared/domain';
+import {
+  ConnectionChanges,
+  PaneChanges,
+  ProjectChanges,
+  SettingChanges,
+  sendable,
+  writable,
+  type PaneView,
+  type ProjectView,
+  type StateView,
+} from './state';
 
 /**
  * How long writes are held back so a burst of changes costs one write. Each write
@@ -66,7 +77,12 @@ type Batch = {
  * before the process exits.
  */
 export class Store {
-  state: State;
+  /** The state itself; outside the Store it is read through `state` and changed through the groups below. */
+  private data: State;
+  readonly panes: PaneChanges;
+  readonly projects: ProjectChanges;
+  readonly connections: ConnectionChanges;
+  readonly settings: SettingChanges;
   private readonly file: string;
   private readonly conversations: string;
   private saveTimer?: NodeJS.Timeout;
@@ -80,6 +96,20 @@ export class Store {
   private readonly inFlight = new Set<Pane>();
   /** How many messages each pane's file held when written, to catch a change nobody reported. */
   private readonly written = new Map<string, number>();
+  /**
+   * Archived panes whose conversation stays on disk, unread. Nothing shows or reopens an
+   * archived pane, and archived conversations are most of the history, so reading them
+   * would only slow every start and hold memory for good. Their files are never rewritten.
+   */
+  private readonly unloaded = new Set<string>();
+  /**
+   * Each finished message's JSON, reused while it is the same object. A busy agent's pane is
+   * saved every second or so, and serializing its whole conversation each time cost the main
+   * process in proportion to the conversation, not to what changed. This relies on finished
+   * messages being replaced rather than edited; only streaming ones grow in place.
+   */
+  private readonly messageJson = new WeakMap<ConversationMessage, string>();
+  private readonly changeListeners = new Set<(pane?: PaneView) => void>();
 
   constructor(directory: string) {
     mkdirSync(directory, { recursive: true });
@@ -98,15 +128,27 @@ export class Store {
         .map(({ id }) => id),
     );
     if (inline.size) this.backUpLegacyState();
-    for (const pane of raw?.panes ?? [])
-      if (!inline.has(pane.id)) pane.messages = this.readConversation(pane.id);
-    this.state = raw ? stateSchema.parse(raw) : emptyState();
-    for (const pane of this.state.panes)
+    for (const pane of raw?.panes ?? []) {
+      if (inline.has(pane.id)) continue;
+      // A pane with no project may yet be dropped for being empty, so its file is read.
+      if (pane.archived && pane.projectId) {
+        this.unloaded.add(pane.id);
+        pane.messages = [];
+      } else pane.messages = this.readConversation(pane.id);
+    }
+    this.data = raw ? stateSchema.parse(raw) : emptyState();
+    const state = () => this.data;
+    const save = (pane?: PaneView) => this.save(pane);
+    this.panes = new PaneChanges(state, save);
+    this.projects = new ProjectChanges(state, this.panes, save);
+    this.connections = new ConnectionChanges(state, save);
+    this.settings = new SettingChanges(state, save);
+    for (const pane of this.data.panes)
       if (inline.has(pane.id)) this.dirty.add(pane);
       else this.written.set(pane.id, pane.messages.length);
-    for (const pane of settleInterrupted(this.state)) this.dirty.add(pane);
-    settleProjects(this.state);
-    settleLayout(this.state);
+    for (const pane of settleInterrupted(this.data)) this.dirty.add(pane);
+    settleProjects(this.data);
+    settleLayout(this.data);
     this.pruneConversations();
     if (this.dirty.size) this.save();
   }
@@ -115,9 +157,19 @@ export class Store {
    * Schedules a write; changes made before it fires share it. Pass the pane whose
    * messages changed so its conversation is rewritten too.
    */
-  save(pane?: Pane) {
-    if (pane) this.dirty.add(pane);
+  save(pane?: PaneView) {
+    if (pane) this.dirty.add(writable<Pane>(pane));
     this.saveTimer ??= setTimeout(() => this.flushLater(), SAVE_DELAY_MS);
+    for (const listener of this.changeListeners) listener(pane);
+  }
+
+  /**
+   * Calls `listener` after each change, as every change is saved; for copies kept elsewhere.
+   * A conversation's change names its pane; any other change to the state names none.
+   */
+  onChange(listener: (pane?: PaneView) => void) {
+    this.changeListeners.add(listener);
+    return () => this.changeListeners.delete(listener);
   }
 
   /**
@@ -199,8 +251,9 @@ export class Store {
     const started = Date.now();
     const live = new Set<string>();
     const conversations: Batch['conversations'] = [];
-    for (const pane of this.state.panes) {
+    for (const pane of this.data.panes) {
       live.add(pane.id);
+      if (this.unloaded.has(pane.id)) continue;
       if (
         this.dirty.has(pane) ||
         this.written.get(pane.id) !== pane.messages.length
@@ -208,24 +261,38 @@ export class Store {
         conversations.push({
           pane,
           file: this.conversationFile(pane.id),
-          data: JSON.stringify(pane.messages),
+          data: this.conversationJson(pane.messages),
           count: pane.messages.length,
         });
     }
     this.dirty.clear();
-    const panes = this.state.panes.map(({ messages: _, ...pane }) => pane);
+    const panes = this.data.panes.map(({ messages: _, ...pane }) => pane);
     const batch = {
       conversations,
-      state: JSON.stringify({ ...this.state, panes }),
+      state: JSON.stringify({ ...this.data, panes }),
       stale: [...this.written.keys()].filter((id) => !live.has(id)),
       generation: this.generation,
     };
     const took = Date.now() - started;
     if (took >= SLOW_SERIALIZE_MS)
       console.warn(
-        `Serializing state took ${took} ms (${conversations.length} of ${this.state.panes.length} conversations)`,
+        `Serializing state took ${took} ms (${conversations.length} of ${this.data.panes.length} conversations)`,
       );
     return batch;
+  }
+
+  /** The same text as `JSON.stringify(messages)`, from each finished message's saved JSON. */
+  private conversationJson(messages: ConversationMessage[]) {
+    const parts = messages.map((message) => {
+      if (message.status === 'streaming') return JSON.stringify(message);
+      let json = this.messageJson.get(message);
+      if (json === undefined) {
+        json = JSON.stringify(message);
+        this.messageJson.set(message, json);
+      }
+      return json;
+    });
+    return `[${parts.join(',')}]`;
   }
 
   /** A write that failed leaves its changes pending, so the retry carries them. */
@@ -236,25 +303,33 @@ export class Store {
   private commit(batch: Batch) {
     for (const { pane, count } of batch.conversations)
       this.written.set(pane.id, count);
-    for (const id of batch.stale) this.written.delete(id);
+    for (const id of batch.stale) {
+      this.written.delete(id);
+      this.unloaded.delete(id);
+    }
+  }
+
+  /** Read-only outside the Store: changes go through `panes`, `projects`, `connections` and `settings`. */
+  get state(): StateView {
+    return this.data;
   }
 
   /** The user's preferences, with defaults for anything unset. */
   get preferences(): Preferences {
-    return resolvePreferences(this.state.preferences);
+    return resolvePreferences(this.data.preferences);
   }
 
-  project(id: string) {
-    return find(this.state.projects, id, 'Project');
+  project(id: string): ProjectView {
+    return find(this.data.projects, id, 'Project');
   }
 
-  pane(id: string) {
-    return find(this.state.panes, id, 'Pane');
+  pane(id: string): PaneView {
+    return find(this.data.panes, id, 'Pane');
   }
 
   /** Removes conversation files no pane lists, such as those left by a crash mid-save. */
   private pruneConversations() {
-    const live = new Set(this.state.panes.map(({ id }) => id));
+    const live = new Set(this.data.panes.map(({ id }) => id));
     for (const name of readdirSync(this.conversations)) {
       const id = name.slice(0, -CONVERSATION_SUFFIX.length);
       if (name.endsWith(CONVERSATION_SUFFIX) && !live.has(id))
@@ -327,6 +402,24 @@ function busy(cause: unknown) {
 
 function sleep(milliseconds: number) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds);
+}
+
+/**
+ * The state as the window gets it, which it asks for again after every change to the panes.
+ * Only the open panes of the project on screen carry their conversations, so they show at
+ * once; archived ones are never shown, and another project's arrive when it is opened, which
+ * asks again. Conversations are most of the data, and each request copies them across.
+ */
+export function stateForWindow(view: StateView): State {
+  const state = sendable<State>(view);
+  return {
+    ...state,
+    panes: state.panes.map((pane) =>
+      pane.archived || pane.projectId !== state.lastProjectId
+        ? { ...pane, messages: [] }
+        : pane,
+    ),
+  };
 }
 
 /** Turns that were cut off by a crash or quit leave messages that would look busy forever. */

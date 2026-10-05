@@ -4,6 +4,7 @@ import {
   clipboard,
   dialog,
   ipcMain,
+  MessageChannelMain,
   Notification,
   powerMonitor,
   powerSaveBlocker,
@@ -305,6 +306,17 @@ function serveBuild(root: string) {
   });
 }
 
+/** Whether an IPC message came from our own page in the main frame. */
+function isTrustedSender(
+  event: Electron.IpcMainEvent | Electron.IpcMainInvokeEvent,
+) {
+  return (
+    event.sender === mainWindow.webContents &&
+    event.senderFrame === mainWindow.webContents.mainFrame &&
+    isTrustedUrl(event.senderFrame.url)
+  );
+}
+
 /** Routes each validated IPC channel to `backend.api[group][method]`, trusting only our main frame. */
 function registerIpc() {
   const api = backend.api as unknown as Record<
@@ -314,15 +326,25 @@ function registerIpc() {
   for (const [channel, schema] of Object.entries(requests)) {
     const [group, method] = channel.split('.');
     ipcMain.handle(channel, async (event, ...args) => {
-      if (
-        event.sender !== mainWindow.webContents ||
-        event.senderFrame !== mainWindow.webContents.mainFrame ||
-        !isTrustedUrl(event.senderFrame.url)
-      )
-        throw Error('Untrusted IPC sender');
+      if (!isTrustedSender(event)) throw Error('Untrusted IPC sender');
       return api[group][method](...schema.parse(args));
     });
   }
+  // Each page load asks for a channel straight to the terminal host, which then carries the
+  // terminals' output and typing instead of main. A host not yet started gets one as it
+  // starts, with the first terminal, so a launch with no terminals doesn't start it.
+  ipcMain.on(events.terminalPort, (event) => {
+    if (isTrustedSender(event) && backend.terminalsRunning())
+      connectTerminals();
+  });
+}
+
+/** Opens a channel between the window and the terminal host, replacing any before it. */
+function connectTerminals() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  const { port1, port2 } = new MessageChannelMain();
+  backend.connectTerminals(port1);
+  mainWindow.webContents.postMessage(events.terminalPort, null, [port2]);
 }
 
 app
@@ -361,6 +383,11 @@ app
       dictation: {
         program: resolve(__dirname, '../bin/bonfire-dictation'),
         disclaim: !app.isPackaged,
+      },
+      openTerminalChannel: connectTerminals,
+      hosts: {
+        terminals: join(__dirname, 'terminal-host.cjs'),
+        agents: join(__dirname, 'agent-host.cjs'),
       },
       openHelp: () => shell.openExternal(HELP_URL),
       openUrl: (url) => shell.openExternal(url),

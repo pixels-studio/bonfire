@@ -1,4 +1,9 @@
-import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from 'electron';
+import {
+  contextBridge,
+  ipcRenderer,
+  webUtils,
+  type IpcRendererEvent,
+} from 'electron';
 import { events, requests, type API } from '../../shared/contracts';
 
 const api: Record<string, Record<string, unknown>> = {};
@@ -17,8 +22,49 @@ function subscribe(channel: string) {
   };
 }
 
+/**
+ * The page's own channel to the terminal host, asked for as the page loads. Terminal output
+ * arrives on it, and typing, resizes and what has been drawn go back on it, without passing
+ * through main. Main still says when a terminal ends because the host stopped.
+ */
+let terminalPort: MessagePort | undefined;
+const terminalListeners = new Set<(data: unknown) => void>();
+/** Typing and the like sent before the channel opened, sent as it does. */
+let unsent: unknown[] = [];
+ipcRenderer.on(events.terminalPort, ({ ports: [port] }) => {
+  terminalPort?.close();
+  terminalPort = port;
+  port.onmessage = ({ data }) => {
+    for (const listener of terminalListeners) listener(data);
+  };
+  for (const message of unsent) port.postMessage(message);
+  unsent = [];
+});
+ipcRenderer.send(events.terminalPort);
+
+/** Sends to the terminal host over the page's channel; there is no other way to it. */
+function toTerminalHost(channel: string) {
+  return (...args: unknown[]) => {
+    const message = { channel, args };
+    if (terminalPort) terminalPort.postMessage(message);
+    else unsent.push(message);
+    return Promise.resolve();
+  };
+}
+
 api.app.pathForFile = (file: File) => webUtils.getPathForFile(file);
-api.terminal.onData = subscribe(events.terminalData);
+api.terminal.onData = (listener: (data: unknown) => void) => {
+  const fromHost = (data: unknown) => listener(data);
+  terminalListeners.add(fromHost);
+  const stopFromMain = subscribe(events.terminalData)(listener);
+  return () => {
+    terminalListeners.delete(fromHost);
+    stopFromMain();
+  };
+};
+api.terminal.write = toTerminalHost('terminal.write');
+api.terminal.resize = toTerminalHost('terminal.resize');
+api.terminal.ack = toTerminalHost('terminal.ack');
 api.assistant.onEvent = subscribe(events.assistantEvent);
 api.filesystem.onChange = subscribe(events.fileChange);
 api.app.onFullscreenChange = subscribe(events.fullscreen);

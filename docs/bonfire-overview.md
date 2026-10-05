@@ -63,16 +63,21 @@ read files, edit files and run commands in the project folder.
 
 **How it works.**
 
-- Claude: the main process uses the Claude Agent SDK (`query()`). The SDK starts the Claude
+- The agents run in the agent host, a utility process ("Bonfire Agents"). The main process
+  does not parse their streams. See 6.1.
+- Claude: the agent host uses the Claude Agent SDK (`query()`). The SDK starts the Claude
   Code CLI. The CLI uses the login of the user.
-- Codex: the main process starts one `codex app-server` process. It talks to the server
+- Codex: the agent host starts one `codex app-server` process. It talks to the server
   with JSON-RPC on stdio. Each conversation is one "thread" on the server.
 - Both adapters extend one base class, `ChatAssistant` (`electron/main/assistant.ts`). The
   base class controls the turn lifecycle: start, stream, approve, cancel and end.
 - The Codex adapter converts Codex items into the same message model as Claude. Thus the
   user interface shows the two agents in the same way.
-- The main process collects stream updates for a short time. Then it sends them to the
-  window as one event. This keeps the window fast.
+- The agent host collects stream updates for a short time. Then it sends them as one
+  event. The main process adds them to its copy of the conversation and sends them to the
+  window. This keeps the window fast.
+- If the agent host stops, the main process starts it again on the next request. A turn
+  that was running ends with an error message in its pane.
 
 **Controls in the composer.**
 
@@ -100,10 +105,16 @@ summary of the conversation. A new pane opens with the summary attached.
 
 **What it does.** A terminal pane is a shell in the project folder. You can open many.
 
-**How it works.** The main process uses `node-pty`. The shell is the shell of the user, so
-the PATH and version managers apply. The main process collects output for a short time.
-Then it sends it to the window. The window shows it with `xterm.js`. The renderer cannot
-supply a command or a folder. The main process decides them.
+**How it works.** The terminal host, a utility process ("Bonfire Terminals"), uses
+`node-pty`. The shell is the shell of the user, so the PATH and version managers apply. The
+terminal host collects output for a short time. Then it sends it to the window on a
+`MessagePort` of its own, not through the main process. Typing, resizes and flow-control
+acknowledgements come back on the same port. The renderer cannot supply a command or a
+folder. The main process decides them, and starts and stops each terminal.
+
+The window shows the output with `xterm.js`. Up to 15 terminals in view draw with WebGL
+(`src/lib/webgl-pool.ts`). Chromium permits approximately 16 WebGL contexts in one page.
+Other terminals, and all terminals when WebGL is not available, use the DOM renderer.
 
 ### 5.3 Files pane
 
@@ -114,7 +125,8 @@ can open a file to read it with syntax highlight.
 
 - The tree loads one folder at a time.
 - It hides build folders, dependency folders and Git-ignored files.
-- A file watcher sends change events. It watches to a depth of three folder levels.
+- A file watcher sends change events. It watches all the folders of the project. It ignores
+  changes in build folders and dependency folders. It reports a burst of changes one time.
 - Text previews have a limit of 2 MB.
 - All paths go through `safePath()`. A path cannot go out of the project folder, also not
   through a symbolic link.
@@ -248,12 +260,14 @@ and sends them to the window. Only one composer can dictate at a time.
 │  Renderer process (sandboxed)          Preload            Main process        │
 │  ─────────────────────────────         ───────            ────────────        │
 │  SvelteKit + Svelte 5 UI    ──invoke──▶ window.bonfire ──▶ IPC handlers       │
-│  src/routes, src/lib        ◀──events── (typed bridge) ◀── services.ts        │
-│                                                              │                │
-│                                                              ├─ persistence   │
-│                                                              ├─ assistants ───┼──▶ Claude Code CLI (Agent SDK)
-│                                                              │                │──▶ codex app-server (JSON-RPC)
-│                                                              ├─ terminals ────┼──▶ node-pty shells
+│  src/routes, src/lib        ◀──events── (typed bridge) ◀── services/          │
+│        ▲                                                     │                │
+│        │ MessagePort: terminal output and typing             ├─ Store (state) │
+│        │                                                     ├─ agents ───────┼──▶ Agent host (utility process)
+│        │                                                     │                │      ├─▶ Claude Code CLI (Agent SDK)
+│        │                                                     │                │      └─▶ codex app-server (JSON-RPC)
+│        └─────────────────────────────────────────────────────├─ terminals ────┼──▶ Terminal host (utility process)
+│                                                              │                │      └─▶ node-pty shells
 │                                                              ├─ git ──────────┼──▶ git
 │                                                              ├─ github ───────┼──▶ gh
 │                                                              ├─ filesystem    │
@@ -261,6 +275,17 @@ and sends them to the window. Only one composer can dictate at a time.
 │                                                              └─ dictation ────┼──▶ Swift helper
 └───────────────────────────────────────────────────────────────────────────────┘
 ```
+
+The main process supervises two utility processes. It starts each on first use, starts it
+again if it stops, and closes it when the application quits (`host-process.ts`).
+
+- The **terminal host** (`terminal-host.ts`, `pty-host.ts`) runs every PTY and handles all
+  terminal output. A crash ends its terminals only.
+- The **agent host** (`agent-host.ts`, `agent-worker.ts`) runs the Claude and Codex
+  adapters. It works on a copy of the state (`agent-store.ts`) that the main process sends
+  after each change. It sends its changes back to the main process (`agent-client.ts`).
+- The main process keeps the state and the saving, the IPC boundary, the windows,
+  notifications and power control.
 
 ### 6.2 Layers
 
@@ -279,12 +304,17 @@ and sends them to the window. Only one composer can dictate at a time.
 | Module | Responsibility |
 |---|---|
 | `index.ts` | Starts the application. Makes the window. Registers the IPC handlers. Logs freezes. |
-| `services.ts` | Joins all services. Implements each API call. |
+| `services/index.ts` | Joins all services. Implements each API call. |
+| `services/projects.ts`, `panes.ts`, `connections.ts`, `pull-requests.ts`, `repository.ts`, `agents.ts` | One service for each area. |
 | `persistence.ts` | Loads and saves the state. Migrates old state. |
+| `state.ts` | All changes to the state: `store.projects`, `store.panes`, `store.connections`, `store.settings`. Other modules only read `store.state`. |
+| `host-process.ts`, `rpc.ts` | Starts and supervises the utility processes, and the calls between processes. |
+| `terminal-host.ts`, `pty-host.ts` | The terminal host. |
+| `agent-host.ts`, `agent-worker.ts`, `agent-store.ts`, `agent-client.ts` | The agent host, and the main-process side of it. |
 | `assistant.ts` | The base class for agents: turns, queue, steer, approvals, attachments. |
 | `claude.ts` | The Claude adapter, on the Claude Agent SDK. |
 | `codex.ts`, `codex-rpc.ts`, `codex-items.ts` | The Codex adapter, on `codex app-server`. |
-| `terminal.ts`, `shell.ts` | Terminal processes with `node-pty`. |
+| `terminal.ts`, `shell.ts` | The main-process side of the terminals: checks, commands, supervision. |
 | `git.ts` | Git commands: status, diff, branches, checkout, pull. |
 | `github.ts` | `gh` commands: sign-in, pull requests, merge, activity. |
 | `merge-watcher.ts` | Finds merged pull requests and archives their conversations. |
@@ -311,9 +341,11 @@ and sends them to the window. Only one composer can dictate at a time.
 2. The renderer calls `window.bonfire.assistant.send()`.
 3. The preload sends the call on IPC.
 4. The main process checks the sender and the arguments with the Zod schema.
-5. The adapter (Claude or Codex) starts the turn on the CLI.
+5. The main process sends the call to the agent host. The adapter (Claude or Codex) starts
+   the turn on the CLI.
 6. The CLI streams the reply. The adapter converts it into messages.
-7. The main process collects the updates. Then it sends `assistantEvent` to the window.
+7. The agent host collects the updates and sends them to the main process. The main
+   process adds them to the conversation and sends `assistantEvent` to the window.
 8. The renderer shows the messages.
 9. If the agent asks for approval, the renderer shows the request. The reply goes back
    with `assistant.respond()`.

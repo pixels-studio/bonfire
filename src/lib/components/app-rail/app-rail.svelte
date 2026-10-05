@@ -91,6 +91,7 @@
     onaddPane,
     panes,
     canAddPane,
+    canAddTerminal,
     startingProvider,
     onselectPane,
     onselectPanel,
@@ -106,6 +107,8 @@
     startingProvider: AssistantProvider;
     panes: { id: string; title: string; status: PaneStatus }[];
     canAddPane: boolean;
+    /** Whether the project has room for another terminal; the menu leaves terminals out otherwise. */
+    canAddTerminal: boolean;
     onselectPane: (paneId: string) => void;
     /** Scrolls an open panel into sight. */
     onselectPanel: (panel: AppPanel) => void;
@@ -120,6 +123,11 @@
   /** The tool panes a project can have several of. */
   const ADDABLE_TOOL_PANES = TOOL_PANES.filter(
     ({ type }) => !isViewPaneType(type),
+  );
+  const addableToolPanes = $derived(
+    ADDABLE_TOOL_PANES.filter(
+      ({ type }) => type !== 'terminal' || canAddTerminal,
+    ),
   );
 
   const BUTTON_CLASS = 'text-muted-foreground hover:text-foreground';
@@ -199,8 +207,10 @@
               />
             </DropdownMenu.Item>
           {/each}
-          <DropdownMenu.Separator />
-          {#each ADDABLE_TOOL_PANES as pane (pane.type)}
+          {#if addableToolPanes.length}
+            <DropdownMenu.Separator />
+          {/if}
+          {#each addableToolPanes as pane (pane.type)}
             <DropdownMenu.Item onclick={() => onaddPane(pane.type)}>
               <Icon name={pane.icon} />
               {pane.label}

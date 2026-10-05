@@ -12,6 +12,7 @@
   import ContextUsage from './context-usage.svelte';
   import ModelPicker from './model-picker.svelte';
   import QueuedPrompts from './queued-prompts.svelte';
+  import { assistantEvents } from '$lib/main-events';
   import { forkSeeds } from '$lib/stores/fork.svelte';
   import { catalog } from '$lib/stores/models.svelte';
   import { preferences } from '$lib/stores/preferences.svelte';
@@ -327,7 +328,7 @@
   onMount(() => {
     catalog.load();
     feed?.scrollTo({ top: feed.scrollHeight, behavior: 'instant' });
-    const stop = window.bonfire.assistant.onEvent(handleEvent);
+    const stop = assistantEvents.on(pane.id, handleEvent);
     // Events sent before this view mounted (or while the page reloaded) are caught up from main.
     void window.bonfire.assistant
       .snapshot(pane.id)

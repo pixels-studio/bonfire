@@ -12,6 +12,7 @@ import type {
 import { quote, type Machine } from './machines';
 import type { Store } from './persistence';
 import type { Terminals } from './terminal';
+import { sendable, type PaneView, type ProjectView } from './state';
 
 /** Config files are small; anything bigger isn't one worth reading. */
 const READ_LIMIT = 512 * 1024;
@@ -325,11 +326,11 @@ function uniqueNames(suggestions: ScriptSuggestion[]) {
 type ScriptsOptions = {
   store: Store;
   terminals: Terminals;
-  machine: (project: Project) => Machine;
+  machine: (project: ProjectView) => Machine;
   /** Opens a terminal pane in the project for a script's output. */
-  addPane: (project: Project) => Pane;
+  addPane: (project: ProjectView) => PaneView;
   /** Archives a pane, ending its terminal. */
-  archivePane: (pane: Pane) => void;
+  archivePane: (pane: PaneView) => void;
   emit: (run: ScriptRun) => void;
 };
 
@@ -345,7 +346,7 @@ export class Scripts {
   async list(projectId: string): Promise<ScriptList> {
     const project = this.options.store.project(projectId);
     if (!project.scripts) await this.seed(project);
-    const scripts = project.scripts ?? [];
+    const scripts = sendable<RunScript[]>(project.scripts ?? []);
     return {
       scripts,
       selectedId: scripts.some(({ id }) => id === project.runScriptId)
@@ -355,17 +356,19 @@ export class Scripts {
   }
 
   /** Gives a project the scripts its files suggest, the first time its scripts are asked for. */
-  private seed(project: Project) {
+  private seed(project: ProjectView) {
     let pending = this.seeding.get(project.id);
     if (!pending) {
       pending = this.detect(project.id)
         .catch(() => [])
         .then((suggestions) => {
           // Another call may have saved scripts in the meantime.
-          project.scripts ??= suggestions
-            .slice(0, SEEDED_SCRIPTS)
-            .map((suggestion) => ({ id: randomUUID(), ...suggestion }));
-          this.options.store.save();
+          if (project.scripts) return;
+          this.options.store.projects.update(project, {
+            scripts: suggestions
+              .slice(0, SEEDED_SCRIPTS)
+              .map((suggestion) => ({ id: randomUUID(), ...suggestion })),
+          });
         })
         .finally(() => this.seeding.delete(project.id));
       this.seeding.set(project.id, pending);
@@ -381,29 +384,32 @@ export class Scripts {
   async save(projectId: string, input: RunScriptInput) {
     const project = this.options.store.project(projectId);
     if (!project.scripts) await this.seed(project);
-    const scripts = (project.scripts ??= []);
+    const { store } = this.options;
     const script: RunScript = {
       id: input.id ?? randomUUID(),
       name: input.name.trim(),
       command: input.command.trim(),
     };
+    const scripts = [...(project.scripts ?? [])];
     const index = scripts.findIndex(({ id }) => id === script.id);
     if (index === -1) scripts.push(script);
     else scripts[index] = script;
+    store.projects.update(project, { scripts });
     // An open pane keeps the script's name.
     const pane = this.paneOf(project, script.id);
-    if (pane) pane.title = script.name;
-    this.options.store.save();
+    if (pane) store.panes.update(pane, { title: script.name });
     return script;
   }
 
   remove(projectId: string, scriptId: string) {
-    const project = this.options.store.project(projectId);
-    project.scripts = project.scripts?.filter(({ id }) => id !== scriptId);
-    if (project.runScriptId === scriptId) delete project.runScriptId;
+    const { store } = this.options;
+    const project = store.project(projectId);
+    store.projects.update(project, {
+      scripts: project.scripts?.filter(({ id }) => id !== scriptId),
+      ...(project.runScriptId === scriptId && { runScriptId: undefined }),
+    });
     const pane = this.paneOf(project, scriptId);
     if (pane) this.options.archivePane(pane);
-    this.options.store.save();
   }
 
   /** Runs a script in its pane, opening one if it has none, and restarting it if it runs. */
@@ -415,12 +421,10 @@ export class Scripts {
     let pane = this.paneOf(project, scriptId);
     if (!pane) {
       pane = this.options.addPane(project);
-      pane.scriptId = script.id;
       // Reruns keep a title the user gave the pane.
-      pane.title = script.name;
+      store.panes.update(pane, { scriptId: script.id, title: script.name });
     }
-    project.runScriptId = script.id;
-    store.save();
+    store.projects.update(project, { runScriptId: script.id });
     const paneId = pane.id;
     const terminalId = await terminals.run(project.id, paneId, script.command);
     // The pane may have been closed while its previous run was stopping.
@@ -479,7 +483,7 @@ export class Scripts {
     );
   }
 
-  private paneOf(project: Project, scriptId: string) {
+  private paneOf(project: ProjectView, scriptId: string) {
     return this.options.store.state.panes.find(
       (pane) =>
         pane.projectId === project.id &&

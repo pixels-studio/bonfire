@@ -14,6 +14,7 @@ import {
   withSkillNames,
 } from '../../shared/domain';
 import {
+  type AgentStore,
   ChatAssistant,
   attachedText,
   inlineParts,
@@ -39,7 +40,7 @@ import type {
 import { codexLimits, type CodexRateLimits } from './limits';
 import { localMachine, type Machine } from './machines';
 import { CodexRpc, codexCommand, type CodexCommand } from './codex-rpc';
-import type { Store } from './persistence';
+import type { ProjectView } from './state';
 
 /** If Codex sends nothing for this long, the turn is assumed hung and ended. */
 const SILENCE_LIMIT_MS = 10 * 60_000;
@@ -88,7 +89,7 @@ export class CodexAssistant extends ChatAssistant {
   private readonly logins = new Map<string, (result: LoginCompleted) => void>();
 
   constructor(
-    store: Store,
+    store: AgentStore,
     emit: (event: AssistantEvent) => void,
     host: AssistantHost,
     private readonly command: (machine: Machine) => CodexCommand = codexCommand,
@@ -190,7 +191,7 @@ export class CodexAssistant extends ChatAssistant {
 
   /** Enabled skills for the project's folder: its own, the user's, plugins', and Codex's. */
   protected async listSkills(
-    project: Project,
+    project: ProjectView,
     machine: Machine,
   ): Promise<Skill[]> {
     const rpc = await this.connection(machine);

@@ -1,9 +1,17 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { mkdir, mkdtemp, realpath, symlink, writeFile } from 'node:fs/promises';
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { BrowserWindow } from 'electron';
+import { app, type BrowserWindow } from 'electron';
 import { git } from './git';
 import { Store } from './persistence';
 import type { services } from './services';
@@ -119,7 +127,7 @@ async function verifyRemote(backend: ReturnType<typeof services>) {
     paneId: shellPane.id,
     type: 'shell',
   });
-  await api.terminal.write(
+  await backend.terminals.write(
     terminalId,
     "printf 'changed\\n' > hello.txt; printf 'BONFIRE_REMOTE_PTY_OK %s\\n' \"$(pwd)\"\r",
   );
@@ -151,6 +159,182 @@ async function verifyRemote(backend: ReturnType<typeof services>) {
   console.log('BONFIRE_REMOTE_OK: SSH project, files, git, branches, terminal');
 }
 
+/**
+ * A program flooding a terminal whose view has fallen behind is paused, and carries on once
+ * the view catches up. The flood counts its lines into a file, which stops while it waits.
+ */
+async function verifyFlowControl(
+  backend: ReturnType<typeof services>,
+  folder: string,
+  terminalId: string,
+) {
+  const counter = join(folder, 'flood-count.txt');
+  const count = async () =>
+    Number((await readFile(counter, 'utf8').catch(() => '0')).trim() || 0);
+  // The view says it is watching, then never draws another character.
+  await backend.terminals.ack(terminalId, 0);
+  await backend.terminals.write(
+    terminalId,
+    "i=0; while :; do i=$((i+1)); printf '%0200d\\n' $i; echo $i > flood-count.txt; done\r",
+  );
+  // It runs until the view is half a megabyte behind, then waits; how soon depends on the
+  // computer's speed, so the count is watched until it stops.
+  let paused = 0;
+  let before = -1;
+  for (let tries = 0; tries < 40 && (!paused || paused !== before); tries++) {
+    before = paused;
+    await sleep(250);
+    paused = await count();
+  }
+  assert(paused > 0, 'the flood must start');
+  await sleep(500);
+  assert.equal(await count(), paused, 'a flood the view is behind on pauses');
+  await backend.terminals.ack(terminalId, 1 << 30);
+  await sleep(300);
+  assert(
+    (await count()) > paused,
+    'the flood carries on once the view catches up',
+  );
+  await backend.terminals.write(terminalId, '\x03');
+  await sleep(300);
+  await rm(counter, { force: true });
+  console.log('BONFIRE_FLOW_OK: a flooding terminal pauses and resumes');
+}
+
+/**
+ * Types a command into a terminal from the page, as a person would, and returns the output
+ * the page hears back. The command should print something only its output contains.
+ */
+async function typeInPage(
+  page: BrowserWindow['webContents'],
+  terminalId: string,
+  command: string,
+  expected = /BONFIRE_\w+_\d/,
+) {
+  const id = JSON.stringify(terminalId);
+  await page.executeJavaScript(`
+    window.heard = '';
+    window.stopHearing?.();
+    window.stopHearing = window.bonfire.terminal.onData((event) => {
+      if (event.terminalId === ${id}) window.heard += event.data ?? '';
+    });
+    window.bonfire.terminal.write(${id}, ${JSON.stringify(`${command}\r`)});
+  `);
+  let heard = '';
+  for (let tries = 0; tries < 25 && !expected.test(heard); tries++) {
+    await sleep(200);
+    heard = await page.executeJavaScript('window.heard');
+  }
+  return heard;
+}
+
+/** The process id of a utility process the app moved work out to, if it runs. */
+function hostPid(name: string) {
+  return app
+    .getAppMetrics()
+    .find((metric) => metric.type === 'Utility' && metric.name === name)?.pid;
+}
+
+/**
+ * Terminals and agents run in utility processes of their own, out of main. One that dies
+ * takes only its own work along: its terminals end, and the next request starts it again,
+ * with a new channel to the window.
+ */
+async function verifyHosts(
+  backend: ReturnType<typeof services>,
+  page: BrowserWindow['webContents'],
+  projectId: string,
+  terminalId: string,
+) {
+  const { api } = backend;
+  const terminals = hostPid('Bonfire Terminals');
+  assert(terminals, 'terminals run in their own process');
+  // Any request starts the agent host; whether it succeeds depends on the account signed in.
+  await api.limits.get('claude').catch(() => {});
+  const agents = hostPid('Bonfire Agents');
+  assert(agents, 'agents run in their own process');
+
+  process.kill(terminals, 'SIGKILL');
+  await sleep(500);
+  await assert.rejects(() => api.terminal.snapshot(terminalId), /not found/);
+  const pane = await api.panes.add('terminal');
+  const fresh = await api.terminal.create({
+    projectId,
+    paneId: pane.id,
+    type: 'shell',
+  });
+  // The page types into the new host and hears it back, over the channel it was given.
+  assert.match(
+    await typeInPage(page, fresh, 'echo BONFIRE_HOST_$((1+1))'),
+    /BONFIRE_HOST_2/,
+  );
+  assert.notEqual(hostPid('Bonfire Terminals'), terminals);
+  await api.panes.archive(pane.id);
+
+  process.kill(agents, 'SIGKILL');
+  await sleep(500);
+  await api.limits.get('claude').catch(() => {});
+  const restarted = hostPid('Bonfire Agents');
+  assert(restarted && restarted !== agents, 'the agent host starts again');
+  console.log('BONFIRE_HOSTS_OK: terminals and agents run apart and restart');
+}
+
+/**
+ * The terminal and agent hosts on any platform, Windows included: a terminal's output and
+ * typing over the window's own channel, both hosts restarting after a crash, and a pane's
+ * shell ended as it closes. Commands are ones every platform's shell runs.
+ */
+async function verifyHostsAnywhere(
+  mainWindow: BrowserWindow,
+  backend: ReturnType<typeof services>,
+) {
+  const { api } = backend;
+  const folder = await realpath(
+    await mkdtemp(join(tmpdir(), 'bonfire-hosts-')),
+  );
+  const project = await api.projects.create({
+    name: PROJECT_NAME,
+    path: folder,
+  });
+  const pane = await api.panes.add('terminal');
+  await reloadAndWait(mainWindow, 1500);
+  const page = mainWindow.webContents;
+  const create = (paneId: string) =>
+    api.terminal.create({ projectId: project.id, paneId, type: 'shell' });
+  // PowerShell and POSIX shells both print the sum, which the typed command doesn't contain.
+  const sum = (name: string) =>
+    process.platform === 'win32'
+      ? `Write-Output ("BONFIRE_${name}_" + (40+2))`
+      : `echo BONFIRE_${name}_$((40+2))`;
+  const first = await create(pane.id);
+  await sleep(2000);
+  assert.match(await typeInPage(page, first, sum('TYPED')), /BONFIRE_TYPED_42/);
+
+  const terminals = hostPid('Bonfire Terminals');
+  assert(terminals, 'terminals run in their own process');
+  process.kill(terminals);
+  await sleep(1000);
+  const again = await create(pane.id);
+  await sleep(2000);
+  assert.match(await typeInPage(page, again, sum('AGAIN')), /BONFIRE_AGAIN_42/);
+
+  await api.limits.get('claude').catch(() => {});
+  const agents = hostPid('Bonfire Agents');
+  assert(agents, 'agents run in their own process');
+  process.kill(agents);
+  await sleep(1000);
+  await api.limits.get('claude').catch(() => {});
+  assert.notEqual(hostPid('Bonfire Agents') ?? agents, agents);
+
+  // Closing the pane ends its shell; on Windows that runs node-pty's helper script.
+  await api.panes.archive(pane.id);
+  await sleep(1000);
+  await assert.rejects(() => api.terminal.snapshot(again));
+  console.log(
+    'BONFIRE_HOSTS_ANYWHERE_OK: terminals and agents on this platform',
+  );
+}
+
 async function verifyRestart(
   mainWindow: BrowserWindow,
   backend: ReturnType<typeof services>,
@@ -168,8 +352,12 @@ export async function smoke(
 ) {
   if (process.env.BONFIRE_SMOKE === 'restart')
     return verifyRestart(mainWindow, backend);
+  if (process.env.BONFIRE_SMOKE === 'hosts')
+    return verifyHostsAnywhere(mainWindow, backend);
 
   const { api } = backend;
+  // The window may be behind others, where it would draw only now and then.
+  mainWindow.webContents.setBackgroundThrottling(false);
   const { repository, outsideDirectory } = await createSmokeRepository();
   const project = {
     id: randomUUID(),
@@ -178,8 +366,7 @@ export async function smoke(
     createdAt: Date.now(),
     lastOpenedAt: Date.now(),
   };
-  backend.store.state.projects.push(project);
-  backend.store.save();
+  backend.store.projects.add(project);
 
   // Panes work in the project folder itself.
   await api.projects.open(project.id);
@@ -207,8 +394,8 @@ export async function smoke(
     paneId: firstShellPane.id,
     type: 'shell',
   });
-  await api.terminal.resize(firstTerminalId, 100, 30);
-  await api.terminal.write(
+  await backend.terminals.resize(firstTerminalId, 100, 30);
+  await backend.terminals.write(
     firstTerminalId,
     "printf 'shared change\\n' > hello.txt; printf 'BONFIRE_PTY_OK\\n'; pwd\r",
   );
@@ -250,6 +437,7 @@ export async function smoke(
     (await api.terminal.snapshot(firstTerminalId)).exitCode,
     undefined,
   );
+  await verifyFlowControl(backend, project.path, firstTerminalId);
 
   await assert.rejects(() =>
     api.filesystem.readFile(project.id, '../outside/secret.txt'),
@@ -259,6 +447,7 @@ export async function smoke(
     api.filesystem.readFile(project.id, 'escape/secret.txt'),
   );
 
+  let secondChatShell: string | undefined;
   for (const provider of ['claude', 'codex'] as const) {
     const chatPane = await api.panes.add(provider);
     const cliTerminalId = await api.terminal.create({
@@ -289,6 +478,7 @@ export async function smoke(
       cliTerminalId,
       'chat panes can host their own shell',
     );
+    secondChatShell = chatShellTerminalId;
   }
 
   // Switching branches is refused only while an agent works; the shared change comes along.
@@ -324,7 +514,35 @@ export async function smoke(
 
   await reloadAndWait(mainWindow, 1500);
   assert.match(await pageText(mainWindow), new RegExp(PROJECT_NAME));
+  // Typing from the page reaches the terminal, and its output reaches the page, straight
+  // between the page and the terminal host; the sum shows only in the output.
+  const page = mainWindow.webContents;
+  await page.executeJavaScript(
+    `document.querySelector('[data-pane-id="${firstShellPane.id}"]')?.scrollIntoView({ inline: 'nearest' })`,
+  );
+  assert.match(
+    await typeInPage(page, firstTerminalId, 'echo BONFIRE_LIVE_$((40+2))'),
+    /BONFIRE_LIVE_42/,
+  );
+  // A busy terminal in view draws with WebGL where the GPU allows, and with the DOM otherwise.
+  await typeInPage(
+    page,
+    firstTerminalId,
+    'seq 1 100000; echo BONFIRE_BURST_$((1+2))',
+    /BONFIRE_BURST_3/,
+  );
+  const renderer = await page.executeJavaScript(
+    `document.querySelector('[data-pane-id="${firstShellPane.id}"] [data-renderer]')?.dataset.renderer`,
+  );
+  assert(['webgl', 'dom'].includes(renderer), 'the terminal is drawn');
+  console.log(`BONFIRE_RENDERER: ${renderer}`);
   await saveScreenshot(mainWindow);
+  await verifyHosts(
+    backend,
+    mainWindow.webContents,
+    project.id,
+    secondChatShell!,
+  );
   console.log(
     'BONFIRE_SMOKE_OK: renderer, isolated IPC, concurrent PTYs, CLIs, Git diff, confined files, persistence',
   );

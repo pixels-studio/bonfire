@@ -3,6 +3,7 @@ import * as git from './git';
 import type { GitHub } from './github';
 import type { Place } from './machines';
 import type { Store } from './persistence';
+import type { PaneView } from './state';
 
 /** GitHub can't tell the app a pull request merged, so it is asked this often. */
 const CHECK_INTERVAL_MS = 60_000;
@@ -87,7 +88,7 @@ export class MergeWatcher {
     if (!store.preferences.archiveOnMerge) return [];
     const groups = new Map<
       string,
-      { projectId: string; cwd: Place; branch: string; panes: Pane[] }
+      { projectId: string; cwd: Place; branch: string; panes: PaneView[] }
     >();
     for (const pane of store.state.panes) {
       if (
