@@ -184,6 +184,7 @@
       ></webview>
     {:else}
       <EmptyState
+        class="h-full"
         icon={toolPaneIcon('browser')}
         title="No page open"
         description="Enter a URL above to open a page."
