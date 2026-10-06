@@ -27,9 +27,9 @@ export const ATTENTION_LABELS: Record<ProjectAttention, string> = {
 };
 
 export const ATTENTION_DOTS: Record<ProjectAttention, string> = {
-  input: 'bg-orange-400',
+  input: 'bg-orange-500',
   error: 'bg-destructive',
-  done: 'bg-success',
+  done: 'bg-lime-400',
 };
 
 /** Tracks what each pane's assistant is doing, from the main process's event stream. */

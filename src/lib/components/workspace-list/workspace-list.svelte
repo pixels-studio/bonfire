@@ -38,10 +38,10 @@
   ];
 
   const ACTIVITY_DOTS: Record<Exclude<PaneStatus, 'idle'>, string> = {
-    working: 'bg-success dot-working',
-    input: 'bg-orange-400',
+    working: 'bg-amber-400 dot-working',
+    input: 'bg-orange-500',
     error: 'bg-destructive',
-    done: 'bg-yellow-400',
+    done: 'bg-lime-400',
   };
   const ACTIVITY_LABELS: Record<Exclude<PaneStatus, 'idle'>, string> = {
     working: 'An agent is working',
