@@ -285,7 +285,7 @@
   <!-- The window buttons sit at the left in a window; the sidebar button makes room for them. -->
   <div
     class={cn(
-      'flex h-13 shrink-0 items-center gap-1 px-4 pt-4.5 app-drag',
+      'flex h-13 shrink-0 items-center gap-1 px-4 pt-4.5 mb-2 app-drag',
       trafficLightInset && 'pl-20!',
     )}
   >
