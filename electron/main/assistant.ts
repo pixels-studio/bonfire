@@ -35,6 +35,7 @@ import {
   PASTE_FOLDER_PREFIX,
   PendingAttachments,
   sniffImageExtension,
+  toolImagePreview,
   type PendingAttachment,
 } from './attachments';
 import { Cached } from './cached';
@@ -42,6 +43,9 @@ import { localMachine, type Machine } from './machines';
 import type { Store } from './persistence';
 import { MAX_TOOL_OUTPUT } from './tool-text';
 import { sendable, type PaneView, type ProjectView } from './state';
+
+/** Images shown from one tool result; later ones are dropped rather than crowding the reply. */
+const MAX_TOOL_IMAGES = 4;
 
 export type ChooseImage = () => Promise<
   { name: string; path: string } | undefined
@@ -744,6 +748,33 @@ export abstract class ChatAssistant {
       return;
     const message = this.store.panes.append(pane, id, field, text);
     if (message) this.markDirty(pane, message);
+  }
+
+  /**
+   * Adds previews of a tool result's images to its message once they're ready. Runs after
+   * the message with its text is already published, so a slow preview never holds up the
+   * stream; `id` is looked up again rather than captured, in case the message changed meanwhile.
+   */
+  protected async attachToolImages(
+    pane: PaneView,
+    id: string,
+    images: { data: string; mimeType: string }[],
+  ) {
+    if (!images.length) return;
+    const previews = (
+      await Promise.all(
+        images
+          .slice(0, MAX_TOOL_IMAGES)
+          .map(({ data, mimeType }) => toolImagePreview(data, mimeType)),
+      )
+    ).filter((preview): preview is string => !!preview);
+    if (!previews.length) return;
+    const current = pane.messages.findLast((item) => item.id === id);
+    if (!current?.tool) return;
+    this.publish(pane, {
+      ...current,
+      tool: { ...current.tool, images: previews },
+    });
   }
 
   protected publishError(pane: PaneView, text: string) {

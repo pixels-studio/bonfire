@@ -1,6 +1,7 @@
 import type {
   ActionId,
   AssistantProvider,
+  ConversationMessage,
   Pane,
   Preferences,
   Project,
@@ -84,6 +85,32 @@ export function titleFrom(text: string) {
   return compact.length > TITLE_MAX_LENGTH
     ? `${compact.slice(0, TITLE_MAX_LENGTH - 1).trimEnd()}…`
     : compact;
+}
+
+/** Tool calls that write a file, keyed by the name both providers use for them. */
+const FILE_EDIT_TOOLS = new Set(['Edit', 'MultiEdit', 'Write', 'NotebookEdit']);
+
+/**
+ * The files a turn's tool calls edited, each path once, in the order first touched. A
+ * Codex `fileChange` can cover several files at once, its paths joined with `, `.
+ */
+export function editedPaths(
+  messages: readonly Pick<ConversationMessage, 'kind' | 'tool'>[],
+): string[] {
+  const paths: string[] = [];
+  const seen = new Set<string>();
+  for (const message of messages) {
+    if (message.kind !== 'tool' || !message.tool) continue;
+    if (!FILE_EDIT_TOOLS.has(message.tool.name)) continue;
+    for (const raw of message.tool.input.split(', ')) {
+      const path = raw.trim();
+      if (path && !seen.has(path)) {
+        seen.add(path);
+        paths.push(path);
+      }
+    }
+  }
+  return paths;
 }
 
 /**

@@ -1,21 +1,25 @@
 <script lang="ts">
   import AttachmentChip from './attachment-chip.svelte';
+  import EditedFiles from './edited-files.svelte';
   import TextView from './text-view.svelte';
   import ThinkingView from './thinking-view.svelte';
   import ToolView from './tool-view.svelte';
   import WorkGroup from './work-group.svelte';
   import type { ConversationMessage } from '$shared/contracts';
-  import { promptParts } from '$shared/domain';
+  import { editedPaths, promptParts } from '$shared/domain';
 
   let {
     messages,
     paneId,
+    projectId,
     expanded,
   }: {
     /** A prompt (with its attachments) followed by the assistant's replies. */
     messages: ConversationMessage[];
     /** The pane the turn belongs to, so its last reply can be forked into a new one. */
     paneId: string;
+    /** The pane's project, so the turn's edited files can be looked up; unset for very old panes. */
+    projectId?: string;
     /** Keeps the turn as it streamed, rather than folding its work away. */
     expanded: boolean;
   } = $props();
@@ -47,13 +51,23 @@
   );
   // A turn loaded from history folds everything up to its last tool call away. One watched
   // live is never regrouped when it ends, which would shrink the page and remount its rows.
+  // A call that returned an image is never folded in: it's worth seeing without expanding.
   const workLength = $derived(
-    expanded ? 0 : replies.findLastIndex((item) => item.kind === 'tool') + 1,
+    expanded
+      ? 0
+      : replies.findLastIndex(
+          (item) => item.kind === 'tool' && !item.tool?.images?.length,
+        ) + 1,
   );
   /** The turn's final reply, which carries the copy button and timestamp once complete. */
   const lastReplyId = $derived(
-    replies.findLast((item) => item.kind === 'text' && item.role === 'assistant')
-      ?.id,
+    replies.findLast(
+      (item) => item.kind === 'text' && item.role === 'assistant',
+    )?.id,
+  );
+  const editedFilePaths = $derived(editedPaths(replies));
+  const turnComplete = $derived(
+    replies.length > 0 && !replies.some((item) => item.status === 'streaming'),
   );
 </script>
 
@@ -125,3 +139,6 @@
 {#each replies.slice(workLength) as message (message.id)}
   {@render entry(message)}
 {/each}
+{#if turnComplete && projectId && editedFilePaths.length}
+  <EditedFiles {projectId} paths={editedFilePaths} />
+{/if}

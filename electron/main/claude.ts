@@ -254,7 +254,11 @@ export class ClaudeAssistant extends ChatAssistant {
       return;
     }
     return new Promise<void | NeedsSignInCode>((resolve, reject) => {
-      const child = machine.spawn('claude', ['auth', 'login', '--claudeai'], {});
+      const child = machine.spawn(
+        'claude',
+        ['auth', 'login', '--claudeai'],
+        {},
+      );
       const pending = { child, output: '' };
       this.pendingRemoteLogin = pending;
       let settled = false;
@@ -290,7 +294,9 @@ export class ClaudeAssistant extends ChatAssistant {
           else if (code === 0) resolve();
           else
             reject(
-              Error(pending.output.trim() || `Sign-in exited with code ${code}`),
+              Error(
+                pending.output.trim() || `Sign-in exited with code ${code}`,
+              ),
             );
         }),
       );
@@ -657,25 +663,44 @@ export class ClaudeAssistant extends ChatAssistant {
         (message) => message.id === block.tool_use_id,
       );
       if (!toolMessage?.tool) continue;
-      const output = clipOutput(resultText(block.content));
+      const { text, images } = resultParts(block.content);
       this.publish(pane, {
         ...toolMessage,
         status: block.is_error ? 'failed' : 'complete',
-        tool: { ...toolMessage.tool, output },
+        tool: { ...toolMessage.tool, output: clipOutput(text) },
       });
+      if (images.length)
+        void this.attachToolImages(pane, toolMessage.id, images);
     }
   }
 }
 
-/** Flattens a tool result's content, noting images that can't be shown. */
-function resultText(
-  content: string | { type: string; text?: string }[] | undefined,
-): string {
-  if (typeof content === 'string') return content;
-  return (content ?? [])
-    .map((part) => part.text ?? (part.type === 'image' ? '[image]' : ''))
-    .filter(Boolean)
-    .join('\n');
+/** One block of a tool result's content, loosely typed to cover both text and image blocks. */
+type ResultBlock = {
+  type: string;
+  text?: string;
+  source?: unknown;
+};
+
+/** Splits a tool result's content into its text and any images, each kept in order. */
+export function resultParts(content: string | unknown[] | undefined) {
+  if (typeof content === 'string') return { text: content, images: [] };
+  const text: string[] = [];
+  const images: { data: string; mimeType: string }[] = [];
+  for (const raw of content ?? []) {
+    const part = raw as ResultBlock;
+    const source = part.source as
+      { type?: string; media_type?: string; data?: string } | undefined;
+    if (
+      part.type === 'image' &&
+      source?.type === 'base64' &&
+      source.data &&
+      source.media_type
+    )
+      images.push({ data: source.data, mimeType: source.media_type });
+    else if (part.text) text.push(part.text);
+  }
+  return { text: text.join('\n'), images };
 }
 
 /** The refusal returned when the turn ended while the model was waiting on the user. */

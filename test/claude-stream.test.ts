@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { AssistantEvent } from '../shared/contracts';
-import { ClaudeAssistant } from '../electron/main/claude';
+import { ClaudeAssistant, resultParts } from '../electron/main/claude';
 import { fakeStore, host } from './helpers';
 
 /** Streams a tool call's input JSON in `size`-character deltas; returns the inputs shown. */
@@ -55,4 +55,45 @@ test('a long tool input still shows its key argument while it streams', () => {
   const json = JSON.stringify({ file_path: '/src/app.ts', content });
   const shown = streamToolInput('Write', json, 3);
   assert.equal(shown.at(-1), '/src/app.ts');
+});
+
+test('a tool result splits into its text and any images, in order', () => {
+  const { text, images } = resultParts([
+    { type: 'text', text: 'before' },
+    {
+      type: 'image',
+      source: { type: 'base64', media_type: 'image/png', data: 'AAAA' },
+    },
+    { type: 'text', text: 'after' },
+  ]);
+  assert.equal(text, 'before\nafter');
+  assert.deepEqual(images, [{ data: 'AAAA', mimeType: 'image/png' }]);
+});
+
+test('a tool result with only an image leaves no placeholder text', () => {
+  const { text, images } = resultParts([
+    {
+      type: 'image',
+      source: { type: 'base64', media_type: 'image/png', data: 'AAAA' },
+    },
+  ]);
+  assert.equal(text, '');
+  assert.equal(images.length, 1);
+});
+
+test('an image sourced from a URL, not base64 data, is left out', () => {
+  const { images } = resultParts([
+    {
+      type: 'image',
+      source: { type: 'url', url: 'https://example.com/a.png' },
+    },
+  ]);
+  assert.deepEqual(images, []);
+});
+
+test('a plain string result has no images', () => {
+  assert.deepEqual(resultParts('plain output'), {
+    text: 'plain output',
+    images: [],
+  });
 });

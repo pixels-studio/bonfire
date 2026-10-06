@@ -3,6 +3,7 @@
   import { onMount } from 'svelte';
   import * as Tooltip from '$lib/components/ui/tooltip';
   import Toast from '$lib/components/ui/toast/toast.svelte';
+  import ImageLightbox from '$lib/components/conversation/image-lightbox.svelte';
   import { applyAccent } from '$lib/accent';
   import { connections } from '$lib/stores/connections.svelte';
   import { preferences } from '$lib/stores/preferences.svelte';
@@ -44,3 +45,4 @@
   {@render children()}
 </Tooltip.Provider>
 <Toast />
+<ImageLightbox />
