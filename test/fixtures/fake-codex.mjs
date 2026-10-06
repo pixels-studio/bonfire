@@ -24,14 +24,13 @@ const usage = (threadId, turnId) =>
     threadId,
     turnId,
     tokenUsage: {
-      // The real app-server reports the whole thread's usage here; this fixture only
-      // ever emits one update, so it matches `last`.
+      // Total counts repeated calls; only last represents the latest context.
       total: {
-        totalTokens: 1100,
-        inputTokens: 1000,
-        cachedInputTokens: 600,
-        outputTokens: 100,
-        reasoningOutputTokens: 40,
+        totalTokens: 5500,
+        inputTokens: 5000,
+        cachedInputTokens: 3000,
+        outputTokens: 500,
+        reasoningOutputTokens: 200,
       },
       last: {
         totalTokens: 1100,

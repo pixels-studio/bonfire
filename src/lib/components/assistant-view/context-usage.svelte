@@ -106,7 +106,7 @@
     <Popover.Content class="w-60 gap-4 p-4" align="end" side="top">
       <div class="flex flex-col gap-1.5">
         <div class="flex items-center justify-between">
-          <span>Total usage</span>
+          <span>Context used</span>
           {#if oncompact}
             <button
               type="button"
