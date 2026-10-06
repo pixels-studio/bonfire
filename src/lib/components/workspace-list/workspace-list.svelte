@@ -310,8 +310,8 @@
         class={cn('h-9 w-full max-w-none rounded-md', project && 'pr-10')}
       />
       {#if project}
-        <Tooltip.Root>
-          <Tooltip.Trigger>
+        <DropdownMenu.Root>
+          <DropdownMenu.Trigger>
             {#snippet child({ props })}
               <Button
                 {...props}
@@ -323,15 +323,25 @@
                     'text-muted-foreground hover:text-foreground',
                 )}
                 aria-label="Project options"
-                aria-pressed={settingsOpen}
-                onclick={onsettings}
+                title="Project options"
               >
                 <Icon name="dots" />
               </Button>
             {/snippet}
-          </Tooltip.Trigger>
-          <Tooltip.Content side="bottom">Project settings</Tooltip.Content>
-        </Tooltip.Root>
+          </DropdownMenu.Trigger>
+          <DropdownMenu.Content align="end" class="w-48">
+            <DropdownMenu.Item onclick={onsettings}>
+              <Icon name="settings" /> Settings
+            </DropdownMenu.Item>
+            <DropdownMenu.Separator />
+            <DropdownMenu.Item
+              variant="destructive"
+              onclick={() => onremoveProject(project.id)}
+            >
+              <Icon name="trash" /> Remove project
+            </DropdownMenu.Item>
+          </DropdownMenu.Content>
+        </DropdownMenu.Root>
       {/if}
     </div>
   </div>
