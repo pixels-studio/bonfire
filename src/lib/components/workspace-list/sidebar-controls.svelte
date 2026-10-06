@@ -5,15 +5,17 @@
 
   let {
     collapsed = false,
-    canSwitch = false,
+    canPrevious = false,
+    canNext = false,
     ontoggle,
     onprevious,
     onnext,
   }: {
     /** Whether the sidebar is hidden, so the button offers to show it. */
     collapsed?: boolean;
-    /** Whether there is another project to go to. */
-    canSwitch?: boolean;
+    /** Whether there is a pane before or after the one in sight to scroll to. */
+    canPrevious?: boolean;
+    canNext?: boolean;
     ontoggle: () => void;
     onprevious: () => void;
     onnext: () => void;
@@ -55,5 +57,5 @@
   ontoggle,
 )}
 <span class="flex-1"></span>
-{@render control('Previous project', 'arrow-left', onprevious, !canSwitch)}
-{@render control('Next project', 'arrow-right', onnext, !canSwitch)}
+{@render control('Previous pane', 'arrow-left', onprevious, !canPrevious)}
+{@render control('Next pane', 'arrow-right', onnext, !canNext)}

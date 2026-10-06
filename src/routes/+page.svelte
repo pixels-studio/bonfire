@@ -277,13 +277,19 @@
     );
   }
 
-  /** Opens the project before or after the open one, going round at the ends. */
-  function stepProject(step: 1 | -1) {
-    const { projects } = appState;
-    if (projects.length < 2) return;
-    const at = projects.findIndex(({ id }) => id === project?.id);
-    const next = projects[(at + step + projects.length) % projects.length];
-    openProject(next.id);
+  /** Where the pane in sight sits in the strip, which the sidebar's arrows step from. */
+  const activeStripIndex = $derived(
+    activePane ? stripIds.indexOf(activePane.id) : -1,
+  );
+  const canScrollBack = $derived(activeStripIndex > 0);
+  const canScrollForward = $derived(
+    activeStripIndex >= 0 && activeStripIndex < stripIds.length - 1,
+  );
+
+  /** Scrolls the strip to the pane before or after the one in sight. */
+  function scrollStrip(step: 1 | -1) {
+    const id = stripIds[activeStripIndex + step];
+    if (id) void focusPane(id);
   }
 
   function openProject(projectId: string) {
@@ -1116,8 +1122,10 @@
               onpanel={toggleOverlay}
               onhelp={() => window.bonfire.navigation.help()}
               oncollapse={toggleSidebar}
-              onprevious={() => stepProject(-1)}
-              onnext={() => stepProject(1)}
+              canPrevious={canScrollBack}
+              canNext={canScrollForward}
+              onprevious={() => scrollStrip(-1)}
+              onnext={() => scrollStrip(1)}
               onselectProject={openProject}
               onaddProject={addProject}
               onremoveProject={removeProject}
@@ -1148,10 +1156,11 @@
                 <div class="flex w-24 items-center gap-0.5">
                   <SidebarControls
                     collapsed
-                    canSwitch={appState.projects.length > 1}
                     ontoggle={toggleSidebar}
-                    onprevious={() => stepProject(-1)}
-                    onnext={() => stepProject(1)}
+                    canPrevious={canScrollBack}
+                    canNext={canScrollForward}
+                    onprevious={() => scrollStrip(-1)}
+                    onnext={() => scrollStrip(1)}
                   />
                 </div>
               </div>

@@ -82,6 +82,8 @@
     onpanel,
     onhelp,
     oncollapse,
+    canPrevious = false,
+    canNext = false,
     onprevious,
     onnext,
     onselectProject,
@@ -117,7 +119,9 @@
     onhelp: () => void;
     /** Hides the sidebar. */
     oncollapse: () => void;
-    /** Opens the project before or after the open one. */
+    /** Scrolls to the pane before or after the one in sight. */
+    canPrevious?: boolean;
+    canNext?: boolean;
     onprevious: () => void;
     onnext: () => void;
     onselectProject: (id: string) => void;
@@ -290,7 +294,8 @@
     )}
   >
     <SidebarControls
-      canSwitch={projects.length > 1}
+      {canPrevious}
+      {canNext}
       ontoggle={oncollapse}
       {onprevious}
       {onnext}
