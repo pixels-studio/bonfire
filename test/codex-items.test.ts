@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
   displayCommand,
+  imagesFromItem,
   messageFromItem,
   planMessage,
 } from '../electron/main/codex-items';
@@ -116,6 +117,40 @@ test('MCP tool calls show their arguments and result', () => {
     input: 'svelte',
     output: 'found it',
   });
+});
+
+test('an MCP tool call surfaces its images, not just its text', () => {
+  const item: ThreadItem = {
+    type: 'mcpToolCall',
+    id: 'm',
+    server: 'browser',
+    tool: 'screenshot',
+    status: 'completed',
+    arguments: {},
+    result: {
+      content: [
+        { type: 'text', text: 'captured' },
+        { type: 'image', data: 'AAAA', mimeType: 'image/png' },
+      ],
+    },
+    error: null,
+  };
+  assert.equal(messageFromItem(item, true)?.tool?.output, 'captured');
+  assert.deepEqual(imagesFromItem(item), [
+    { data: 'AAAA', mimeType: 'image/png' },
+  ]);
+});
+
+test('a dynamic tool call without images has nothing to attach', () => {
+  const item: ThreadItem = {
+    type: 'dynamicToolCall',
+    id: 'd',
+    tool: 'lookup',
+    status: 'completed',
+    arguments: {},
+    contentItems: [{ type: 'text', text: 'ok' }],
+  };
+  assert.deepEqual(imagesFromItem(item), []);
 });
 
 test('displayCommand strips the shell wrapper', () => {

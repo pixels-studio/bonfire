@@ -31,7 +31,8 @@
   function answerTo(question: Question) {
     const { id, multiple } = question;
     const text = typed[id]?.trim();
-    const chosen = selected[id] ?? [];
+    // A plain copy: the answer crosses IPC, which can't clone a `$state` proxy.
+    const chosen = [...(selected[id] ?? [])];
     if (!text || !isOther(question)) return chosen;
     return multiple ? [...chosen, text] : [text];
   }

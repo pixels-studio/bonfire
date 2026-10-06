@@ -2,6 +2,7 @@ import { tmpdir } from 'node:os';
 import type {
   AssistantEvent,
   ModelOption,
+  NeedsDeviceAuth,
   Project,
   ProviderAccount,
   ProviderLimits,
@@ -11,9 +12,11 @@ import type {
 import {
   SIMPLIFIED_ENGLISH_INSTRUCTIONS,
   errorMessage,
+  stripAnsi,
   withSkillNames,
 } from '../../shared/domain';
 import {
+  type AgentStore,
   ChatAssistant,
   attachedText,
   inlineParts,
@@ -23,7 +26,12 @@ import {
   type RequestAnswer,
   type Turn,
 } from './assistant';
-import { displayCommand, messageFromItem, planMessage } from './codex-items';
+import {
+  displayCommand,
+  imagesFromItem,
+  messageFromItem,
+  planMessage,
+} from './codex-items';
 import type {
   CodexAccount,
   CommandApprovalDecision,
@@ -37,9 +45,9 @@ import type {
   UserInputQuestion,
 } from './codex-protocol';
 import { codexLimits, type CodexRateLimits } from './limits';
-import { localMachine, type Machine } from './machines';
+import { localMachine, type Machine, type PipedProcess } from './machines';
 import { CodexRpc, codexCommand, type CodexCommand } from './codex-rpc';
-import type { Store } from './persistence';
+import type { ProjectView } from './state';
 
 /** If Codex sends nothing for this long, the turn is assumed hung and ended. */
 const SILENCE_LIMIT_MS = 10 * 60_000;
@@ -57,8 +65,8 @@ type Run = {
   interruptPending: boolean;
   /** Highest summary section seen per reasoning item, to separate sections. */
   summaryIndex: Map<string, number>;
-  /** When each reasoning item started, to time it once it completes. */
-  reasoningStarts: Map<string, number>;
+  /** When each reasoning or agent-message item started, to time it once it completes. */
+  itemStarts: Map<string, number>;
   settle: { resolve: () => void; reject: (error: Error) => void };
   finished: boolean;
   /** Whether this turn has already shown its failure. */
@@ -88,7 +96,7 @@ export class CodexAssistant extends ChatAssistant {
   private readonly logins = new Map<string, (result: LoginCompleted) => void>();
 
   constructor(
-    store: Store,
+    store: AgentStore,
     emit: (event: AssistantEvent) => void,
     host: AssistantHost,
     private readonly command: (machine: Machine) => CodexCommand = codexCommand,
@@ -135,7 +143,7 @@ export class CodexAssistant extends ChatAssistant {
         threadId,
         interruptPending: false,
         summaryIndex: new Map(),
-        reasoningStarts: new Map(),
+        itemStarts: new Map(),
         settle: { resolve, reject },
         finished: false,
         reported: false,
@@ -190,7 +198,7 @@ export class CodexAssistant extends ChatAssistant {
 
   /** Enabled skills for the project's folder: its own, the user's, plugins', and Codex's. */
   protected async listSkills(
-    project: Project,
+    project: ProjectView,
     machine: Machine,
   ): Promise<Skill[]> {
     const rpc = await this.connection(machine);
@@ -241,8 +249,21 @@ export class CodexAssistant extends ChatAssistant {
     };
   }
 
-  /** Starts a ChatGPT sign-in, opens it in the browser, and waits for the server to finish it. */
-  protected async signIn(signal: AbortSignal) {
+  /** A remote sign-in's CLI, kept running until its device code is entered elsewhere. */
+  private pendingDeviceLogin?: PipedProcess;
+
+  /**
+   * Starts a ChatGPT sign-in, opens it in the browser, and waits for the server to finish it.
+   * Codex's usual login runs a callback server on the machine's own `localhost`, which this
+   * computer's browser can't reach over SSH; a machine reached that way instead runs the
+   * CLI's device-code login, which shows a code to enter at a page in the browser and finishes
+   * once that's done, found out through `awaitDeviceSignIn`.
+   */
+  protected async signIn(
+    signal: AbortSignal,
+    machine: Machine,
+  ): Promise<void | NeedsDeviceAuth> {
+    if (machine.remote) return this.signInRemote(signal, machine);
     const rpc = await this.connection();
     const { loginId, authUrl } = await rpc.request<{
       loginId: string;
@@ -269,6 +290,77 @@ export class CodexAssistant extends ChatAssistant {
     } finally {
       this.logins.delete(loginId);
     }
+  }
+
+  /** Runs the CLI's own device-code login on `machine` and waits for it to print one. */
+  private signInRemote(
+    signal: AbortSignal,
+    machine: Machine,
+  ): Promise<NeedsDeviceAuth> {
+    return new Promise<NeedsDeviceAuth>((resolve, reject) => {
+      const child = machine.spawn('codex', ['login', '--device-auth'], {});
+      this.pendingDeviceLogin = child;
+      let output = '';
+      let settled = false;
+      const onAbort = () => child.kill();
+      signal.addEventListener('abort', onAbort, { once: true });
+      const finish = (act: () => void) => {
+        if (settled) return;
+        settled = true;
+        signal.removeEventListener('abort', onAbort);
+        act();
+      };
+      const read = (chunk: Buffer) => {
+        output += chunk.toString('utf8');
+        const clean = stripAnsi(output);
+        const url = /https:\/\/\S+/.exec(clean)?.[0];
+        const userCode = /\b[A-Z0-9]{4}-[A-Z0-9]{4,8}\b/.exec(clean)?.[0];
+        if (!url || !userCode) return;
+        finish(() => {
+          void this.host.openUrl(url);
+          resolve({ userCode, verificationUrl: url });
+        });
+      };
+      child.stdout.on('data', read);
+      child.stderr.on('data', read);
+      child.on('error', (cause) =>
+        finish(() => {
+          this.pendingDeviceLogin = undefined;
+          reject(cause);
+        }),
+      );
+      child.on('exit', (code) =>
+        finish(() => {
+          this.pendingDeviceLogin = undefined;
+          if (signal.aborted) reject(Error('Sign-in was cancelled.'));
+          else
+            reject(Error(output.trim() || `Sign-in exited with code ${code}`));
+        }),
+      );
+    });
+  }
+
+  /** Waits for the CLI from `signInRemote` to finish, once its code has been entered. */
+  protected async awaitDeviceSignIn(signal: AbortSignal): Promise<void> {
+    const child = this.pendingDeviceLogin;
+    if (!child) throw Error('No sign-in is waiting to finish.');
+    this.pendingDeviceLogin = undefined;
+    let output = '';
+    await new Promise<void>((resolve, reject) => {
+      const onAbort = () => child.kill();
+      signal.addEventListener('abort', onAbort, { once: true });
+      const read = (chunk: Buffer) => {
+        output += chunk.toString('utf8');
+      };
+      child.stdout.on('data', read);
+      child.stderr.on('data', read);
+      child.on('exit', (code) => {
+        signal.removeEventListener('abort', onAbort);
+        if (code === 0) resolve();
+        else if (signal.aborted) reject(Error('Sign-in was cancelled.'));
+        else reject(Error(output.trim() || `Sign-in exited with code ${code}`));
+      });
+    });
   }
 
   /** Runs the prompt on an ephemeral, read-only thread that isn't saved to the user's history. */
@@ -416,12 +508,23 @@ export class CodexAssistant extends ChatAssistant {
         const completed = method === 'item/completed';
         const item = params.item as ThreadItem;
         const message = messageFromItem(item, completed);
-        if (message && item.type === 'reasoning') {
-          const startedAt = run.reasoningStarts.get(item.id) ?? Date.now();
-          run.reasoningStarts.set(item.id, startedAt);
-          if (completed) message.durationMs = Date.now() - startedAt;
+        if (
+          message &&
+          (item.type === 'reasoning' || item.type === 'agentMessage')
+        ) {
+          const startedAt = run.itemStarts.get(item.id) ?? Date.now();
+          run.itemStarts.set(item.id, startedAt);
+          if (completed) {
+            message.durationMs = Date.now() - startedAt;
+            message.createdAt = Date.now();
+          }
         }
         if (message) this.publish(pane, message, completed);
+        if (completed && message?.tool) {
+          const images = imagesFromItem(item);
+          if (images.length)
+            void this.attachToolImages(pane, message.id, images);
+        }
         break;
       }
       case 'item/agentMessage/delta':
@@ -447,7 +550,10 @@ export class CodexAssistant extends ChatAssistant {
         this.publish(pane, planMessage(params.turnId, params.plan), false);
         break;
       case 'thread/tokenUsage/updated': {
-        const last: TokenUsageBreakdown = params.tokenUsage.last;
+        // `total` sums every model call in the thread, including repeated context.
+        // The latest call's input contains the context sent to the model.
+        const last: TokenUsageBreakdown | undefined = params.tokenUsage.last;
+        if (!last) break;
         this.publishUsage(pane, {
           // Cached and reasoning tokens are counted inside input and output, so split them out.
           inputTokens: Math.max(0, last.inputTokens - last.cachedInputTokens),

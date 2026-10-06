@@ -18,13 +18,17 @@
     oncompact,
   }: {
     usage?: Usage;
-    contextWindow: number;
+    /** Left unset until the provider reports the real window size; never guessed. */
+    contextWindow?: number;
     /** Compacting needs an idle pane. */
     disabled?: boolean;
     /** Offered only for providers that can compact on request. */
     oncompact?: () => void;
   } = $props();
   let open = $state(false);
+
+  /** The whole gauge stays hidden until both the usage and the real window size are known. */
+  const known = $derived(!!usage && !!contextWindow);
 
   const usedTokens = $derived(
     usage
@@ -34,7 +38,9 @@
           usage.reasoningOutputTokens
       : 0,
   );
-  const usedRatio = $derived(Math.min(usedTokens / contextWindow, 1));
+  const usedRatio = $derived(
+    contextWindow ? Math.min(usedTokens / contextWindow, 1) : 0,
+  );
   const tone = $derived(
     TONES[
       usedRatio >= 0.75 ? 'critical' : usedRatio >= 0.5 ? 'warning' : 'normal'
@@ -62,45 +68,45 @@
   );
 
   function percentOfContext(tokens: number) {
-    if (tokens <= 0) return '0%';
-    const percent = (tokens / contextWindow) * 100;
+    if (!contextWindow || tokens <= 0) return '0%';
+    const percent = Math.min((tokens / contextWindow) * 100, 100);
     return percent < 1 ? '<1%' : `${Math.round(percent)}%`;
   }
 </script>
 
-<Popover.Root bind:open>
-  <Popover.Trigger
-    class="grid shrink-0 place-items-center p-1"
-    aria-label={`${formatTokens(usedTokens)} of ${formatTokens(contextWindow)} tokens used`}
-  >
-    <svg class="size-4 -rotate-90" viewBox="0 0 18 18" aria-hidden="true">
-      <circle
-        class="fill-none stroke-muted"
-        cx="9"
-        cy="9"
-        r={RING_RADIUS}
-        stroke-width="2.5"
-      />
-      <circle
-        class={cn(
-          'fill-none transition-all duration-200 ease-out',
-          tone.stroke,
-        )}
-        cx="9"
-        cy="9"
-        r={RING_RADIUS}
-        stroke-width="2.5"
-        stroke-linecap="round"
-        stroke-dasharray={RING_CIRCUMFERENCE}
-        stroke-dashoffset={RING_CIRCUMFERENCE * (1 - usedRatio)}
-      />
-    </svg>
-  </Popover.Trigger>
-  <Popover.Content class="w-60 gap-4 p-4" align="end" side="top">
-    {#if usage}
+{#if known}
+  <Popover.Root bind:open>
+    <Popover.Trigger
+      class="grid shrink-0 place-items-center p-1"
+      aria-label={`${formatTokens(usedTokens)} of ${formatTokens(contextWindow!)} tokens used`}
+    >
+      <svg class="size-4 -rotate-90" viewBox="0 0 18 18" aria-hidden="true">
+        <circle
+          class="fill-none stroke-muted"
+          cx="9"
+          cy="9"
+          r={RING_RADIUS}
+          stroke-width="2.5"
+        />
+        <circle
+          class={cn(
+            'fill-none transition-all duration-200 ease-out',
+            tone.stroke,
+          )}
+          cx="9"
+          cy="9"
+          r={RING_RADIUS}
+          stroke-width="2.5"
+          stroke-linecap="round"
+          stroke-dasharray={RING_CIRCUMFERENCE}
+          stroke-dashoffset={RING_CIRCUMFERENCE * (1 - usedRatio)}
+        />
+      </svg>
+    </Popover.Trigger>
+    <Popover.Content class="w-60 gap-4 p-4" align="end" side="top">
       <div class="flex flex-col gap-1.5">
         <div class="flex items-center justify-between">
-          <span>Total usage</span>
+          <span>Context used</span>
           {#if oncompact}
             <button
               type="button"
@@ -125,7 +131,7 @@
           ></div>
         </div>
         <span class="whitespace-nowrap text-muted-foreground tabular-nums">
-          {formatTokens(usedTokens)} / {formatTokens(contextWindow)} · {percentOfContext(
+          {formatTokens(usedTokens)} / {formatTokens(contextWindow!)} · {percentOfContext(
             usedTokens,
           )}
         </span>
@@ -147,10 +153,6 @@
           {/each}
         </div>
       {/each}
-    {:else}
-      <p class="text-muted-foreground">
-        Context usage appears after the first response
-      </p>
-    {/if}
-  </Popover.Content>
-</Popover.Root>
+    </Popover.Content>
+  </Popover.Root>
+{/if}

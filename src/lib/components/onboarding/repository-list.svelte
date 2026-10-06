@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { overlayScrollbar } from '$lib/scrollbar';
   import { onMount } from 'svelte';
   import Search from '@lucide/svelte/icons/search';
   import { Button } from '$lib/components/ui/button';
@@ -44,51 +43,44 @@
   onMount(() => void load());
 </script>
 
-<div class="flex min-h-0 flex-col gap-3">
+<div class="flex flex-col gap-3">
   <div class="relative">
     <Search
       class="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground"
     />
     <Input
       bind:value={query}
-      class="h-9.5 pl-9"
+      class="h-9.5 border-transparent bg-foreground/4 pl-9 focus-visible:border-transparent dark:bg-foreground/4"
       placeholder="Search your repositories"
       aria-label="Search your repositories"
       spellcheck={false}
       {disabled}
     />
   </div>
-  <div
-    {@attach overlayScrollbar}
-    class="h-56 overflow-y-auto overscroll-contain rounded-xl border border-border"
-    role="listbox"
-    aria-label="Repositories"
-  >
+  <div class="min-h-0" role="listbox" aria-label="Repositories">
     {#if error}
       <div
-        class="flex h-full flex-col items-center justify-center gap-3 px-6 text-center text-sm text-muted-foreground"
+        class="flex h-48 flex-col items-center justify-center gap-3 px-6 text-center text-sm text-muted-foreground"
       >
         <span class="text-pretty">{error}</span>
         <Button variant="secondary" size="sm" onclick={load}>Try again</Button>
       </div>
     {:else if !repositories}
-      <div class="flex flex-col" aria-label="Loading repositories">
-        {#each { length: 6 }, index (index)}
-          <div
-            class="h-12 animate-pulse border-b border-border bg-muted/30"
-          ></div>
+      <div class="flex flex-col gap-2" aria-label="Loading repositories">
+        {#each { length: 5 }, index (index)}
+          <div class="h-16 animate-pulse rounded-xl bg-foreground/4"></div>
         {/each}
       </div>
     {:else if !shown.length}
       <div
-        class="grid h-full place-content-center px-6 text-center text-sm text-muted-foreground"
+        class="grid h-48 place-content-center px-6 text-center text-sm text-muted-foreground"
       >
         {repositories.length
           ? `No repositories match “${query.trim()}”`
           : 'This account has no repositories yet'}
       </div>
     {:else}
-      <div class="flex flex-col divide-y divide-border">
+      <div class="flex flex-col gap-2">
         {#each shown as repository (repository.fullName)}
           {@const active = selected === repository.cloneUrl}
           <button
@@ -97,20 +89,20 @@
             aria-selected={active}
             {disabled}
             class={cn(
-              'flex items-center gap-3 px-3 py-3 text-left outline-none hover:bg-secondary focus-visible:bg-secondary disabled:pointer-events-none',
-              active && 'bg-secondary',
+              'flex items-center gap-3.5 rounded-xl bg-foreground/4 p-4 text-left outline-none hover:bg-foreground/8 focus-visible:ring-2 focus-visible:ring-ring/60 disabled:pointer-events-none',
+              active && 'ring-[1.5px] ring-foreground',
             )}
             onclick={() => (selected = repository.cloneUrl)}
           >
             {#if repository.avatarUrl}
               <img
-                src={`${repository.avatarUrl}${repository.avatarUrl.includes('?') ? '&' : '?'}s=48`}
+                src={`${repository.avatarUrl}${repository.avatarUrl.includes('?') ? '&' : '?'}s=80`}
                 alt=""
-                class="size-6 shrink-0 rounded-full bg-muted"
+                class="size-10 shrink-0 rounded-lg bg-muted"
                 loading="lazy"
               />
             {:else}
-              <span class="size-6 shrink-0 rounded-full bg-muted"></span>
+              <span class="size-10 shrink-0 rounded-lg bg-muted"></span>
             {/if}
             <span class="min-w-0 flex-1 truncate text-sm">
               {repository.fullName}

@@ -25,11 +25,11 @@ const REQUEST_TIMEOUT_MS = 300_000;
 const STDERR_TAIL_CHARS = 2_000;
 
 /**
- * Runs the Codex binary bundled with the app, through the app's own Node. A remote
- * machine runs the `codex` installed there.
+ * The Codex binary bundled with the app, run through the app's own Node; the installed
+ * `codex` when the app leaves it out. A remote machine runs the `codex` installed there.
  */
-export function codexCommand(machine?: Machine): CodexCommand {
-  if (machine?.remote) return { file: 'codex', args: ['app-server'], machine };
+export function codexProgram(machine?: Machine): CodexCommand {
+  if (machine?.remote) return { file: 'codex', args: [], machine };
   try {
     const resolve = createRequire(__filename).resolve;
     const bin = join(
@@ -38,14 +38,20 @@ export function codexCommand(machine?: Machine): CodexCommand {
       'codex.js',
     );
     // Without this the app binary would start a second Electron app instead of running the script.
+    // A utility process is told the app's binary, as its own may be a helper's.
     return {
-      file: process.execPath,
-      args: [bin, 'app-server'],
+      file: process.env.BONFIRE_EXEC_PATH ?? process.execPath,
+      args: [bin],
       env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
     };
   } catch {
-    return { file: 'codex', args: ['app-server'] };
+    return { file: 'codex', args: [] };
   }
+}
+
+export function codexCommand(machine?: Machine): CodexCommand {
+  const program = codexProgram(machine);
+  return { ...program, args: [...program.args, 'app-server'] };
 }
 
 /**

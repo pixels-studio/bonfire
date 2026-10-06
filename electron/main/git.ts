@@ -15,6 +15,8 @@ export function git(at: Place, args: string[]) {
   return machine.exec('git', args, {
     cwd: path,
     env: { GIT_TERMINAL_PROMPT: '0' },
+    // git is in the usual install folders, and runs after every file change.
+    profile: false,
   });
 }
 
@@ -33,19 +35,16 @@ export async function clone(url: string, path: string) {
   }
 }
 
-export async function status(cwd: Place): Promise<GitStatus> {
-  try {
-    await git(cwd, ['rev-parse', '--show-toplevel']);
-  } catch {
-    return { isGit: false, branch: '', changes: [] };
-  }
-  const branch = (
-    await git(cwd, ['rev-parse', '--abbrev-ref', 'HEAD']).catch(() => 'unborn')
-  ).trim();
-  const records = (
-    await git(cwd, ['status', '--porcelain=v1', '-z', '--untracked-files=all'])
-  ).split('\0');
+/**
+ * How many untracked files are read at once to count their lines. Over SSH each is a round
+ * trip on the shared connection, whose server allows only so many sessions at a time.
+ */
+const LOCAL_COUNTS_AT_ONCE = 8;
+const REMOTE_COUNTS_AT_ONCE = 3;
 
+/** Changes from `git status --porcelain=v1 -z`, with no lines counted yet. */
+function parseChanges(output: string) {
+  const records = output.split('\0');
   const changes: Change[] = [];
   for (let index = 0; index < records.length; index++) {
     const record = records[index];
@@ -60,16 +59,81 @@ export async function status(cwd: Place): Promise<GitStatus> {
     // Renames and copies are followed by their original path; skip it.
     if (/[RC]/.test(record.slice(0, 2))) index++;
   }
-  const counts = await lineCounts(cwd);
-  for (const change of changes) {
-    const count =
-      change.index === '?'
-        ? await untrackedLineCount(cwd, change.path)
-        : counts.get(change.path);
-    change.additions = count?.additions ?? 0;
-    change.deletions = count?.deletions ?? 0;
+  return changes;
+}
+
+/**
+ * Views ask for this after every file change, and over SSH each git run is a round trip, so
+ * the runs that don't depend on each other go at once rather than one after another.
+ */
+export async function status(cwd: Place): Promise<GitStatus> {
+  const [listed, branch, counts] = await Promise.all([
+    git(cwd, ['status', '--porcelain=v1', '-z', '--untracked-files=all']).catch(
+      (cause: unknown) => ({ cause }),
+    ),
+    git(cwd, ['rev-parse', '--abbrev-ref', 'HEAD']).then(
+      (output) => output.trim(),
+      () => 'unborn',
+    ),
+    lineCounts(cwd),
+  ]);
+  if (typeof listed !== 'string') {
+    // Outside a repository there is nothing to report; inside one, the failure is real.
+    const inRepository = await git(cwd, ['rev-parse', '--show-toplevel']).then(
+      () => true,
+      () => false,
+    );
+    if (inRepository) throw listed.cause;
+    return { isGit: false, branch: '', changes: [] };
   }
+  const changes = parseChanges(listed);
+  const untracked: Change[] = [];
+  for (const change of changes) {
+    if (change.index === '?') untracked.push(change);
+    else {
+      const count = counts.get(change.path);
+      change.additions = count?.additions ?? 0;
+      change.deletions = count?.deletions ?? 0;
+    }
+  }
+  const atOnce = resolvePlace(cwd).machine.remote
+    ? REMOTE_COUNTS_AT_ONCE
+    : LOCAL_COUNTS_AT_ONCE;
+  await eachAtOnce(untracked, atOnce, async (change) => {
+    change.additions =
+      (await untrackedLineCount(cwd, change.path))?.additions ?? 0;
+  });
   return { isGit: true, branch, changes };
+}
+
+/** The change to one path, if it has one: a status of that path alone, with no lines counted. */
+export async function change(cwd: Place, path: string) {
+  // Literal, so a path such as `*.txt` can't match other files as a pattern would.
+  const output = await git(cwd, [
+    '--literal-pathspecs',
+    'status',
+    '--porcelain=v1',
+    '-z',
+    '--untracked-files=all',
+    '--',
+    path,
+  ]);
+  return parseChanges(output).find((item) => item.path === path);
+}
+
+/** Runs `task` on each item, at most `limit` at a time. */
+async function eachAtOnce<Item>(
+  items: Item[],
+  limit: number,
+  task: (item: Item) => Promise<void>,
+) {
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) await task(items[next++]);
+  };
+  await Promise.all(
+    Array.from({ length: Math.min(limit, items.length) }, worker),
+  );
 }
 
 type LineCount = { additions: number; deletions: number };
@@ -156,6 +220,41 @@ export async function diffUntracked(cwd: Place, path: string) {
     const { stdout } = cause as { stdout?: string };
     if (stdout) return stdout;
     throw cause;
+  }
+}
+
+/**
+ * Throws away the uncommitted changes to one path, or to the whole tree without one:
+ * edits are restored from HEAD, and files that are new to the repository are deleted.
+ */
+export async function discard(cwd: Place, path?: string) {
+  const hasHead = await git(cwd, ['rev-parse', '--verify', 'HEAD']).then(
+    () => true,
+    () => false,
+  );
+  if (path === undefined) {
+    if (hasHead) await git(cwd, ['reset', '--hard', 'HEAD']);
+    else await git(cwd, ['rm', '-r', '-f', '--cached', '--ignore-unmatch', '.']);
+    await git(cwd, ['clean', '-f', '-d']);
+    return;
+  }
+  const item = await change(cwd, path);
+  if (!item) return;
+  if (item.index === '?') {
+    await git(cwd, ['--literal-pathspecs', 'clean', '-f', '--', path]);
+  } else if (!hasHead || 'ACR'.includes(item.index)) {
+    // Not in HEAD, so there is nothing to restore it to.
+    await git(cwd, ['--literal-pathspecs', 'rm', '-f', '--', path]);
+  } else {
+    await git(cwd, [
+      '--literal-pathspecs',
+      'restore',
+      '--source=HEAD',
+      '--staged',
+      '--worktree',
+      '--',
+      path,
+    ]);
   }
 }
 

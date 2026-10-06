@@ -1,5 +1,5 @@
 <script lang="ts" module>
-  /** A pane of app-wide tools, opened from the rail ahead of the conversation panes. */
+  /** A strip panel opened from the header or rail ahead of the conversation panes. */
   export type AppPanel = 'shortcuts' | 'insights' | 'activity' | 'settings';
 
   type PanelItem = {
@@ -9,19 +9,19 @@
     shortcut: ShortcutId;
   };
 
-  /** The panel buttons at the foot of the rail, top to bottom, above help. */
-  const PANELS: PanelItem[] = [
-    {
-      panel: 'insights',
-      icon: 'insights',
-      label: 'Insights',
-      shortcut: 'insights',
-    },
+  /** Panel labels for the minimap; only the global ones have rail buttons. */
+  const PANEL_ITEMS: PanelItem[] = [
     {
       panel: 'activity',
       icon: 'activity',
       label: 'Activity',
       shortcut: 'activity',
+    },
+    {
+      panel: 'insights',
+      icon: 'insights',
+      label: 'Insights',
+      shortcut: 'insights',
     },
     {
       panel: 'settings',
@@ -36,6 +36,7 @@
       shortcut: 'shortcuts',
     },
   ];
+  const GLOBAL_PANELS = PANEL_ITEMS.filter(({ panel }) => panel !== 'activity');
 </script>
 
 <script lang="ts">
@@ -48,9 +49,10 @@
   import ShortcutKeys from '$lib/components/shortcuts/shortcut-keys.svelte';
   import { TOOL_PANES } from '$lib/panes';
   import type { ShortcutId } from '$lib/shortcuts';
+  import { cliVersions } from '$lib/stores/cli-versions.svelte';
   import { preferences } from '$lib/stores/preferences.svelte';
   import { cn } from '$lib/utils';
-  import { PROVIDER_LABELS } from '$shared/domain';
+  import { CLI_NAMES, PROVIDER_LABELS, isViewPaneType } from '$shared/domain';
   import type { AssistantProvider, PaneType } from '$shared/contracts';
 
   const DOT_STYLES: Record<PaneStatus, { slot: string; dot: string }> = {
@@ -90,6 +92,7 @@
     onaddPane,
     panes,
     canAddPane,
+    canAddTerminal,
     startingProvider,
     onselectPane,
     onselectPanel,
@@ -105,6 +108,8 @@
     startingProvider: AssistantProvider;
     panes: { id: string; title: string; status: PaneStatus }[];
     canAddPane: boolean;
+    /** Whether the project has room for another terminal; the menu leaves terminals out otherwise. */
+    canAddTerminal: boolean;
     onselectPane: (paneId: string) => void;
     /** Scrolls an open panel into sight. */
     onselectPanel: (panel: AppPanel) => void;
@@ -112,12 +117,19 @@
     trafficLightInset?: boolean;
   } = $props();
 
-  /** The shortcut a tool pane's menu item shows. */
+  /** The shortcut a tool pane's menu item shows; view panes are toggled from the header instead. */
   const TOOL_SHORTCUTS: Record<string, ShortcutId> = {
-    files: 'newFiles',
     terminal: 'newTerminal',
-    diff: 'newDiff',
   };
+  /** The tool panes a project can have several of. */
+  const ADDABLE_TOOL_PANES = TOOL_PANES.filter(
+    ({ type }) => !isViewPaneType(type),
+  );
+  const addableToolPanes = $derived(
+    ADDABLE_TOOL_PANES.filter(
+      ({ type }) => type !== 'terminal' || canAddTerminal,
+    ),
+  );
 
   const BUTTON_CLASS = 'text-muted-foreground hover:text-foreground';
   /** A minimap row: the dot sits in the first 24px so the collapsed pill shows only dots. */
@@ -128,8 +140,19 @@
   let logoHovered = $state(false);
   const working = $derived(panes.some(({ status }) => status === 'working'));
 
+  /** The CLIs the update button would update, such as `Claude Code and Codex`. */
+  const updateNames = $derived(
+    [
+      ...new Set(
+        cliVersions.outdated.map(({ provider }) => CLI_NAMES[provider]),
+      ),
+    ].join(' and '),
+  );
+
   const openPanels = $derived(
-    panels.flatMap((panel) => PANELS.filter((item) => item.panel === panel)),
+    panels.flatMap((panel) =>
+      PANEL_ITEMS.filter((item) => item.panel === panel),
+    ),
   );
 </script>
 
@@ -187,8 +210,10 @@
               />
             </DropdownMenu.Item>
           {/each}
-          <DropdownMenu.Separator />
-          {#each TOOL_PANES as pane (pane.type)}
+          {#if addableToolPanes.length}
+            <DropdownMenu.Separator />
+          {/if}
+          {#each addableToolPanes as pane (pane.type)}
             <DropdownMenu.Item onclick={() => onaddPane(pane.type)}>
               <Icon name={pane.icon} />
               {pane.label}
@@ -227,13 +252,7 @@
                 onclick={() => onselectPane(pane.id)}
               >
                 <span class="grid size-6 shrink-0 place-content-center">
-                  <span
-                    class={cn(
-                      DOT_CLASS,
-                      style.dot,
-                      pane.status === 'working' && 'dot-working',
-                    )}
-                  ></span>
+                  <span class={cn(DOT_CLASS, style.dot)}></span>
                 </span>
                 <!-- Finished turns awaiting review stand out, like unread mail. -->
                 <span
@@ -250,7 +269,10 @@
     </div>
   </div>
   <div class="flex flex-col items-center gap-3.5">
-    {#each PANELS as item (item.panel)}
+    {#if cliVersions.outdated.length}
+      {@render updateButton()}
+    {/if}
+    {#each GLOBAL_PANELS as item (item.panel)}
       {@render panelButton(item)}
     {/each}
     <Tooltip.Root>
@@ -272,6 +294,40 @@
     </Tooltip.Root>
   </div>
 </nav>
+
+{#snippet updateButton()}
+  <Tooltip.Root>
+    <Tooltip.Trigger>
+      {#snippet child({ props })}
+        <Button
+          {...props}
+          size="icon"
+          aria-label={`Update ${updateNames}`}
+          loading={cliVersions.updating}
+          disabled={cliVersions.updating}
+          onclick={() => cliVersions.update()}
+        >
+          <Icon name="update" />
+        </Button>
+      {/snippet}
+    </Tooltip.Trigger>
+    <Tooltip.Content side="right">
+      <div class="flex flex-col gap-0.5">
+        <span>
+          {cliVersions.updating
+            ? `Updating ${updateNames}…`
+            : `Update ${updateNames} to use Bonfire`}
+        </span>
+        {#each cliVersions.outdated as version (`${version.provider}:${version.machineId}`)}
+          <span class="opacity-70">
+            {CLI_NAMES[version.provider]} on {version.machineName}: {version.installed},
+            needs {version.required}
+          </span>
+        {/each}
+      </div>
+    </Tooltip.Content>
+  </Tooltip.Root>
+{/snippet}
 
 {#snippet panelButton(item: PanelItem)}
   {@const open = panels.includes(item.panel)}
@@ -320,7 +376,9 @@
 
   .minimap:hover,
   .minimap:has(:focus-visible) {
-    background-color: rgb(44 44 44 / 70%); /* Mid-grey glass: mutes the blurred text behind without going black. */
+    background-color: rgb(
+      44 44 44 / 70%
+    ); /* Mid-grey glass: mutes the blurred text behind without going black. */
     box-shadow: inset 0 0 0 1px rgb(255 255 255 / 8%);
     clip-path: inset(0 0 0 0 round 0.875rem);
     /* A beat of hover intent, so sweeping the cursor past doesn't flash it open. */

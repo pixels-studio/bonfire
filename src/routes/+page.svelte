@@ -4,7 +4,6 @@
   import * as Card from '$lib/components/ui/card';
   import ActivityPane from '$lib/components/activity/activity-pane.svelte';
   import AppHeader from '$lib/components/app-header/app-header.svelte';
-  import AuroraGlow from '$lib/components/aurora-glow/aurora-glow.svelte';
   import AppRail, {
     type AppPanel,
   } from '$lib/components/app-rail/app-rail.svelte';
@@ -20,17 +19,22 @@
   import ProjectPicker from '$lib/components/workspace/project-picker.svelte';
   import ShortcutsPane from '$lib/components/shortcuts/shortcuts-pane.svelte';
   import Onboarding from '$lib/components/onboarding/onboarding.svelte';
-  import {
-    PANE_SIZES,
-    defaultPaneSize,
-    paneWidth,
-    type PaneSize,
-  } from '$lib/panes';
+  import Bloom from '$lib/components/onboarding/bloom.svelte';
+  import { PANE_SIZES, defaultPaneSize, type PaneSize } from '$lib/panes';
   import { digitOf, matchShortcut, type ShortcutId } from '$lib/shortcuts';
+  import { assistantEvents } from '$lib/main-events';
   import { PaneDrag } from '$lib/pane-drag.svelte';
-  import { PaneStatuses, paneBadge } from '$lib/pane-status.svelte';
+  import { StripMotion, leave } from '$lib/strip-motion.svelte';
+  import {
+    ATTENTION_RANK,
+    PaneStatuses,
+    paneBadge,
+    type ProjectAttention,
+  } from '$lib/pane-status.svelte';
   import { playCompletionSound } from '$lib/sounds';
   import { branch } from '$lib/stores/branch.svelte';
+  import { cliVersions } from '$lib/stores/cli-versions.svelte';
+  import { fork } from '$lib/stores/fork.svelte';
   import { preferences } from '$lib/stores/preferences.svelte';
   import { pullRequest } from '$lib/stores/pull-request.svelte';
   import { scripts } from '$lib/stores/scripts.svelte';
@@ -49,11 +53,14 @@
   } from '$shared/contracts';
   import {
     MAX_PANES,
+    MAX_TERMINAL_PANES,
     emptyState,
     errorMessage,
     isAssistantPane,
+    isViewPaneType,
     reorderLayout,
     startingProvider,
+    type ViewPaneType,
   } from '$shared/domain';
 
   let workspace = $state<State>(emptyState());
@@ -69,17 +76,21 @@
     () => paneStrip,
     (ids) => reorderStrip(ids),
   );
+  const motion = new StripMotion(() => paneStrip);
   let pullRequestOpen = $state(false);
-  /** The open panels, newest first, ahead of the panes. */
+  /** The open panels, newest first; Activity is placed at the strip's end. */
   let panels = $state<AppPanel[]>([]);
-  /** The strip's order, panels and panes interleaved; what's new or unlisted goes in front. */
+  /**
+   * The strip's order after panes or panels are arranged by hand. Unlisted items
+   * then go in front, except view panes, which go at the end.
+   */
   let stripOrder = $state<string[]>([]);
   let creatingBranch = $state(false);
   /**
-   * Set while a pane is being added, so only that pane grows in; panes that
-   * appear on load or a project switch show at once.
+   * Set while panes are added or closed by hand, so only those grow in or shrink
+   * away; panes that come and go on load or a project switch do so at once.
    */
-  let addingPane = $state(false);
+  let paneMotion = $state(false);
   /** Whether the pointer is over the empty state's flame, which lights it. */
   let stirred = $state(false);
   let creatingProject = $state(false);
@@ -89,8 +100,17 @@
   let insightsTab = $state('tokens');
   /** The pane last clicked, focused or navigated to, which the pane shortcuts act on. */
   let currentPaneId = $state<string>();
+  /** The latest file card navigation into the code diff pane. */
+  let selectedDiff = $state<{
+    projectId: string;
+    path: string;
+    request: number;
+  }>();
+  let diffRequest = 0;
   /** Whether setup is on screen instead of the workspace: no agent signed in, or no project. */
   let onboarding = $state(false);
+  /** Carries the app in from setup on a bloom of light. */
+  let bloom = $state<Bloom>();
   let accounts = $state<Partial<Record<AssistantProvider, ProviderAccount>>>(
     {},
   );
@@ -113,16 +133,26 @@
           !!pane && !pane.archived && pane.projectId === project?.id,
       ),
   );
+  /** The open view panes, which the header's toggles show as pressed. */
+  const views = $derived(panes.filter((pane) => isViewPaneType(pane.type)));
+  const openViews = $derived(
+    views.map(({ type }) => type).filter(isViewPaneType),
+  );
   const PANELS: string[] = ['activity', 'insights', 'settings', 'shortcuts'];
+  const PULL_REQUEST_ID = 'pull-request';
   const isPanel = (id: string): id is AppPanel => PANELS.includes(id);
   /** Every open panel and pane, in the order the strip shows them. */
   const stripIds = $derived.by(() => {
     const visible = [...panels, ...panes.map(({ id }) => id)];
+    if (!stripOrder.length) return visible;
     const shown = new Set(visible);
     const listed = new Set(stripOrder);
+    const unlisted = visible.filter((id) => !listed.has(id));
+    const isView = (id: string) => views.some((pane) => pane.id === id);
     return [
-      ...visible.filter((id) => !listed.has(id)),
+      ...unlisted.filter((id) => !isView(id)),
       ...stripOrder.filter((id) => shown.has(id)),
+      ...unlisted.filter(isView),
     ];
   });
   const assistantPanes = $derived(panes.filter(isAssistantPane));
@@ -148,9 +178,14 @@
   );
 
   const canAddPane = $derived(!!project && panes.length < MAX_PANES);
+  /** Terminals stop at the number that can draw with WebGL; the menu then leaves them out. */
+  const canAddTerminal = $derived(
+    canAddPane &&
+      panes.filter((pane) => pane.type === 'terminal').length <
+        MAX_TERMINAL_PANES,
+  );
 
-  const SECTION_CLASS =
-    'h-full shrink-0 snap-start px-1 transition-[flex-basis,min-width] duration-200 ease-[cubic-bezier(0.65,0,0.35,1)] motion-reduce:transition-none';
+  const SECTION_CLASS = 'h-full shrink-0 snap-start px-1';
 
   function showError(cause: unknown) {
     toast(errorMessage(cause), { variant: 'error', duration: 0 });
@@ -172,6 +207,23 @@
     }
   }
 
+  /** Runs a change to the panes made by hand, so the panes it opens or closes animate. */
+  async function changePanes(task: () => Promise<unknown>) {
+    paneMotion = true;
+    try {
+      await runAction(task);
+      await tick();
+    } finally {
+      paneMotion = false;
+    }
+  }
+
+  function closePane(paneId: string) {
+    if (panes.some((pane) => pane.id === paneId && pane.type === 'diff'))
+      selectedDiff = undefined;
+    return changePanes(() => window.bonfire.panes.archive(paneId));
+  }
+
   function addProject() {
     creatingProject = true;
   }
@@ -182,6 +234,9 @@
 
   function openProject(projectId: string) {
     if (projectId === project?.id) return;
+    // Opening a project is looking at it, so its finished turns no longer need a reminder.
+    for (const pane of workspace.panes)
+      if (pane.projectId === projectId) statuses.markSeen(pane.id);
     void runAction(() => window.bonfire.projects.open(projectId));
   }
 
@@ -198,27 +253,55 @@
     creatingBranch = true;
   }
 
-  /** Opens a pane at the front of the strip; an agent with the last-used provider by default. */
+  /**
+   * Opens a pane at the front of the strip; an agent with the last-used provider by
+   * default. A view pane opens at the end instead, or, if it is open, is brought into sight.
+   */
   async function addPane(type?: PaneType, other = false) {
     if (busy) return;
     if (!project) {
       addProject();
       return;
     }
+    const view = !!type && isViewPaneType(type);
+    const open = view && panes.find((pane) => pane.type === type);
+    if (open) {
+      void focusPane(open.id);
+      return;
+    }
     if (!canAddPane) {
       toast(`A project can have up to ${MAX_PANES} panes open.`);
       return;
     }
-    const count = panes.length;
-    addingPane = true;
-    try {
-      await runAction(() => window.bonfire.panes.add(type, other));
-      await tick();
-    } finally {
-      addingPane = false;
+    if (type === 'terminal' && !canAddTerminal) {
+      toast(
+        `A project can have up to ${MAX_TERMINAL_PANES} terminal panes open.`,
+      );
+      return;
     }
-    paneStrip?.scrollTo({ left: 0, behavior: scrollBehavior() });
-    if (panes.length > count) void focusPane(panes[0].id);
+    const count = panes.length;
+    await changePanes(() => window.bonfire.panes.add(type, other));
+    const added = view ? panes.find((pane) => pane.type === type) : panes[0];
+    if (!view) paneStrip?.scrollTo({ left: 0, behavior: scrollBehavior() });
+    if (panes.length > count && added) void focusPane(added.id);
+  }
+
+  /** Opens a view pane at the end of the strip, or closes it if it is open. */
+  function toggleView(type: ViewPaneType) {
+    const open = panes.find((pane) => pane.type === type);
+    if (open) void closePane(open.id);
+    else void addPane(type);
+  }
+
+  /** Opens the diff pane and asks it to show a file, or the list for a summary click. */
+  function viewChanges(path?: string) {
+    if (projectId)
+      selectedDiff = {
+        projectId,
+        path: path ?? '',
+        request: ++diffRequest,
+      };
+    void addPane('diff');
   }
 
   function sizeClass(size: PaneSize) {
@@ -226,13 +309,33 @@
   }
 
   /** The size of anything in the strip that hasn't been resized. */
-  const autoSizeClass = $derived(sizeClass(defaultPaneSize(stripCount)));
+  const autoSize = $derived(defaultPaneSize(stripCount));
+  const autoSizeClass = $derived(sizeClass(autoSize));
 
-  function paneSizeClass(pane: Pane) {
-    return sizeOverrides[pane.id]
-      ? sizeClass(sizeOverrides[pane.id])
-      : autoSizeClass;
+  function paneSize(id: string): PaneSize {
+    return sizeOverrides[id] ?? autoSize;
   }
+
+  /** Everything that sets the strip's layout; a change to it is animated. */
+  const stripLayout = $derived(
+    JSON.stringify([
+      stripIds.map((id) => [id, sizeOverrides[id] ?? autoSize]),
+      !panes.length,
+      showPullRequest && (pullRequestSize ?? autoSize),
+    ]),
+  );
+
+  $effect.pre(() => {
+    void stripLayout;
+    untrack(() => motion.measure());
+  });
+
+  $effect(() => {
+    void stripLayout;
+    untrack(() =>
+      motion.play((id) => paneMotion || isPanel(id) || id === PULL_REQUEST_ID),
+    );
+  });
 
   /** Brings an opened panel or view into sight at its end of the strip. */
   async function revealEdge(edge: 'start' | 'end') {
@@ -268,7 +371,17 @@
    * Scrolls only the strip. `scrollIntoView` would also scroll the page
    * itself, pushing the header off-screen.
    */
-  function scrollToSection(selector: string, id: string) {
+  async function scrollToSection(selector: string, id: string) {
+    // A section still growing in is narrower than it will be, so the strip can't
+    // scroll to it yet; measure once the layout has settled.
+    await Promise.allSettled(
+      (
+        paneStrip?.querySelectorAll<HTMLElement>(':scope > [data-strip-id]') ??
+        []
+      )
+        .values()
+        .flatMap((node) => node.getAnimations().map((a) => a.finished)),
+    );
     const section = paneStrip?.querySelector<HTMLElement>(selector);
     if (!paneStrip || !section) return;
     highlight(id);
@@ -284,13 +397,12 @@
   function scrollToPane(paneId: string) {
     currentPaneId = paneId;
     statuses.markSeen(paneId);
-    scrollToSection(`[data-pane-id="${CSS.escape(paneId)}"]`, paneId);
+    return scrollToSection(`[data-pane-id="${CSS.escape(paneId)}"]`, paneId);
   }
 
   /** Scrolls to a pane and puts the cursor in it, in its message box, search or terminal. */
   async function focusPane(paneId: string) {
-    scrollToPane(paneId);
-    await tick();
+    await scrollToPane(paneId);
     paneStrip
       ?.querySelector<HTMLElement>(
         `[data-pane-id="${CSS.escape(paneId)}"] :is(textarea, input[type="search"], [contenteditable="true"])`,
@@ -319,17 +431,21 @@
 
   /** Panel names can't clash with pane ids, which are UUIDs. */
   function scrollToPanel(panel: AppPanel) {
-    scrollToSection(`[data-panel="${panel}"]`, panel);
+    return scrollToSection(`[data-panel="${panel}"]`, panel);
   }
 
-  /** Closes an open panel, or opens it at the front of the strip. */
+  /** Closes a panel, or opens Activity at the end and global panels at the front. */
   function togglePanel(panel: AppPanel) {
+    if (panel === 'activity' && !project) return;
     if (panels.includes(panel)) {
       panels = panels.filter((open) => open !== panel);
       return;
     }
+    if (panel === 'activity')
+      stripOrder = [...stripIds.filter((id) => id !== panel), panel];
     panels = [panel, ...panels];
-    void revealEdge('start');
+    if (panel === 'activity') void tick().then(() => scrollToPanel(panel));
+    else void revealEdge('start');
   }
 
   /** Applies a new visible pane order locally, then saves it. */
@@ -368,6 +484,7 @@
   function panelProps(panel: AppPanel) {
     return {
       dragHandle: gripOf(panel),
+      size: paneSize(panel),
       onclose: () => togglePanel(panel),
       onresize: (size: PaneSize) => (sizeOverrides[panel] = size),
     };
@@ -380,14 +497,37 @@
     if (paneIds.length > 1) reorder(paneIds);
   }
 
-  // Pane status needs events for every agent, including ones scrolled out of view.
+  // Pane status needs events for every agent, including ones scrolled out of view and
+  // ones in other projects, whose state the project picker flags.
   $effect(() => {
     if (!loaded) return;
-    for (const { id } of assistantPanes) void statuses.load(id);
+    for (const pane of workspace.panes)
+      if (!pane.archived && isAssistantPane(pane)) void statuses.load(pane.id);
+  });
+
+  /** What needs the user in each project other than the open one: the most urgent state wins. */
+  const projectAttention = $derived.by(() => {
+    const attention: Record<string, ProjectAttention> = {};
+    for (const pane of workspace.panes) {
+      if (pane.archived || !isAssistantPane(pane)) continue;
+      const owner = pane.projectId;
+      if (!owner || owner === projectId) continue;
+      const status = paneBadge(statuses.get(pane.id));
+      if (!status) continue;
+      const current = attention[owner];
+      if (!current || ATTENTION_RANK[status] > ATTENTION_RANK[current])
+        attention[owner] = status;
+    }
+    return attention;
   });
 
   $effect(() => {
     if (!project) pullRequestOpen = false;
+  });
+
+  // The pull request opens at the end of the strip, which is brought into sight.
+  $effect(() => {
+    if (showPullRequest) untrack(() => void revealEdge('end'));
   });
 
   $effect(() => {
@@ -410,10 +550,13 @@
     return untrack(() => scripts.watch(id));
   });
 
-  // A script runs in its own terminal pane, which is brought on screen.
+  // A script runs in its own terminal pane at the end of the strip, brought on screen.
   $effect(() => {
     scripts.onPane = async (paneId) => {
+      const opened = !panes.some((pane) => pane.id === paneId);
       await refresh();
+      if (opened)
+        stripOrder = [...stripIds.filter((id) => id !== paneId), paneId];
       await tick();
       scrollToPane(paneId);
     };
@@ -424,15 +567,26 @@
     };
   });
 
-  // A pull request is written by an agent in a new pane, which is brought on screen.
+  // A header action runs in an agent pane at the end of the strip.
   $effect(() => {
     pullRequest.onAgentPane = async (paneId) => {
+      await refresh();
+      stripOrder = [...stripIds.filter((id) => id !== paneId), paneId];
+      await tick();
+      void focusPane(paneId);
+    };
+    return () => (pullRequest.onAgentPane = undefined);
+  });
+
+  // A fork opens its summary in a new pane, which is brought on screen.
+  $effect(() => {
+    fork.onForked = async (paneId) => {
       await refresh();
       await tick();
       paneStrip?.scrollTo({ left: 0, behavior: scrollBehavior() });
       void focusPane(paneId);
     };
-    return () => (pullRequest.onAgentPane = undefined);
+    return () => (fork.onForked = undefined);
   });
 
   // Closing the agent's pane ends the action it was carrying out.
@@ -530,15 +684,17 @@
         void addPane('terminal');
         break;
       case 'newFiles':
-        void addPane('files');
+        toggleView('files');
         break;
       case 'newDiff':
-        void addPane('diff');
+        toggleView('diff');
+        break;
+      case 'newBrowser':
+        toggleView('browser');
         break;
       case 'closePane': {
         const target = activePane;
-        if (target)
-          void runAction(() => window.bonfire.panes.archive(target.id));
+        if (target) void closePane(target.id);
         break;
       }
       case 'goToPane':
@@ -659,7 +815,7 @@
     window.bonfire.app.isFullscreen().then((value) => (fullscreen = value));
     const subscriptions = [
       window.bonfire.app.onFullscreenChange((value) => (fullscreen = value)),
-      window.bonfire.assistant.onEvent(handleAssistantEvent),
+      assistantEvents.onAll(handleAssistantEvent),
       // A clicked notification brings its pane into view.
       window.bonfire.app.onFocusPane(scrollToPane),
       window.bonfire.panes.onClosed((event) => void handlePanesClosed(event)),
@@ -706,26 +862,31 @@
 
   /** Leaves setup for the workspace, where the starting panes open on their own. */
   async function finishOnboarding() {
-    try {
-      await refresh();
-    } catch (cause) {
-      showError(cause);
-    }
-    // Setup may have just signed an agent in.
-    await loadAccounts();
+    const ready = (async () => {
+      try {
+        await refresh();
+      } catch (cause) {
+        showError(cause);
+      }
+      // Setup may have just signed an agent in.
+      await loadAccounts();
+    })();
+    // The workspace swaps in behind the light at its peak, then emerges as it clears.
+    await Promise.all([ready, bloom?.out()]);
     onboarding = false;
+    await tick();
+    await bloom?.reveal();
   }
 
-  /** The agents that start a project: Claude and Codex when both are connected, else two of the one. */
+  /** The agent that starts a project: Claude when connected, else whichever provider is. */
   function startingAgents(): AssistantProvider[] {
     const ready = PROVIDERS.filter(
       (provider) =>
         accounts[provider]?.signedIn &&
         workspace.preferences?.providers?.[provider] !== false,
     );
-    if (ready.length >= 2) return ['claude', 'codex'];
-    if (ready.length === 1) return [ready[0], ready[0]];
-    return [];
+    if (!ready.length) return [];
+    return [ready.includes('claude') ? 'claude' : ready[0]];
   }
 
   /** Whether starting panes are being opened; a failed attempt isn't retried until the project changes. */
@@ -762,6 +923,15 @@
     void openStartingPanes();
   });
 
+  // The open project's machine runs its own agent CLIs, so they're checked as projects change.
+  $effect(() => {
+    if (!loaded) return;
+    void projectId;
+    void preferences.current.providers.claude;
+    void preferences.current.providers.codex;
+    void cliVersions.refresh();
+  });
+
   onMount(async () => {
     if (!window.bonfire) {
       showError('Launch Bonfire with npm start or npm run dev.');
@@ -781,7 +951,11 @@
 </script>
 
 <svelte:head><title>Bonfire</title></svelte:head>
-<svelte:window onkeydowncapture={handleKeydown} />
+<!-- The CLIs update themselves in the background; the backend's cached answer keeps focus cheap. -->
+<svelte:window
+  onkeydowncapture={handleKeydown}
+  onfocus={() => loaded && void cliVersions.refresh()}
+/>
 
 {#snippet placeholder()}
   {#if !workspace.projects.length}
@@ -821,102 +995,121 @@
   {/if}
 {/snippet}
 
-{#if loading}
-  <div class="flex h-screen flex-col">
-    <div class="h-13 shrink-0 app-drag"></div>
-    <div
-      class="grid flex-1 place-content-center"
-      role="status"
-      aria-label="Loading"
-    >
+<Bloom bind:this={bloom}>
+  {#if loading}
+    <div class="flex h-screen flex-col">
+      <div class="h-13 shrink-0 app-drag"></div>
       <div
-        class="size-5 animate-spin rounded-full border-2 border-muted-foreground/30 border-t-muted-foreground motion-reduce:animate-pulse"
-      ></div>
-    </div>
-  </div>
-{:else if onboarding}
-  <Onboarding
-    bind:accounts
-    bind:accountErrors
-    hasProjects={workspace.projects.length > 0}
-    onfinish={() => void finishOnboarding()}
-  />
-{:else}
-  <div class="flex h-screen">
-    <!-- Glows along the top of the window while an agent carries out a pull request action. -->
-    <AuroraGlow
-      active={!!pullRequest.running}
-      class="fixed inset-x-0 top-0 z-30 h-40"
-    />
-    <AppRail
-      {panels}
-      ontogglePanel={togglePanel}
-      {trafficLightInset}
-      onhelp={() => window.bonfire.navigation.help()}
-      onaddPane={addPane}
-      startingProvider={startingProvider(
-        preferences.current,
-        workspace.settings.lastProvider,
-      )}
-      panes={panes.map(({ id, title }) => ({
-        id,
-        title,
-        status: scripts.runOfPane(id)?.running ? 'working' : statuses.get(id),
-      }))}
-      {canAddPane}
-      onselectPane={scrollToPane}
-      onselectPanel={scrollToPanel}
-    />
-    <div class="flex min-w-0 flex-1 flex-col">
-      <AppHeader
-        {trafficLightInset}
-        bind:pullRequestOpen
-        disabled={!project}
-        paneCount={panes.length + panels.length}
-        onclosePanes={() =>
-          void runAction(async () => {
-            panels = [];
-            for (const { id } of panes) await window.bonfire.panes.archive(id);
-          })}
+        class="grid flex-1 place-content-center"
+        role="status"
+        aria-label="Loading"
       >
-        {#snippet location()}
-          <ProjectPicker
-            projects={workspace.projects}
-            active={project}
-            bind:open={projectMenuOpen}
-            onselect={openProject}
-            onadd={addProject}
-            onremove={removeProject}
-          />
-          {#if project}
-            <BranchPicker
-              projectId={project.id}
-              head={branch.head}
-              locked={agentsWorking}
-              bind:open={branchMenuOpen}
-              onswitch={switchBranch}
-              onnew={newBranch}
+        <div
+          class="size-5 animate-spin rounded-full border-2 border-muted-foreground/30 border-t-muted-foreground motion-reduce:animate-pulse"
+        ></div>
+      </div>
+    </div>
+  {:else if onboarding}
+    <Onboarding
+      bind:accounts
+      bind:accountErrors
+      hasProjects={workspace.projects.length > 0}
+      onfinish={() => void finishOnboarding()}
+    />
+  {:else}
+    <div class="flex h-screen">
+      <AppRail
+        {panels}
+        ontogglePanel={togglePanel}
+        {trafficLightInset}
+        onhelp={() => window.bonfire.navigation.help()}
+        onaddPane={addPane}
+        startingProvider={startingProvider(
+          preferences.current,
+          workspace.settings.lastProvider,
+        )}
+        panes={panes.map(({ id, title }) => ({
+          id,
+          title,
+          status: scripts.runOfPane(id)?.running ? 'working' : statuses.get(id),
+        }))}
+        {canAddPane}
+        {canAddTerminal}
+        onselectPane={scrollToPane}
+        onselectPanel={scrollToPanel}
+      />
+      <div class="flex min-w-0 flex-1 flex-col">
+        <AppHeader
+          {trafficLightInset}
+          bind:pullRequestOpen
+          disabled={!project}
+          activityOpen={panels.includes('activity')}
+          ontoggleActivity={() => togglePanel('activity')}
+          {openViews}
+          ontoggleView={toggleView}
+          paneCount={panes.length + panels.length}
+          onclosePanes={() =>
+            void changePanes(async () => {
+              panels = [];
+              for (const { id } of panes)
+                await window.bonfire.panes.archive(id);
+            })}
+        >
+          {#snippet location()}
+            <ProjectPicker
+              projects={workspace.projects}
+              active={project}
+              attention={projectAttention}
+              bind:open={projectMenuOpen}
+              onselect={openProject}
+              onadd={addProject}
+              onremove={removeProject}
             />
-          {/if}
-        {/snippet}
-      </AppHeader>
+            {#if project}
+              <BranchPicker
+                projectId={project.id}
+                head={branch.head}
+                locked={agentsWorking}
+                bind:open={branchMenuOpen}
+                onswitch={switchBranch}
+                onnew={newBranch}
+              />
+            {/if}
+          {/snippet}
+        </AppHeader>
 
-      <div class="flex min-h-0 flex-1">
-        <main class="flex min-h-0 min-w-0 flex-1 pr-2 pb-2">
-          <div class="min-w-0 flex-1">
-            <div
-              bind:this={paneStrip}
-              onfocusin={trackPane}
-              onpointerdowncapture={trackPane}
-              class={cn(
-                '-mx-1 flex h-full snap-x snap-mandatory overflow-x-auto overflow-y-hidden overscroll-x-contain scrollbar-none',
-                drag.active && 'snap-none select-none',
-              )}
-            >
-              {#each stripIds as id (id)}
-                {#if isPanel(id)}
+        <div class="flex min-h-0 flex-1">
+          <main class="flex min-h-0 min-w-0 flex-1 pr-2 pb-2">
+            <div class="min-w-0 flex-1">
+              <div
+                bind:this={paneStrip}
+                onfocusin={trackPane}
+                onpointerdowncapture={trackPane}
+                class={cn(
+                  '-mx-1 flex h-full snap-x snap-mandatory overflow-x-auto overflow-y-hidden overscroll-x-contain scrollbar-none',
+                  drag.active && 'select-none',
+                  (drag.active || motion.active) && 'snap-none',
+                )}
+              >
+                {#each stripIds as id (id)}
+                  {@const pane = isPanel(id)
+                    ? undefined
+                    : panes.find((pane) => pane.id === id)}
+                  {#if !panes.length && id === 'activity'}
+                    <section
+                      data-strip-id="placeholder"
+                      class={cn(SECTION_CLASS, autoSizeClass)}
+                      out:leave={{ animate: paneMotion }}
+                    >
+                      {@render placeholder()}
+                    </section>
+                  {/if}
+                  <!-- One section for panels and panes alike: an `out:` only plays when its own
+                     block goes, so the section has to sit right in the `#each`. -->
                   <section
-                    data-panel={id}
+                    data-panel={pane ? undefined : id}
+                    data-pane-id={pane?.id}
+                    data-strip-id={id}
                     class={cn(
                       SECTION_CLASS,
                       sizeOverrides[id]
@@ -927,86 +1120,85 @@
                       drag.isDragging(id) && '*:shadow-2xl *:shadow-black/50',
                     )}
                     style={drag.style(id)}
-                    in:paneWidth
-                    out:paneWidth
+                    out:leave={{ animate: !pane || paneMotion }}
                   >
-                    {#if id === 'settings'}
+                    {#if pane}
+                      <PaneView
+                        {pane}
+                        projectId={project!.id}
+                        badge={paneBadge(statuses.get(pane.id))}
+                        onviewChanges={viewChanges}
+                        selectedDiff={selectedDiff?.projectId === project!.id
+                          ? selectedDiff
+                          : undefined}
+                        dragHandle={gripOf(pane.id)}
+                        size={paneSize(pane.id)}
+                        onclose={() => closePane(pane.id)}
+                        onresize={(size) => (sizeOverrides[pane.id] = size)}
+                        onrename={(title) => {
+                          pane.title = title;
+                          void runAction(() =>
+                            window.bonfire.panes.rename(pane.id, title),
+                          );
+                        }}
+                        onnavigate={(url) => {
+                          if (pane.url === url) return;
+                          pane.url = url;
+                          window.bonfire.panes
+                            .navigate(pane.id, url)
+                            .catch(showError);
+                        }}
+                      />
+                    {:else if id === 'settings'}
                       <SettingsPane {...panelProps(id)} />
                     {:else if id === 'shortcuts'}
                       <ShortcutsPane {...panelProps(id)} />
                     {:else if id === 'activity'}
                       <ActivityPane {projectId} {...panelProps(id)} />
-                    {:else}
+                    {:else if id === 'insights'}
                       <InsightsPane
                         bind:tab={insightsTab}
                         {...panelProps(id)}
                       />
                     {/if}
                   </section>
-                {:else}
-                  {@const pane = panes.find((pane) => pane.id === id)!}
+                {/each}
+                {#if !panes.length && !panels.includes('activity')}
                   <section
-                    data-pane-id={pane.id}
+                    data-strip-id="placeholder"
+                    class={cn(SECTION_CLASS, autoSizeClass)}
+                    out:leave={{ animate: paneMotion }}
+                  >
+                    {@render placeholder()}
+                  </section>
+                {/if}
+                {#if project && showPullRequest}
+                  <section
+                    data-strip-id={PULL_REQUEST_ID}
                     class={cn(
                       SECTION_CLASS,
-                      paneSizeClass(pane),
-                      HIGHLIGHT_CLASS,
-                      highlightedId === pane.id && HIGHLIGHTED_CLASS,
-                      drag.isDragging(pane.id) &&
-                        '*:shadow-2xl *:shadow-black/50',
+                      pullRequestSize
+                        ? sizeClass(pullRequestSize)
+                        : autoSizeClass,
                     )}
-                    style={drag.style(pane.id)}
-                    in:paneWidth={{ animate: addingPane }}
+                    out:leave
                   >
-                    <PaneView
-                      {pane}
-                      projectId={project!.id}
-                      badge={paneBadge(statuses.get(pane.id))}
-                      dragHandle={gripOf(pane.id)}
-                      onclose={() =>
-                        runAction(() => window.bonfire.panes.archive(pane.id))}
-                      onresize={(size) => (sizeOverrides[pane.id] = size)}
-                      onrename={(title) => {
-                        pane.title = title;
-                        void runAction(() =>
-                          window.bonfire.panes.rename(pane.id, title),
-                        );
-                      }}
+                    <PullRequestView
+                      projectId={project.id}
+                      size={pullRequestSize ?? autoSize}
+                      onresize={(size) => (pullRequestSize = size)}
+                      onclose={() => (pullRequestOpen = false)}
                     />
                   </section>
                 {/if}
-              {/each}
-              {#if !panes.length}
-                <section class={cn(SECTION_CLASS, autoSizeClass)}>
-                  {@render placeholder()}
-                </section>
-              {/if}
-              {#if project && showPullRequest}
-                <section
-                  class={cn(
-                    SECTION_CLASS,
-                    pullRequestSize
-                      ? sizeClass(pullRequestSize)
-                      : autoSizeClass,
-                  )}
-                  in:paneWidth
-                  out:paneWidth
-                  onintroend={() => void revealEdge('end')}
-                >
-                  <PullRequestView
-                    projectId={project.id}
-                    onresize={(size) => (pullRequestSize = size)}
-                    onclose={() => (pullRequestOpen = false)}
-                  />
-                </section>
-              {/if}
+              </div>
             </div>
-          </div>
-        </main>
+          </main>
+        </div>
       </div>
     </div>
-  </div>
-{/if}
+  {/if}
+</Bloom>
 
 {#if project}
   <NewBranchDialog bind:open={creatingBranch} projectId={project.id} />

@@ -17,6 +17,7 @@
   let {
     tab = $bindable('tokens'),
     dragHandle,
+    size,
     onresize,
     onclose,
   }: { tab?: string } & PanelProps = $props();
@@ -29,8 +30,10 @@
     title="Insights"
     icon="insights"
     {dragHandle}
+    {size}
     {onresize}
     {onclose}
+    resizable={false}
   >
     {#snippet actions()}
       <SegmentedControl

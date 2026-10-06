@@ -3,11 +3,19 @@ import { z } from 'zod';
 export const id = z.string().uuid();
 export const assistantProvider = z.enum(['claude', 'codex']);
 /** Panes that show the project itself rather than talk to an agent. */
-export const toolPaneType = z.enum(['files', 'terminal', 'diff']);
+export const toolPaneType = z.enum(['files', 'terminal', 'diff', 'browser']);
 export const paneType = z.enum([
   ...assistantProvider.options,
   ...toolPaneType.options,
 ]);
+/** A page a browser pane can show: web pages only, never files or app URLs. */
+export const browserUrl = z
+  .string()
+  .max(2048)
+  .refine(
+    (value) => /^https?:\/\//i.test(value),
+    'Only web pages can be opened.',
+  );
 export const reasoningEffort = z.enum([
   'minimal',
   'low',
@@ -19,13 +27,24 @@ export const reasoningEffort = z.enum([
 export const conversationMessageSchema = z.object({
   id: z.string(),
   role: z.enum(['user', 'assistant']),
-  kind: z.enum(['text', 'thinking', 'tool', 'attachment', 'error', 'notice']),
+  kind: z.enum([
+    'text',
+    'thinking',
+    'tool',
+    'attachment',
+    'error',
+    /** Like `error`, but the provider reported its model was overloaded or rate-limited. */
+    'capacity',
+    'notice',
+  ]),
   text: z.string(),
   status: z.enum(['streaming', 'complete', 'failed']).default('complete'),
   size: z.number().int().nonnegative().optional(),
   previewUrl: z.string().optional(),
-  /** How long a thinking message took to stream, once complete. */
+  /** How long a thinking or text message took to stream, once complete. */
   durationMs: z.number().int().nonnegative().optional(),
+  /** When a thinking or text message finished streaming, once complete. */
+  createdAt: z.number().int().nonnegative().optional(),
   /** Structured details for tool-call messages. */
   tool: z
     .object({
@@ -33,6 +52,8 @@ export const conversationMessageSchema = z.object({
       /** The call's key argument, such as a shell command or file path. */
       input: z.string().default(''),
       output: z.string().default(''),
+      /** Previews of images the call's result carried, such as a screenshot read from disk. */
+      images: z.array(z.string()).max(4).readonly().optional(),
     })
     .optional(),
 });
@@ -130,6 +151,8 @@ export const paneSchema = z.object({
   workBranch: z.object({ name: z.string(), since: z.number() }).optional(),
   /** A terminal pane that shows a run script's output rather than a shell. */
   scriptId: id.optional(),
+  /** The page a browser pane last showed. */
+  url: z.string().optional(),
   archived: z.boolean().default(false),
 });
 
@@ -319,6 +342,29 @@ export type ProviderAccount = {
   signedIn: boolean;
   email?: string;
   plan?: string;
+};
+/**
+ * A sign-in on a machine reached over SSH can't finish itself the way a local one does: there
+ * is no browser there to catch the redirect. Claude's CLI waits instead for the code the
+ * browser shows, given back through `submitSignInCode`. Codex's instead shows a code of its
+ * own to enter at `verificationUrl`, and finishes on its own once that's done; `awaitSignIn`
+ * resolves when it does.
+ */
+export type NeedsSignInCode = { needsCode: true };
+export type NeedsDeviceAuth = { userCode: string; verificationUrl: string };
+export type SignInWaiting = NeedsSignInCode | NeedsDeviceAuth;
+/** The CLI of a provider that a machine runs, against the version the app expects. */
+export type CliVersion = {
+  provider: AssistantProvider;
+  /** `local`, or the id of the SSH connection. */
+  machineId: string;
+  machineName: string;
+  /** Unset when the CLI isn't installed there or didn't answer. */
+  installed?: string;
+  /** Unset when the expected version couldn't be read. */
+  required?: string;
+  /** Older than `required`, so it may not do what the app asks or run the newest models. */
+  outdated: boolean;
 };
 export type GithubStatus =
   { installed: false } | { installed: true; login?: string };
@@ -544,6 +590,11 @@ export type TerminalEvent = {
   sequence: number;
   data?: string;
   exitCode?: number;
+  /**
+   * The terminal ended because the terminal host stopped. Main sends this, not the host, so
+   * it stands outside the terminal's own sequence.
+   */
+  hostStopped?: true;
 };
 /**
  * Something changed in a project's folder: its `files`, including what Git has staged; the
@@ -559,15 +610,35 @@ export type PanesClosedEvent = {
   reason: 'merged';
 };
 
+/** What the dictation helper reports while it listens; `session` is the id `start` returned. */
+export type DictationEvent = { session: string } & (
+  | { type: 'ready' }
+  /** Everything heard so far; earlier words may be revised as recognition firms up. */
+  | { type: 'result'; text: string }
+  | { type: 'level'; level: number }
+  | { type: 'error'; error: string }
+  | { type: 'end' }
+);
+
 /** IPC argument schemas, keyed by `group.method`. Every channel is validated in main. */
 export const requests = {
   'state.get': z.tuple([]),
   'preferences.get': z.tuple([]),
   'preferences.update': z.tuple([preferencesSchema.partial()]),
   'providers.account': z.tuple([assistantProvider]),
-  'providers.connect': z.tuple([assistantProvider]),
+  'providers.connect': z.tuple([
+    assistantProvider,
+    z.union([z.literal('local'), id]).optional(),
+  ]),
+  'providers.submitSignInCode': z.tuple([assistantProvider, z.string()]),
+  'providers.awaitSignIn': z.tuple([assistantProvider]),
   'providers.cancelConnect': z.tuple([assistantProvider]),
   'providers.outputStyles': z.tuple([]),
+  'providers.cliVersions': z.tuple([]),
+  'providers.updateCli': z.tuple([
+    assistantProvider,
+    z.union([z.literal('local'), id]),
+  ]),
   'github.status': z.tuple([]),
   'github.connect': z.tuple([]),
   'github.cancelConnect': z.tuple([]),
@@ -594,9 +665,11 @@ export const requests = {
   'connections.chooseIdentity': z.tuple([]),
   'connections.browse': z.tuple([id, filePath.optional()]),
   'panes.add': z.tuple([paneType.optional(), z.boolean().optional()]),
+  'panes.fork': z.tuple([id, z.string().min(1).max(200), assistantProvider]),
   'panes.archive': z.tuple([id]),
   'panes.reorder': z.tuple([z.array(id).max(100)]),
   'panes.rename': z.tuple([id, z.string().trim().min(1).max(200)]),
+  'panes.navigate': z.tuple([id, browserUrl]),
   'assistant.send': z.tuple([assistantSendInput]),
   'assistant.pickAttachment': z.tuple([id]),
   'assistant.attachFile': z.tuple([id, filePath]),
@@ -624,6 +697,10 @@ export const requests = {
   'tokens.get': z.tuple([tokenRange]),
   'navigation.help': z.tuple([]),
   'app.isFullscreen': z.tuple([]),
+  'app.copyText': z.tuple([z.string().max(1_048_576)]),
+  'dictation.available': z.tuple([]),
+  'dictation.start': z.tuple([z.string().max(64)]),
+  'dictation.stop': z.tuple([id]),
   'scripts.list': z.tuple([id]),
   'scripts.detect': z.tuple([id]),
   'scripts.save': z.tuple([id, runScriptInput]),
@@ -632,18 +709,14 @@ export const requests = {
   'scripts.stop': z.tuple([id, id]),
   'scripts.runs': z.tuple([id]),
   'terminal.create': z.tuple([terminalCreateInput]),
-  'terminal.write': z.tuple([id, z.string().max(1_048_576)]),
-  'terminal.resize': z.tuple([
-    id,
-    z.number().int().min(2).max(500),
-    z.number().int().min(1).max(300),
-  ]),
   'terminal.snapshot': z.tuple([id]),
   'git.status': z.tuple([id]),
   'git.head': z.tuple([id]),
   'git.localBranches': z.tuple([id]),
   'git.branches': z.tuple([id]),
   'git.diff': z.tuple([id, filePath]),
+  'git.discard': z.tuple([id, filePath.optional()]),
+  'git.changesAmong': z.tuple([id, z.array(filePath).min(1).max(32)]),
   'git.checkout': z.tuple([id, branchName]),
   'git.createBranch': z.tuple([id, branchName, branchName]),
   'git.pull': z.tuple([id]),
@@ -654,9 +727,32 @@ export const requests = {
   'filesystem.unwatch': z.tuple([id]),
 };
 
+/**
+ * Calls the window sends straight to the terminal host over its own channel, not to main.
+ * The host checks each as main checks its requests.
+ */
+export const terminalHostRequests = {
+  'terminal.write': z.tuple([id, z.string().max(1_048_576)]),
+  'terminal.resize': z.tuple([
+    id,
+    z.number().int().min(2).max(500),
+    z.number().int().min(1).max(300),
+  ]),
+  'terminal.ack': z.tuple([
+    id,
+    z
+      .number()
+      .int()
+      .min(0)
+      .max(1 << 30),
+  ]),
+};
+
 /** Push channels from main to the renderer. */
 export const events = {
   terminalData: 'terminal:data',
+  /** Hands the window its own channel to the terminal host; asked for by the preload. */
+  terminalPort: 'terminal:port',
   assistantEvent: 'assistant:event',
   fileChange: 'filesystem:change',
   fullscreen: 'window:fullscreen',
@@ -665,6 +761,7 @@ export const events = {
   panesClosed: 'panes:closed',
   githubSignInEnd: 'github:sign-in-end',
   scriptRun: 'scripts:run',
+  dictationEvent: 'dictation:event',
 } as const;
 
 type Unsubscribe = () => void;
@@ -678,11 +775,32 @@ export type API = {
   };
   providers: {
     account(provider: AssistantProvider): Promise<ProviderAccount>;
-    /** Signs in through the browser, replacing the current account; resolves once done. */
-    connect(provider: AssistantProvider): Promise<ProviderAccount>;
+    /**
+     * Signs in through the browser, replacing the current account; resolves once done. Signs
+     * in on `machineId` (`local`, or an SSH connection's id) rather than this computer; a
+     * machine reached over SSH asks for the browser's code next, through `submitSignInCode`.
+     */
+    connect(
+      provider: AssistantProvider,
+      machineId?: string,
+    ): Promise<ProviderAccount | SignInWaiting>;
+    /** Finishes a sign-in that asked for the code the browser showed. */
+    submitSignInCode(
+      provider: AssistantProvider,
+      code: string,
+    ): Promise<ProviderAccount>;
+    /** Waits out a sign-in that showed its own code, until the user enters it and it's done. */
+    awaitSignIn(provider: AssistantProvider): Promise<ProviderAccount>;
     cancelConnect(provider: AssistantProvider): Promise<void>;
     /** Output styles Claude offers, built-in and the user's own. */
     outputStyles(): Promise<string[]>;
+    /** The enabled providers' CLI versions on this computer and on the open project's machine. */
+    cliVersions(): Promise<CliVersion[]>;
+    /** Updates a provider's CLI on a machine (`local` or a connection id); returns its new version. */
+    updateCli(
+      provider: AssistantProvider,
+      machineId: string,
+    ): Promise<CliVersion>;
   };
   github: {
     status(): Promise<GithubStatus>;
@@ -752,12 +870,23 @@ export type API = {
      * With `other`, the agent is the enabled provider that new panes don't start with.
      */
     add(type?: PaneType, other?: boolean): Promise<Pane>;
+    /**
+     * Summarizes the conversation up to `messageId` and opens a new pane with `provider`,
+     * the summary attached so the user can continue the work with a different agent.
+     */
+    fork(
+      paneId: string,
+      messageId: string,
+      provider: AssistantProvider,
+    ): Promise<{ pane: Pane; attachment: Attachment }>;
     onClosed(listener: (event: PanesClosedEvent) => void): Unsubscribe;
     archive(id: string): Promise<void>;
     /** Reorders the given panes among the layout slots they already occupy. */
     reorder(ids: string[]): Promise<void>;
     /** Gives the pane a title of the user's choosing. */
     rename(id: string, title: string): Promise<void>;
+    /** Remembers the page a browser pane is showing, so it reopens there. */
+    navigate(id: string, url: string): Promise<void>;
   };
   assistant: {
     send(input: AssistantSendInput): Promise<void>;
@@ -793,6 +922,8 @@ export type API = {
   navigation: { help(): Promise<void> };
   app: {
     isFullscreen(): Promise<boolean>;
+    /** Puts text on the system clipboard; the sandboxed renderer can't write to it directly. */
+    copyText(text: string): Promise<void>;
     /** The path on disk of a file from a drop or file input. */
     pathForFile(file: File): string;
     onFullscreenChange(listener: (fullscreen: boolean) => void): Unsubscribe;
@@ -800,6 +931,18 @@ export type API = {
     onFocusPane(listener: (paneId: string) => void): Unsubscribe;
     /** The OS refused a notification; carries the app name to allow in its settings. */
     onNotificationsBlocked(listener: (appName: string) => void): Unsubscribe;
+  };
+  dictation: {
+    /** Whether this computer can dictate (macOS, with the helper built). */
+    available(): Promise<boolean>;
+    /**
+     * Starts listening in the given language (BCP 47; empty for the system's) and resolves
+     * with the session id its events carry. Starting again ends the previous session.
+     */
+    start(language: string): Promise<string>;
+    /** Stops listening; the last words and an `end` event follow shortly. */
+    stop(session: string): Promise<void>;
+    onEvent(listener: (event: DictationEvent) => void): Unsubscribe;
   };
   scripts: {
     /** The project's run scripts; the first time, those detected from its files. */
@@ -825,6 +968,11 @@ export type API = {
     write(id: string, data: string): Promise<void>;
     resize(id: string, cols: number, rows: number): Promise<void>;
     snapshot(id: string): Promise<TerminalSnapshot>;
+    /**
+     * Says how much of the output the window has shown, so a program writing faster than
+     * it can be shown is paused rather than piling up in the window.
+     */
+    ack(id: string, chars: number): Promise<void>;
     onData(listener: (event: TerminalEvent) => void): Unsubscribe;
   };
   git: {
@@ -835,6 +983,10 @@ export type API = {
     /** Local and remote-tracking branches, to start a new branch from. */
     branches(projectId: string): Promise<string[]>;
     diff(projectId: string, path: string): Promise<string>;
+    /** Throws away the uncommitted changes to one file, or to all of them without a path. */
+    discard(projectId: string, path?: string): Promise<void>;
+    /** The current changes among the given paths, such as the files a turn edited. */
+    changesAmong(projectId: string, paths: string[]): Promise<Change[]>;
     /**
      * Switches the project folder to another branch. Uncommitted changes come along when
      * they can; refused while an agent in the project is working.
@@ -857,11 +1009,24 @@ export type API = {
   };
 };
 
-/** The request/response half of the API that main implements (no push subscriptions or preload-only helpers). */
+/** Methods the preload sends to the terminal host rather than to main. */
+type TerminalHostMethods = {
+  [
+    Channel in keyof typeof terminalHostRequests
+  ]: Channel extends `terminal.${infer Method}` ? Method : never;
+}[keyof typeof terminalHostRequests];
+
+/**
+ * The request/response half of the API that main implements: no push subscriptions,
+ * preload-only helpers, or calls that go to the terminal host.
+ */
 export type Backend = {
   [Group in keyof API]: {
     [
-      Method in keyof API[Group] as Method extends `on${string}` | 'pathForFile'
+      Method in keyof API[Group] as Method extends
+        | `on${string}`
+        | 'pathForFile'
+        | (Group extends 'terminal' ? TerminalHostMethods : never)
         ? never
         : Method
     ]: API[Group][Method];

@@ -180,141 +180,204 @@ async function logFiles(root: string, since: number): Promise<string[]> {
   return found.flat();
 }
 
-/** Calls the line parser on each line that contains one of the `needles`. */
-async function readLines(
-  file: string,
-  needles: string[],
-  parse: (entry: any) => void,
-) {
-  const lines = createInterface({ input: createReadStream(file) });
-  for await (const line of lines) {
-    if (!needles.some((needle) => line.includes(needle))) continue;
+/** Reads a log's lines as they are appended, picking up each time where it left off. */
+type LogReader = {
+  /** Lines without one of these hold no usage, so they aren't parsed. */
+  needles: string[];
+  parse(entry: any): void;
+  records(): UsageRecord[];
+};
+
+const NEWLINE = 0x0a;
+
+/**
+ * Parses the lines of `file` from byte `start` that contain one of the reader's needles, and
+ * returns where the next read starts: after the last complete line. A last line with no
+ * newline is parsed too, as a finished log may end that way, but read again next time, since
+ * the CLI may still be writing it; readers count a line read twice once.
+ */
+async function readLines(file: string, start: number, reader: LogReader) {
+  const parse = (line: Buffer) => {
+    // Checked on the bytes, so lines without usage, most of a log, are never decoded.
+    if (!reader.needles.some((needle) => line.includes(needle))) return;
     try {
-      parse(JSON.parse(line));
+      reader.parse(JSON.parse(line.toString('utf8')));
     } catch {
       // A half-written last line, since the CLIs append while we read.
     }
+  };
+  let read = 0;
+  /** The start of a line whose newline hasn't been read yet. */
+  let rest: Buffer = Buffer.alloc(0);
+  for await (const chunk of createReadStream(file, { start })) {
+    const bytes = chunk as Buffer;
+    read += bytes.length;
+    const data = rest.length ? Buffer.concat([rest, bytes]) : bytes;
+    let from = 0;
+    for (
+      let end = data.indexOf(NEWLINE);
+      end !== -1;
+      end = data.indexOf(NEWLINE, from)
+    ) {
+      parse(data.subarray(from, end));
+      from = end + 1;
+    }
+    rest = data.subarray(from);
   }
+  if (rest.length) parse(rest);
+  return start + read - rest.length;
 }
 
 /** Claude Code logs one entry per streamed chunk of a reply; each carries the reply's usage so far. */
-export async function readClaudeLog(file: string): Promise<UsageRecord[]> {
+function claudeReader(file: string): LogReader {
   const records = new Map<string, UsageRecord>();
-  await readLines(file, ['"usage"'], (entry) => {
-    const { message } = entry;
-    const usage = message?.usage;
-    if (entry.type !== 'assistant' || !usage || !message.model) return;
-    if (message.model === '<synthetic>') return;
-    const at = Date.parse(entry.timestamp);
-    if (Number.isNaN(at)) return;
-    const written = usage.cache_creation_input_tokens ?? 0;
-    const written1h = usage.cache_creation?.ephemeral_1h_input_tokens ?? 0;
-    const key =
-      message.id && entry.requestId
-        ? `${message.id}:${entry.requestId}`
-        : String(entry.uuid ?? `${file}:${at}`);
-    const record: UsageRecord = {
-      key,
-      at,
-      provider: 'claude',
-      model: message.model,
-      input: usage.input_tokens ?? 0,
-      cacheRead: usage.cache_read_input_tokens ?? 0,
-      cacheWrite5m: Math.max(written - written1h, 0),
-      cacheWrite1h: written1h,
-      output: usage.output_tokens ?? 0,
-    };
-    // Later chunks of the same reply report more output.
-    if (record.output >= (records.get(key)?.output ?? -1))
-      records.set(key, record);
-  });
-  return [...records.values()];
+  return {
+    needles: ['"usage"'],
+    records: () => [...records.values()],
+    parse(entry) {
+      const { message } = entry;
+      const usage = message?.usage;
+      if (entry.type !== 'assistant' || !usage || !message.model) return;
+      if (message.model === '<synthetic>') return;
+      const at = Date.parse(entry.timestamp);
+      if (Number.isNaN(at)) return;
+      const written = usage.cache_creation_input_tokens ?? 0;
+      const written1h = usage.cache_creation?.ephemeral_1h_input_tokens ?? 0;
+      const key =
+        message.id && entry.requestId
+          ? `${message.id}:${entry.requestId}`
+          : String(entry.uuid ?? `${file}:${at}`);
+      const record: UsageRecord = {
+        key,
+        at,
+        provider: 'claude',
+        model: message.model,
+        input: usage.input_tokens ?? 0,
+        cacheRead: usage.cache_read_input_tokens ?? 0,
+        cacheWrite5m: Math.max(written - written1h, 0),
+        cacheWrite1h: written1h,
+        output: usage.output_tokens ?? 0,
+      };
+      // Later chunks of the same reply report more output.
+      if (record.output >= (records.get(key)?.output ?? -1))
+        records.set(key, record);
+    },
+  };
 }
 
 /** Codex logs running totals per session; each increase is one call. */
-export async function readCodexLog(file: string): Promise<UsageRecord[]> {
+function codexReader(file: string): LogReader {
   const records: UsageRecord[] = [];
   let model = 'codex';
   let previous = { total: 0, input: 0, cached: 0, output: 0 };
-  await readLines(file, ['token_count', 'turn_context'], (entry) => {
-    const payload = entry.payload;
-    if (entry.type === 'turn_context' && payload?.model) model = payload.model;
-    const total = payload?.info?.total_token_usage;
-    if (payload?.type !== 'token_count' || !total) return;
-    const at = Date.parse(entry.timestamp);
-    if (Number.isNaN(at) || total.total_tokens <= previous.total) return;
-    const cached = total.cached_input_tokens ?? 0;
-    const used = {
-      total: total.total_tokens,
-      input: total.input_tokens ?? 0,
-      cached,
-      output: total.output_tokens ?? 0,
-    };
-    // Codex counts cached tokens inside its input tokens.
-    const cacheRead = used.cached - previous.cached;
-    records.push({
-      key: `${file}:${used.total}`,
-      at,
-      provider: 'codex',
-      model,
-      input: used.input - previous.input - cacheRead,
-      cacheRead,
-      cacheWrite5m: 0,
-      cacheWrite1h: 0,
-      output: used.output - previous.output,
-    });
-    previous = used;
-  });
-  return records;
+  return {
+    needles: ['token_count', 'turn_context'],
+    records: () => [...records],
+    parse(entry) {
+      const payload = entry.payload;
+      if (entry.type === 'turn_context' && payload?.model)
+        model = payload.model;
+      const total = payload?.info?.total_token_usage;
+      if (payload?.type !== 'token_count' || !total) return;
+      const at = Date.parse(entry.timestamp);
+      // A total no higher than the last, such as a line read again, is no new call.
+      if (Number.isNaN(at) || total.total_tokens <= previous.total) return;
+      const cached = total.cached_input_tokens ?? 0;
+      const used = {
+        total: total.total_tokens,
+        input: total.input_tokens ?? 0,
+        cached,
+        output: total.output_tokens ?? 0,
+      };
+      // Codex counts cached tokens inside its input tokens.
+      const cacheRead = used.cached - previous.cached;
+      records.push({
+        key: `${file}:${used.total}`,
+        at,
+        provider: 'codex',
+        model,
+        input: used.input - previous.input - cacheRead,
+        cacheRead,
+        cacheWrite5m: 0,
+        cacheWrite1h: 0,
+        output: used.output - previous.output,
+      });
+      previous = used;
+    },
+  };
 }
 
-type Cached = { mtimeMs: number; size: number; records: UsageRecord[] };
+export async function readClaudeLog(file: string): Promise<UsageRecord[]> {
+  const reader = claudeReader(file);
+  await readLines(file, 0, reader);
+  return reader.records();
+}
+
+export async function readCodexLog(file: string): Promise<UsageRecord[]> {
+  const reader = codexReader(file);
+  await readLines(file, 0, reader);
+  return reader.records();
+}
+
+type Cached = {
+  mtimeMs: number;
+  size: number;
+  /** Where the next read of the file starts. */
+  offset: number;
+  reader: LogReader;
+};
 
 /** Reads the Claude and Codex session logs on this machine, parsing a file again only when it changed. */
 export class TokenUsage {
   private readonly files = new Map<string, Cached>();
   private readonly roots: {
     path: string;
-    read: (file: string) => Promise<UsageRecord[]>;
+    reader: (file: string) => LogReader;
   }[];
 
   constructor(home = homedir()) {
     const claude = process.env.CLAUDE_CONFIG_DIR ?? join(home, '.claude');
     const codex = process.env.CODEX_HOME ?? join(home, '.codex');
     this.roots = [
-      { path: join(claude, 'projects'), read: readClaudeLog },
-      { path: join(codex, 'sessions'), read: readCodexLog },
-      { path: join(codex, 'archived_sessions'), read: readCodexLog },
+      { path: join(claude, 'projects'), reader: claudeReader },
+      { path: join(codex, 'sessions'), reader: codexReader },
+      { path: join(codex, 'archived_sessions'), reader: codexReader },
     ];
   }
 
   async stats(range: TokenRange, now = Date.now()) {
     const since = rangeStart(range, now);
     const records: UsageRecord[] = [];
-    for (const { path, read } of this.roots) {
+    for (const { path, reader } of this.roots) {
       const files = await logFiles(path, since);
       // A few at a time, so a long history doesn't open every file at once.
       for (let first = 0; first < files.length; first += OPEN_FILES)
         for (const found of await Promise.all(
           files
             .slice(first, first + OPEN_FILES)
-            .map((file) => this.records(file, read)),
+            .map((file) => this.records(file, reader)),
         ))
           records.push(...found);
     }
     return summarize(records, range, now);
   }
 
-  private async records(
-    file: string,
-    read: (file: string) => Promise<UsageRecord[]>,
-  ) {
+  /**
+   * The file's records, reading only what was appended since the last look: the logs of
+   * agents at work grow all the time, and reading each again whole cost more every turn.
+   */
+  private async records(file: string, reader: (file: string) => LogReader) {
     const { mtimeMs, size } = await stat(file);
-    const cached = this.files.get(file);
+    let cached = this.files.get(file);
     if (cached?.mtimeMs === mtimeMs && cached.size === size)
-      return cached.records;
-    const records = await read(file);
-    this.files.set(file, { mtimeMs, size, records });
-    return records;
+      return cached.reader.records();
+    // A log that shrank was rewritten, so it is read from the start.
+    if (!cached || size < cached.size)
+      cached = { mtimeMs, size, offset: 0, reader: reader(file) };
+    cached.offset = await readLines(file, cached.offset, cached.reader);
+    cached.mtimeMs = mtimeMs;
+    cached.size = size;
+    this.files.set(file, cached);
+    return cached.reader.records();
   }
 }

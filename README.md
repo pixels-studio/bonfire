@@ -23,7 +23,7 @@ restart after main/preload edits.
 
 1. Pick a project and branch in the header. **Add project** takes a git repository on this
    computer, or on another machine over SSH (connections are managed in Settings). Help,
-   Insights, and Settings live in the rail on the left.
+   Insights, Settings, and Keyboard Shortcuts live in the rail on the left.
 2. Every pane works in the project folder itself, on whichever branch it has checked out.
    The branch menu lists local branches, newest first, and switches between them; uncommitted
    changes come along unless they would conflict, in which case git's message says why.
@@ -32,7 +32,7 @@ restart after main/preload edits.
    Git owns the current branch, so switches made by agents or terminals show up too.
 3. Add Claude or Codex panes with **＋**; pick a model and thinking effort in the composer.
    Switching provider mid-chat opens a new pane. Panes use your existing CLI login.
-4. The header's Files, Terminal, and Diff buttons open a panel for the project beside its panes.
+4. The header's Activity, Files, Code diff, and Browser buttons open project views beside its panes.
    **Create PR** pushes the branch and opens a pull request against the remote default branch;
    after **Merge**, the toast offers to switch back to it and pull. With **Archive on merge**
    on (Settings › GitHub), conversations close once their branch's pull request merges.

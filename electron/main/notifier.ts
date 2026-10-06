@@ -27,6 +27,8 @@ export class TurnNotifier {
   ) {}
 
   handle(event: AssistantEvent) {
+    // Every streamed delta passes through here, so those that can't notify leave first.
+    if (event.type !== 'status' && event.type !== 'request') return;
     if (this.closed || !this.store.preferences.notifications) return;
     const pane = this.store.state.panes.find(({ id }) => id === event.paneId);
     if (!pane || pane.archived || !isAssistantPane(pane)) return;

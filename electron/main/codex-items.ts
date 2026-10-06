@@ -1,6 +1,6 @@
 import type { ConversationMessage } from '../../shared/contracts';
 import { assistantMessage } from './assistant';
-import type { ItemStatus, ThreadItem } from './codex-protocol';
+import type { ItemStatus, McpContentItem, ThreadItem } from './codex-protocol';
 import { clipOutput, toolInput } from './tool-text';
 
 /**
@@ -115,15 +115,24 @@ function itemStatus(
   return exitCode ? 'failed' : 'complete';
 }
 
-function contentText(content: unknown[] | null | undefined) {
+function contentText(content: McpContentItem[] | null | undefined) {
   return (content ?? [])
-    .map((part) =>
-      typeof part === 'string'
-        ? part
-        : ((part as { text?: string } | null)?.text ?? ''),
-    )
+    .map((part) => part.text ?? '')
     .filter(Boolean)
     .join('\n');
+}
+
+/** The images an MCP tool result carried, such as a screenshot a browser tool took. */
+export function imagesFromItem(item: ThreadItem) {
+  const content =
+    item.type === 'mcpToolCall'
+      ? item.result?.content
+      : item.type === 'dynamicToolCall'
+        ? item.contentItems
+        : null;
+  return (content ?? [])
+    .filter((part) => part.type === 'image' && part.data && part.mimeType)
+    .map(({ data, mimeType }) => ({ data: data!, mimeType: mimeType! }));
 }
 
 function toolMessage(

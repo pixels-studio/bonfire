@@ -52,6 +52,7 @@
   let {
     projectId,
     dragHandle,
+    size,
     onresize,
     onclose,
   }: { projectId?: string } & PanelProps = $props();
@@ -129,31 +130,36 @@
     title="Activity"
     icon="activity"
     {dragHandle}
+    {size}
     {onresize}
     {onclose}
+    resizable={false}
   >
     {#snippet actions()}
-    <Tooltip.Root>
-      <Tooltip.Trigger>
-        {#snippet child({ props })}
-          <Button
-            {...props}
-            variant="secondary"
-            size="icon"
-            class="text-muted-foreground hover:text-foreground"
-            aria-label="Refresh"
-            disabled={loading || !projectId}
-            onclick={() => reload(projectId)}
-          >
-            <Icon name="refresh" />
-          </Button>
-        {/snippet}
-      </Tooltip.Trigger>
-      <Tooltip.Content>Refresh</Tooltip.Content>
-    </Tooltip.Root>
+      <Tooltip.Root>
+        <Tooltip.Trigger>
+          {#snippet child({ props })}
+            <Button
+              {...props}
+              variant="secondary"
+              size="icon"
+              class="text-muted-foreground hover:text-foreground"
+              aria-label="Refresh"
+              disabled={loading || !projectId}
+              onclick={() => reload(projectId)}
+            >
+              <Icon name="refresh" />
+            </Button>
+          {/snippet}
+        </Tooltip.Trigger>
+        <Tooltip.Content>Refresh</Tooltip.Content>
+      </Tooltip.Root>
     {/snippet}
   </PaneHeader>
-  <div {@attach overlayScrollbar} class="min-h-0 flex-1 overflow-y-auto px-2 py-6">
+  <div
+    {@attach overlayScrollbar}
+    class="min-h-0 flex-1 overflow-y-auto px-2 py-6"
+  >
     {#if error}
       <p
         class="px-2 py-8 text-center text-sm text-pretty text-muted-foreground"

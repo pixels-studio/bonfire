@@ -5,6 +5,7 @@ import type {
   ProviderAccount,
   ProviderLimits,
   Skill,
+  State,
 } from '../shared/contracts';
 import { DEFAULT_PREFERENCES } from '../shared/domain';
 import {
@@ -13,6 +14,8 @@ import {
   type Turn,
 } from '../electron/main/assistant';
 import type { Store } from '../electron/main/persistence';
+import { PaneChanges, SettingChanges } from '../electron/main/state';
+import type { Endpoint } from '../electron/main/rpc';
 
 export function fakeStore(type: 'claude' | 'codex') {
   const pane: Pane = {
@@ -34,10 +37,18 @@ export function fakeStore(type: 'claude' | 'codex') {
     createdAt: 0,
     lastOpenedAt: 0,
   };
+  const state = {
+    panes: [pane],
+    layout: { paneIds: [pane.id] },
+    settings: {},
+  } as unknown as State;
+  const save = () => {};
   const store = {
-    state: { settings: {} },
+    state,
     preferences: { ...DEFAULT_PREFERENCES },
-    save() {},
+    panes: new PaneChanges(() => state, save),
+    settings: new SettingChanges(() => state, save),
+    save,
     flush() {},
     pane: () => pane,
     project: () => project,
@@ -113,4 +124,19 @@ export function scripted(type: 'claude' | 'codex' = 'claude') {
     host,
   );
   return { assistant, pane, events };
+}
+
+/** Two ends of a channel that, like a MessagePort, deliver in order and never synchronously. */
+export function pair(): [Endpoint, Endpoint] {
+  const receivers: ((message: unknown) => void)[][] = [[], []];
+  const end = (self: number): Endpoint => ({
+    post: (message) => {
+      const copy = structuredClone(message);
+      setImmediate(() =>
+        receivers[1 - self].forEach((receive) => receive(copy)),
+      );
+    },
+    listen: (receive) => receivers[self].push(receive),
+  });
+  return [end(0), end(1)];
 }

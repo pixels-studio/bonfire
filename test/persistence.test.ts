@@ -12,7 +12,12 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { Store } from '../electron/main/persistence';
+import {
+  Store,
+  settleLayout,
+  stateForWindow,
+} from '../electron/main/persistence';
+import type { State } from '../shared/contracts';
 
 const uuid = () => crypto.randomUUID();
 
@@ -92,7 +97,16 @@ test('inline conversations move to their own files and load back', () => {
     reloaded.pane(open).messages.map(({ text }) => text),
     ['hello', 'cut off'],
   );
-  assert.equal(reloaded.pane(archived).messages[0].text, 'old');
+  // The archived one stays on disk, where reloading it left it.
+  assert.equal(
+    JSON.parse(
+      readFileSync(
+        join(directory, 'conversations', `${archived}.json`),
+        'utf8',
+      ),
+    )[0].text,
+    'old',
+  );
 });
 
 test('a save rewrites only the conversations that changed', () => {
@@ -118,7 +132,7 @@ test('a save rewrites only the conversations that changed', () => {
   const quietFile = join(directory, 'conversations', `${quiet}.json`);
   const before = statSync(quietFile).mtimeMs;
   const busyPane = store.pane(busy);
-  busyPane.messages[0].text = 'edited';
+  busyPane.messages[0] = { ...busyPane.messages[0], text: 'edited' };
   store.save(busyPane);
   // A message added without naming the pane is still caught by its count.
   store.pane(quiet).title = 'Renamed';
@@ -155,8 +169,7 @@ test('removed panes take their conversation files with them', () => {
   );
   const store = new Store(directory);
   store.flush();
-  store.state.panes = store.state.panes.filter(({ id }) => id !== removed);
-  store.save();
+  store.panes.remove([removed]);
   store.flush();
   assert.deepEqual(conversationsOf(directory), [`${kept}.json`]);
 
@@ -180,7 +193,12 @@ test('a scheduled save lands in the background, and a flush meanwhile wins', asy
   new Store(directory).flush();
 
   const store = new Store(directory);
-  store.pane(id).messages[0].text = 'scheduled';
+  // As the app does, a finished message changes by being replaced.
+  const setText = (text: string) => {
+    const { messages } = store.pane(id);
+    messages[0] = { ...messages[0], text };
+  };
+  setText('scheduled');
   store.save(store.pane(id));
   t.mock.timers.tick(1000);
   await store.settled();
@@ -188,12 +206,12 @@ test('a scheduled save lands in the background, and a flush meanwhile wins', asy
 
   // A write on the thread while a background one is underway carries the newer text, and
   // the older copy never lands over it.
-  store.pane(id).messages[0].text = 'older';
+  setText('older');
   store.save(store.pane(id));
   t.mock.timers.tick(1000);
   // Lets the background write serialize 'older' and reach the disk.
   await Promise.resolve();
-  store.pane(id).messages[0].text = 'newer';
+  setText('newer');
   store.flush();
   await store.settled();
   assert.equal(new Store(directory).pane(id).messages[0].text, 'newer');
@@ -219,7 +237,10 @@ test('a scheduled save that fails is tried again rather than thrown or lost', as
   const file = join(directory, 'conversations', `${id}.json`);
   rmSync(file);
   mkdirSync(join(file, 'blocker'), { recursive: true });
-  store.pane(id).messages[0].text = 'edited';
+  store.pane(id).messages[0] = {
+    ...store.pane(id).messages[0],
+    text: 'edited',
+  };
   store.save(store.pane(id));
   t.mock.timers.tick(1000);
   await store.settled();
@@ -284,5 +305,150 @@ test('an older version run afterwards neither loses nor hides conversations', ()
   assert.deepEqual(
     store.pane(continued).messages.map(({ text }) => text),
     ['one', 'two'],
+  );
+});
+
+test('a project keeps only its first files and code diff panes, where they sit', () => {
+  const view = (id: string, projectId: string, type: string) => ({
+    ...pane(id, projectId, []),
+    type,
+  });
+  const state = {
+    panes: [
+      view('agent', 'a', 'claude'),
+      view('files', 'a', 'files'),
+      view('files-again', 'a', 'files'),
+      view('diff', 'a', 'diff'),
+      view('terminal', 'a', 'terminal'),
+      view('terminal-again', 'a', 'terminal'),
+      view('other-files', 'b', 'files'),
+    ],
+    layout: {
+      paneIds: [
+        'files',
+        'agent',
+        'files-again',
+        'diff',
+        'terminal',
+        'terminal-again',
+        'other-files',
+      ],
+    },
+  } as unknown as State;
+  settleLayout(state);
+  assert.deepEqual(state.layout.paneIds, [
+    'files',
+    'agent',
+    'diff',
+    'terminal',
+    'terminal-again',
+    'other-files',
+  ]);
+  assert.ok(state.panes.find(({ id }) => id === 'files-again')!.archived);
+});
+
+test('the window gets conversations only for the open panes of the project on screen', () => {
+  const shown = pane('shown', 'a', [message('kept')]);
+  const state = {
+    panes: [
+      shown,
+      pane('closed', 'a', [message('archived')], true),
+      pane('elsewhere', 'b', [message('other project')]),
+    ],
+    lastProjectId: 'a',
+  } as unknown as State;
+  const sent = stateForWindow(state);
+  assert.deepEqual(
+    sent.panes.map(({ id, messages }) => [id, messages.length]),
+    [
+      ['shown', 1],
+      ['closed', 0],
+      ['elsewhere', 0],
+    ],
+  );
+  assert.equal(sent.panes[0], shown);
+  // What main keeps is untouched.
+  assert.equal(state.panes[2].messages.length, 1);
+});
+
+test('archived conversations stay on disk unread, untouched, and go with their pane', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'bonfire-store-'));
+  const projectId = uuid();
+  const [open, archived, orphan] = [uuid(), uuid(), uuid()];
+  writeFileSync(
+    join(directory, 'state.json'),
+    JSON.stringify(
+      legacyState(
+        projectId,
+        [
+          pane(open, projectId, [message('open')]),
+          pane(archived, projectId, [message('old'), message('older')], true),
+          {
+            ...pane(orphan, '', [message('orphan')], true),
+            projectId: undefined,
+          },
+        ],
+        [open],
+      ),
+    ),
+  );
+  new Store(directory).flush();
+  const archivedFile = join(directory, 'conversations', `${archived}.json`);
+  const onDisk = readFileSync(archivedFile, 'utf8');
+
+  const store = new Store(directory);
+  assert.equal(store.pane(open).messages.length, 1);
+  assert.deepEqual(store.pane(archived).messages, []);
+  // One without a project is read, as an empty one would be dropped.
+  assert.equal(store.pane(orphan).messages.length, 1);
+  // Even a save that names it leaves its file as it was.
+  store.save(store.pane(archived));
+  store.flush();
+  assert.equal(readFileSync(archivedFile, 'utf8'), onDisk);
+  assert.equal(JSON.parse(onDisk).length, 2);
+
+  store.panes.remove([archived]);
+  store.flush();
+  assert.equal(existsSync(archivedFile), false);
+});
+
+test('saves reuse finished messages, yet write replaced and streaming ones as they are', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'bonfire-store-'));
+  const projectId = uuid();
+  const id = uuid();
+  writeFileSync(
+    join(directory, 'state.json'),
+    JSON.stringify(
+      legacyState(
+        projectId,
+        [pane(id, projectId, [message('first'), message('second')])],
+        [id],
+      ),
+    ),
+  );
+  const store = new Store(directory);
+  store.flush();
+  const file = join(directory, 'conversations', `${id}.json`);
+  const conversation = store.pane(id);
+  const read = () => readFileSync(file, 'utf8');
+  assert.equal(read(), JSON.stringify(conversation.messages));
+
+  // A finished message changes by being replaced.
+  conversation.messages[1] = { ...conversation.messages[1], text: 'replaced' };
+  // A streaming one grows in place.
+  const streaming = message(
+    'grow',
+    'streaming',
+  ) as never as (typeof conversation.messages)[0];
+  conversation.messages.push(streaming);
+  store.save(conversation);
+  store.flush();
+  streaming.text += 'ing';
+  store.save(conversation);
+  store.flush();
+  assert.equal(read(), JSON.stringify(conversation.messages));
+  assert.deepEqual(
+    JSON.parse(read()).map(({ text }: { text: string }) => text),
+    ['first', 'replaced', 'growing'],
   );
 });

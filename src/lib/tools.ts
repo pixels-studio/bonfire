@@ -1,14 +1,15 @@
-import Globe from '@lucide/svelte/icons/globe';
 import ListTodo from '@lucide/svelte/icons/list-todo';
 import Search from '@lucide/svelte/icons/search';
 import Wrench from '@lucide/svelte/icons/wrench';
 import AgentIcon from '$lib/components/icon/agent-icon.svelte';
+import AskUserQuestionIcon from '$lib/components/icon/ask-user-question-icon.svelte';
 import BashIcon from '$lib/components/icon/bash-icon.svelte';
 import EditIcon from '$lib/components/icon/edit-icon.svelte';
 import ReadIcon from '$lib/components/icon/read-icon.svelte';
 import ToolSearchIcon from '$lib/components/icon/tool-search-icon.svelte';
 import WriteIcon from '$lib/components/icon/write-icon.svelte';
 import WebFetchIcon from '$lib/components/icon/web-fetch-icon.svelte';
+import WebSearchIcon from '$lib/components/icon/web-search-icon.svelte';
 import type { ConversationMessage } from '$shared/contracts';
 
 export type ToolCall = NonNullable<ConversationMessage['tool']>;
@@ -21,8 +22,10 @@ const ICONS: Record<
   | typeof WriteIcon
   | typeof BashIcon
   | typeof WebFetchIcon
+  | typeof WebSearchIcon
   | typeof ToolSearchIcon
   | typeof AgentIcon
+  | typeof AskUserQuestionIcon
 > = {
   Bash: BashIcon,
   Read: ReadIcon,
@@ -33,11 +36,12 @@ const ICONS: Record<
   Grep: Search,
   Glob: Search,
   WebFetch: WebFetchIcon,
-  WebSearch: Globe,
+  WebSearch: WebSearchIcon,
   ToolSearch: ToolSearchIcon,
   Task: AgentIcon,
   Agent: AgentIcon,
   TodoWrite: ListTodo,
+  AskUserQuestion: AskUserQuestionIcon,
 };
 
 /** Full class names so Tailwind can see them; each tool family gets its own hue for icon and label. */
@@ -53,8 +57,8 @@ const COLORS: Record<string, string> = {
   WebFetch: 'text-cyan-600 dark:text-cyan-400',
   WebSearch: 'text-teal-600 dark:text-teal-400',
   ToolSearch: 'text-yellow-600 dark:text-yellow-400',
-  Task: 'text-pink-600 dark:text-pink-400',
-  Agent: 'text-pink-600 dark:text-pink-400',
+  Task: 'text-pink-500 dark:text-pink-300',
+  Agent: 'text-pink-500 dark:text-pink-300',
   TodoWrite: 'text-lime-600 dark:text-lime-400',
 };
 

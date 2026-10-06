@@ -16,6 +16,7 @@ import type {
 import type {
   ConversationMessage,
   ModelOption,
+  NeedsSignInCode,
   Pane,
   Project,
   ProviderAccount,
@@ -27,6 +28,7 @@ import type {
 } from '../../shared/contracts';
 import {
   SIMPLIFIED_ENGLISH_INSTRUCTIONS,
+  stripAnsi,
   withSkillNames,
 } from '../../shared/domain';
 import {
@@ -40,8 +42,9 @@ import {
 import { Cached } from './cached';
 import { Channel } from './channel';
 import { claudeLimits } from './limits';
-import type { Machine } from './machines';
+import type { Machine, PipedProcess } from './machines';
 import { clipOutput, partialToolInput, toolInput } from './tool-text';
+import type { PaneView, ProjectView } from './state';
 
 const execFileAsync = promisify(execFile);
 
@@ -57,11 +60,12 @@ type StreamedBlock = {
   name: string;
   /** A tool call's input JSON as it arrives; unused for text and thinking. */
   json: string;
+  /** How much of `json` had arrived when it was last read for the call's key argument. */
+  parsed: number;
   /** Set once the complete assistant message has replaced the streamed text. */
   settled: boolean;
+  /** When the block started, to time it once its finishing message arrives. */
   startedAt: number;
-  /** How long a thinking block streamed, known once the block stops. */
-  durationMs?: number;
 };
 
 type StreamState = {
@@ -76,6 +80,8 @@ type StreamState = {
 const EXTENDED_CONTEXT_MODEL = 'sonnet-1m';
 const EXTENDED_CONTEXT_BETA = 'context-1m-2025-08-07';
 const SESSION_TIMEOUT_MS = 20_000;
+/** How many characters of a tool call's input arrive before it is looked at again. */
+const INPUT_PARSE_STEP = 64;
 const DEFAULT_OUTPUT_STYLE = 'default';
 
 // Newer models omit thinking text unless a summarized display is requested.
@@ -183,7 +189,10 @@ export class ClaudeAssistant extends ChatAssistant {
   }
 
   /** The CLI's skills and prompt commands: the user's, the project's, plugins', and its own. */
-  protected listSkills(project: Project, machine: Machine): Promise<Skill[]> {
+  protected listSkills(
+    project: ProjectView,
+    machine: Machine,
+  ): Promise<Skill[]> {
     return this.withIdleSession(
       async (run) =>
         (await run.supportedCommands())
@@ -218,16 +227,122 @@ export class ClaudeAssistant extends ChatAssistant {
     });
   }
 
-  /** Runs the CLI's own browser sign-in, which saves the new credentials where the SDK reads them. */
-  protected async signIn(signal: AbortSignal) {
-    try {
-      await execFileAsync(claudeExecutable(), ['auth', 'login', '--claudeai'], {
-        signal,
-      });
-    } catch (cause) {
-      if (signal.aborted) throw Error('Sign-in was cancelled.');
-      throw cause;
+  /** A remote sign-in waiting for the code its browser page showed, by provider instance. */
+  private pendingRemoteLogin?: { child: PipedProcess; output: string };
+
+  /**
+   * Runs the CLI's own browser sign-in, which saves the new credentials where the SDK reads
+   * them. This computer catches the browser's redirect itself; a machine reached over SSH has
+   * no browser of its own, so its CLI instead prints a code to paste back once the browser,
+   * opened here, shows it.
+   */
+  protected async signIn(
+    signal: AbortSignal,
+    machine: Machine,
+  ): Promise<void | NeedsSignInCode> {
+    if (!machine.remote) {
+      try {
+        await execFileAsync(
+          claudeExecutable(),
+          ['auth', 'login', '--claudeai'],
+          { signal },
+        );
+      } catch (cause) {
+        if (signal.aborted) throw Error('Sign-in was cancelled.');
+        throw cause;
+      }
+      return;
     }
+    return new Promise<void | NeedsSignInCode>((resolve, reject) => {
+      const child = machine.spawn(
+        'claude',
+        ['auth', 'login', '--claudeai'],
+        {},
+      );
+      const pending = { child, output: '' };
+      this.pendingRemoteLogin = pending;
+      let settled = false;
+      const onAbort = () => child.kill();
+      signal.addEventListener('abort', onAbort, { once: true });
+      const done = (act: () => void) => {
+        if (settled) return;
+        settled = true;
+        signal.removeEventListener('abort', onAbort);
+        act();
+      };
+      const read = (chunk: Buffer) => {
+        pending.output += chunk.toString('utf8');
+        const url = /https:\/\/\S+/.exec(stripAnsi(pending.output))?.[0];
+        if (!url) return;
+        done(() => {
+          void this.host.openUrl(url);
+          resolve({ needsCode: true });
+        });
+      };
+      child.stdout.on('data', read);
+      child.stderr.on('data', read);
+      child.on('error', (cause) =>
+        done(() => {
+          this.pendingRemoteLogin = undefined;
+          reject(cause);
+        }),
+      );
+      child.on('exit', (code) =>
+        done(() => {
+          this.pendingRemoteLogin = undefined;
+          if (signal.aborted) reject(Error('Sign-in was cancelled.'));
+          else if (code === 0) resolve();
+          else
+            reject(
+              Error(
+                pending.output.trim() || `Sign-in exited with code ${code}`,
+              ),
+            );
+        }),
+      );
+    });
+  }
+
+  /** Writes the code the browser showed to the CLI waiting for it on the remote machine. */
+  protected async provideSignInCode(code: string, signal: AbortSignal) {
+    const pending = this.pendingRemoteLogin;
+    if (!pending) throw Error('No remote sign-in is waiting for a code.');
+    this.pendingRemoteLogin = undefined;
+    const { child } = pending;
+    let output = pending.output;
+    await new Promise<void>((resolve, reject) => {
+      let settled = false;
+      const onAbort = () => child.kill();
+      signal.addEventListener('abort', onAbort, { once: true });
+      const finish = (act: () => void) => {
+        if (settled) return;
+        settled = true;
+        signal.removeEventListener('abort', onAbort);
+        act();
+      };
+      const read = (chunk: Buffer) => {
+        output += chunk.toString('utf8');
+        // The CLI reprompts rather than exiting on a bad code, so waiting for exit would hang.
+        if (/invalid code/i.test(stripAnsi(output)))
+          finish(() => {
+            child.kill();
+            reject(Error('That code was not accepted. Try signing in again.'));
+          });
+      };
+      child.stdout.on('data', read);
+      child.stderr.on('data', read);
+      child.on('exit', (exitCode) =>
+        finish(() => {
+          if (exitCode === 0) resolve();
+          else if (signal.aborted) reject(Error('Sign-in was cancelled.'));
+          else
+            reject(
+              Error(output.trim() || `Sign-in exited with code ${exitCode}`),
+            );
+        }),
+      );
+      child.stdin.write(`${code}\n`);
+    });
   }
 
   protected async complete(prompt: string, model: string, signal: AbortSignal) {
@@ -397,6 +512,11 @@ export class ClaudeAssistant extends ChatAssistant {
         if (event.session_id) this.rememberThread(pane, event.session_id);
         const blocks = event.message.content;
         const apiBlocks = state.blocks.get(event.message.id);
+        // The CLI's own per-block timestamp and our locally recorded start, not the stream
+        // event's content_block_stop, which races this message and often arrives after it.
+        const finishedAt = event.timestamp
+          ? Date.parse(event.timestamp)
+          : Date.now();
         blocks.forEach((block, index) => {
           const kind = blockKind(block);
           const match =
@@ -413,7 +533,13 @@ export class ClaudeAssistant extends ChatAssistant {
             (blocks.length > 1 ? `${event.uuid}-${index}` : event.uuid);
           const message = messageFrom(id, block);
           if (message)
-            this.publish(pane, { ...message, durationMs: match?.durationMs });
+            this.publish(pane, {
+              ...message,
+              durationMs: match
+                ? Math.max(0, finishedAt - match.startedAt)
+                : undefined,
+              createdAt: Date.now(),
+            });
         });
         break;
       }
@@ -444,7 +570,7 @@ export class ClaudeAssistant extends ChatAssistant {
   }
 
   /** Publishes in-progress text, thinking, and tool input as deltas arrive. */
-  private handleStream(pane: Pane, event: StreamEvent, state: StreamState) {
+  private handleStream(pane: PaneView, event: StreamEvent, state: StreamState) {
     switch (event.type) {
       case 'message_start': {
         state.blocks.set(event.message.id, new Map());
@@ -480,17 +606,12 @@ export class ClaudeAssistant extends ChatAssistant {
           kind,
           name: block.type === 'tool_use' ? block.name : '',
           json: '',
+          parsed: 0,
           settled: false,
           startedAt: Date.now(),
         };
         blocks.set(index, entry);
         this.publish(pane, streamingMessage(entry, ''), false);
-        break;
-      }
-      case 'content_block_stop': {
-        const entry = state.blocks.get(state.current)?.get(event.index);
-        if (entry?.kind === 'thinking')
-          entry.durationMs = Date.now() - entry.startedAt;
         break;
       }
       case 'content_block_delta': {
@@ -503,6 +624,15 @@ export class ClaudeAssistant extends ChatAssistant {
           this.append(pane, entry.id, 'text', delta.thinking);
         else if (delta.type === 'input_json_delta') {
           entry.json += delta.partial_json;
+          // Each look reads the whole input so far, and a large edit arrives in thousands of
+          // deltas. A long input is looked at again only once enough more has arrived, which
+          // keeps that from growing as its square; the final input replaces what was shown.
+          if (
+            entry.json.length > INPUT_PARSE_STEP * 8 &&
+            entry.json.length - entry.parsed < INPUT_PARSE_STEP
+          )
+            break;
+          entry.parsed = entry.json.length;
           const input = partialToolInput(entry.json);
           const current = pane.messages.findLast(
             (item) => item.id === entry.id,
@@ -522,7 +652,7 @@ export class ClaudeAssistant extends ChatAssistant {
 
   /** Attaches tool output to the matching tool-use message and settles its status. */
   private attachToolResults(
-    pane: Pane,
+    pane: PaneView,
     event: Extract<SDKMessage, { type: 'user' }>,
   ) {
     const { content } = event.message;
@@ -533,25 +663,44 @@ export class ClaudeAssistant extends ChatAssistant {
         (message) => message.id === block.tool_use_id,
       );
       if (!toolMessage?.tool) continue;
-      const output = clipOutput(resultText(block.content));
+      const { text, images } = resultParts(block.content);
       this.publish(pane, {
         ...toolMessage,
         status: block.is_error ? 'failed' : 'complete',
-        tool: { ...toolMessage.tool, output },
+        tool: { ...toolMessage.tool, output: clipOutput(text) },
       });
+      if (images.length)
+        void this.attachToolImages(pane, toolMessage.id, images);
     }
   }
 }
 
-/** Flattens a tool result's content, noting images that can't be shown. */
-function resultText(
-  content: string | { type: string; text?: string }[] | undefined,
-): string {
-  if (typeof content === 'string') return content;
-  return (content ?? [])
-    .map((part) => part.text ?? (part.type === 'image' ? '[image]' : ''))
-    .filter(Boolean)
-    .join('\n');
+/** One block of a tool result's content, loosely typed to cover both text and image blocks. */
+type ResultBlock = {
+  type: string;
+  text?: string;
+  source?: unknown;
+};
+
+/** Splits a tool result's content into its text and any images, each kept in order. */
+export function resultParts(content: string | unknown[] | undefined) {
+  if (typeof content === 'string') return { text: content, images: [] };
+  const text: string[] = [];
+  const images: { data: string; mimeType: string }[] = [];
+  for (const raw of content ?? []) {
+    const part = raw as ResultBlock;
+    const source = part.source as
+      { type?: string; media_type?: string; data?: string } | undefined;
+    if (
+      part.type === 'image' &&
+      source?.type === 'base64' &&
+      source.data &&
+      source.media_type
+    )
+      images.push({ data: source.data, mimeType: source.media_type });
+    else if (part.text) text.push(part.text);
+  }
+  return { text: text.join('\n'), images };
 }
 
 /** The refusal returned when the turn ended while the model was waiting on the user. */
@@ -634,7 +783,7 @@ function modelOptions(model: string): Pick<Options, 'model' | 'betas'> {
  * The CLI binary bundled with the SDK; the installed `claude` otherwise, as in the packaged
  * app, which leaves the bundled binary out. Both keep credentials in the same place.
  */
-function claudeExecutable() {
+export function claudeExecutable() {
   const require = createRequire(__filename);
   const executable = process.platform === 'win32' ? 'claude.exe' : 'claude';
   const variants = process.platform === 'linux' ? ['', '-musl'] : [''];

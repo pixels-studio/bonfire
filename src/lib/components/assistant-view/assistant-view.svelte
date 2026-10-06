@@ -2,15 +2,18 @@
   import { overlayScrollbar } from '$lib/scrollbar';
   import { onMount, tick, untrack } from 'svelte';
   import * as Card from '$lib/components/ui/card';
+  import { Button } from '$lib/components/ui/button';
   import Icon from '$lib/components/icon/icon.svelte';
   import RequestView from '../conversation/request-view.svelte';
   import TurnView from '../conversation/turn-view.svelte';
   import PaneHeader from '$lib/components/pane-header/pane-header.svelte';
+  import CapacityRetry from './capacity-retry.svelte';
   import Composer from './composer.svelte';
   import ContextUsage from './context-usage.svelte';
   import ModelPicker from './model-picker.svelte';
   import QueuedPrompts from './queued-prompts.svelte';
-  import { DEFAULT_CONTEXT_WINDOWS } from '$lib/models';
+  import { assistantEvents } from '$lib/main-events';
+  import { forkSeeds } from '$lib/stores/fork.svelte';
   import { catalog } from '$lib/stores/models.svelte';
   import { preferences } from '$lib/stores/preferences.svelte';
   import {
@@ -43,16 +46,19 @@
     pane,
     provider,
     dragHandle,
+    size,
     onclose,
     onresize,
     onrename,
     badge,
+    onviewChanges,
   }: PaneProps & {
     pane: Pane;
     /** A status worth flagging on the header icon: needs input, failed, or done but unreviewed. */
     badge?: PaneBadge;
     /** The agent the conversation is with; the composer offers its models. */
     provider: AssistantProvider;
+    onviewChanges: (path?: string) => void;
   } = $props();
 
   const providerLabel = $derived(PROVIDER_LABELS[provider]);
@@ -62,11 +68,15 @@
   );
   let usage = $state<Usage | undefined>(untrack(() => pane.usage));
   let running = $state(false);
+  let snapshotLoaded = $state(false);
   let requests = $state<AssistantRequest[]>([]);
   let queue = $state<QueuedPrompt[]>([]);
   /** Spoken to screen readers in place of the streaming text, which would be read out token by token. */
   let announcement = $state('');
   let error = $state('');
+  /** The prompt behind the turn most recently sent, so a capacity error can resend it. */
+  let lastSend = $state<{ text: string; skills: string[] }>();
+  let capacityError = $state<{ id: string; text: string }>();
   let feed = $state<HTMLDivElement>();
   let composer = $state<ReturnType<typeof Composer>>();
   let dragging = $state(false);
@@ -100,17 +110,14 @@
   const FEED_PADDING = 52;
   /** Space kept above a new prompt when it is scrolled to the top (`scroll-mt-6`). */
   const TURN_MARGIN = 24;
-  const contextWindow = $derived(
-    usage?.contextWindow ??
-      catalog.find(model)?.contextWindow ??
-      DEFAULT_CONTEXT_WINDOWS[provider],
-  );
+  /** Undefined until the provider reports the real window size; never guessed. */
+  const contextWindow = $derived(usage?.contextWindow);
 
   let feedHeight = $state(0);
   let latest = $state<HTMLDivElement>();
   let latestContent = $state<HTMLDivElement>();
   /** Whether the feed is kept scrolled to the end as the reply grows; scrolling up lets go. */
-  let following = true;
+  let following = $state(true);
 
   /** The turns last worked out, whose unchanged arrays are handed out again. */
   let previousTurns: ConversationMessage[][] = [];
@@ -178,6 +185,8 @@
     switch (event.type) {
       case 'message':
         upsertMessage(event.message);
+        if (event.message.kind === 'capacity')
+          capacityError = { id: event.message.id, text: event.message.text };
         break;
       case 'delta':
         appendDelta(event.id, event.field, event.text);
@@ -239,6 +248,11 @@
     following = feed.scrollHeight - feed.scrollTop - feed.clientHeight < 40;
   }
 
+  function scrollToBottom() {
+    following = true;
+    feed?.scrollTo({ top: feed.scrollHeight });
+  }
+
   $effect(() => {
     if (!latestContent) return;
     const observer = new ResizeObserver(followReply);
@@ -273,6 +287,8 @@
       return;
     }
     error = '';
+    capacityError = undefined;
+    lastSend = { text, skills };
     running = true;
     following = true;
     if (title === DEFAULT_TITLE)
@@ -285,6 +301,12 @@
       running = false;
       throw cause;
     }
+  }
+
+  /** Resends the prompt behind a capacity error, dropping any attachments it had. */
+  function retryCapacity() {
+    if (!lastSend) return;
+    void send(lastSend.text, [], lastSend.skills).catch(() => {});
   }
 
   async function runQueued(action: 'sendQueued' | 'unqueue', id: string) {
@@ -309,7 +331,7 @@
   onMount(() => {
     catalog.load();
     feed?.scrollTo({ top: feed.scrollHeight, behavior: 'instant' });
-    const stop = window.bonfire.assistant.onEvent(handleEvent);
+    const stop = assistantEvents.on(pane.id, handleEvent);
     // Events sent before this view mounted (or while the page reloaded) are caught up from main.
     void window.bonfire.assistant
       .snapshot(pane.id)
@@ -325,8 +347,18 @@
             feed?.scrollTo({ top: feed.scrollHeight, behavior: 'instant' }),
           );
       })
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => (snapshotLoaded = true));
     return stop;
+  });
+
+  // A pane opened by forking another's conversation starts with its summary attached.
+  $effect(() => {
+    if (!composer) return;
+    const seed = forkSeeds.get(pane.id);
+    if (!seed) return;
+    forkSeeds.delete(pane.id);
+    composer.seed(seed);
   });
 </script>
 
@@ -361,6 +393,7 @@
       {badge}
       menuLabel="Conversation options"
       {dragHandle}
+      {size}
       {onresize}
       {onclose}
       {onrename}
@@ -383,7 +416,13 @@
           class="@container mx-auto flex w-full max-w-3xl flex-1 flex-col gap-6"
         >
           {#each turns.slice(0, -1) as turn (turn[0].id)}
-            <TurnView messages={turn} expanded={!!watched[turn[0].id]} />
+            <TurnView
+              messages={turn}
+              paneId={pane.id}
+              projectId={pane.projectId}
+              {onviewChanges}
+              expanded={!!watched[turn[0].id]}
+            />
           {/each}
           {#if messages.length}
             <!-- The latest turn fills the feed so a new prompt can sit at the top. -->
@@ -395,20 +434,18 @@
               <div bind:this={latestContent} class="flex flex-col gap-6">
                 <TurnView
                   messages={lastTurn}
+                  paneId={pane.id}
+                  projectId={pane.projectId}
+                  {onviewChanges}
                   expanded={!!watched[lastTurn[0].id]}
+                  inProgress={running || !snapshotLoaded}
                 />
                 {#if running && !assistantStarted && !requests.length}
                   <p class="flex w-fit items-center gap-2 text-sm">
-                    <MatrixLoader />
+                    <MatrixLoader variant="twinkle" size="sm" />
                     <span class="shimmer-text">Thinking</span>
                   </p>
                 {/if}
-                {#each requests as request (request.id)}
-                  <RequestView
-                    {request}
-                    onrespond={(response) => respond(request, response)}
-                  />
-                {/each}
                 {#if error}<p class="text-sm text-destructive" role="alert">
                     {error}
                   </p>{/if}
@@ -429,10 +466,31 @@
           {/if}
         </div>
       </div>
+      {#if !following && messages.length}
+        <Button
+          variant="secondary"
+          size="icon"
+          aria-label="Scroll to bottom"
+          onclick={scrollToBottom}
+          class="absolute bottom-4 left-1/2 -translate-x-1/2 shadow-md backdrop-blur-md"
+        >
+          <Icon name="chevron-down" />
+        </Button>
+      {/if}
     </div>
 
     <div class="shrink-0 px-4 pb-4">
       <div class="mx-auto max-w-3xl">
+        {#if requests.length}
+          <div class="flex flex-col gap-3 pb-3">
+            {#each requests as request (request.id)}
+              <RequestView
+                {request}
+                onrespond={(response) => respond(request, response)}
+              />
+            {/each}
+          </div>
+        {/if}
         {#if queue.length}
           <QueuedPrompts
             {queue}
@@ -440,6 +498,16 @@
             onsend={(id) => runQueued('sendQueued', id)}
             onremove={(id) => runQueued('unqueue', id)}
           />
+        {/if}
+        {#if capacityError}
+          <div class="pb-3">
+            {#key capacityError.id}
+              <CapacityRetry
+                message={capacityError.text}
+                onretry={retryCapacity}
+              />
+            {/key}
+          </div>
         {/if}
         <Composer
           bind:this={composer}
@@ -456,14 +524,16 @@
             {fastSupported}
             onmodel={changeModel}
           />
-          <ContextUsage
-            {usage}
-            {contextWindow}
-            disabled={running || !usage}
-            oncompact={provider === 'claude'
-              ? () => send('/compact', [], []).catch(() => {})
-              : undefined}
-          />
+          {#snippet end()}
+            <ContextUsage
+              {usage}
+              {contextWindow}
+              disabled={running || !usage}
+              oncompact={provider === 'claude'
+                ? () => send('/compact', [], []).catch(() => {})
+                : undefined}
+            />
+          {/snippet}
         </Composer>
       </div>
     </div>

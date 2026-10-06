@@ -5,7 +5,7 @@
   import type { PanelProps } from '$lib/panes';
   import SettingsPanel from './settings-panel.svelte';
 
-  let { dragHandle, onresize, onclose }: PanelProps = $props();
+  let { dragHandle, size, onresize, onclose }: PanelProps = $props();
 </script>
 
 <Card.Root class="h-full min-w-0 gap-0" role="region" aria-label="Settings">
@@ -13,10 +13,15 @@
     title="Settings"
     icon="settings"
     {dragHandle}
+    {size}
     {onresize}
     {onclose}
+    resizable={false}
   />
-  <div {@attach overlayScrollbar} class="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+  <div
+    {@attach overlayScrollbar}
+    class="min-h-0 flex-1 overflow-y-auto overscroll-contain"
+  >
     <SettingsPanel />
   </div>
 </Card.Root>

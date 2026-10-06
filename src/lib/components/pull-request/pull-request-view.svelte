@@ -6,17 +6,19 @@
 
   let {
     projectId,
+    size,
     onresize,
     onclose,
   }: {
     projectId: string;
+    size: PaneSize;
     onresize: (size: PaneSize) => void;
     onclose: () => void;
   } = $props();
 </script>
 
 <Card.Root class="h-full min-w-0">
-  <PaneHeader title="Pull request" icon="git" {onresize} {onclose} />
+  <PaneHeader title="Pull request" icon="git" {size} {onresize} {onclose} />
   <div class="relative min-h-0 flex-1">
     {#key projectId}
       <PullRequestPane {projectId} />

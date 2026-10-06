@@ -14,6 +14,13 @@ export type ExecOptions = {
   env?: Record<string, string>;
   timeout?: number;
   maxBuffer?: number;
+  /**
+   * Over SSH, whether the command runs in a login shell, so the user's profile sets it up;
+   * on by default. Loading a profile can take longer than the command, so programs the
+   * usual install folders reach, such as git, leave it off. One not found that way is tried
+   * again with it.
+   */
+  profile?: boolean;
 };
 
 /** What node-pty should start to run a command in a terminal. */
@@ -81,7 +88,7 @@ type RunOptions = ExecOptions & { encoding: 'buffer' | 'utf8' };
 function run(
   file: string,
   args: string[],
-  { encoding, env, ...options }: RunOptions,
+  { encoding, env, profile: _, ...options }: RunOptions,
   baseEnvironment: NodeJS.ProcessEnv = process.env,
 ) {
   return new Promise<Buffer>((resolve, reject) => {
@@ -165,7 +172,11 @@ const VARIABLE_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 export function remoteCommand(
   file: string,
   args: string[],
-  { cwd, env = {} }: { cwd?: string; env?: Record<string, string> },
+  {
+    cwd,
+    env = {},
+    profile = true,
+  }: { cwd?: string; env?: Record<string, string>; profile?: boolean },
 ) {
   const variables = Object.entries(env)
     .filter(([name]) => VARIABLE_NAME.test(name))
@@ -175,7 +186,10 @@ export function remoteCommand(
   steps.push(
     ['exec', 'env', ...variables, ...[file, ...args].map(quote)].join(' '),
   );
-  return `exec "\${SHELL:-/bin/sh}" -lc ${quote(steps.join(' && '))}`;
+  const script = quote(steps.join(' && '));
+  return profile
+    ? `exec "\${SHELL:-/bin/sh}" -lc ${script}`
+    : `exec /bin/sh -c ${script}`;
 }
 
 /** Sockets for shared SSH connections; short, as socket paths have a length limit. */
@@ -226,6 +240,8 @@ export function sshOptions(connection: Omit<SshConnection, 'id' | 'name'>) {
 
 /** ssh exits with 255 when it couldn't connect, rather than passing on the command's code. */
 const SSH_FAILED = 255;
+/** `env` exits with 127 when it can't find the program it was asked to run. */
+const NOT_FOUND = 127;
 
 /** Says which machine couldn't be reached, in ssh's own words. */
 function connectionError(connection: SshConnection, cause: unknown) {
@@ -282,15 +298,22 @@ export class SshMachine implements Machine {
     ];
   }
 
-  private async run(file: string, args: string[], options: RunOptions) {
-    const { cwd, env, ...rest } = options;
+  private async run(
+    file: string,
+    args: string[],
+    options: RunOptions,
+  ): Promise<Buffer> {
+    const { cwd, env, profile = true, ...rest } = options;
     try {
       return await run(
         this.ssh,
-        this.args(remoteCommand(file, args, { cwd, env })),
+        this.args(remoteCommand(file, args, { cwd, env, profile })),
         rest,
       );
     } catch (cause) {
+      // Installed somewhere only the user's profile adds to the PATH.
+      if (!profile && (cause as { code?: unknown }).code === NOT_FOUND)
+        return this.run(file, args, { ...options, profile: true });
       throw connectionError(this.connection, cause);
     }
   }
@@ -326,8 +349,12 @@ export class SshMachine implements Machine {
     return { file: 'sh', args: ['-c', 'exec "${SHELL:-/bin/sh}" -l'] };
   }
 
+  /** Runs a POSIX script, which needs nothing from the user's profile. */
   private sh(script: string, args: string[], options: ExecOptions = {}) {
-    return this.exec('sh', ['-c', script, 'sh', ...args], options);
+    return this.exec('sh', ['-c', script, 'sh', ...args], {
+      profile: false,
+      ...options,
+    });
   }
 
   async readFile(path: string, limit: number) {
@@ -335,7 +362,7 @@ export class SshMachine implements Machine {
       return await this.run(
         'sh',
         ['-c', READ_SCRIPT, 'sh', path, String(limit)],
-        { encoding: 'buffer', maxBuffer: limit + 1024 },
+        { encoding: 'buffer', maxBuffer: limit + 1024, profile: false },
       );
     } catch (cause) {
       if ((cause as { code?: unknown }).code === TOO_LARGE)
@@ -389,7 +416,7 @@ export class SshMachine implements Machine {
 export class Machines {
   private readonly ssh = new Map<string, SshMachine>();
 
-  constructor(private readonly connections: () => SshConnection[]) {}
+  constructor(private readonly connections: () => readonly SshConnection[]) {}
 
   get(connectionId?: string): Machine {
     if (!connectionId) return localMachine;

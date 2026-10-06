@@ -20,6 +20,7 @@
     projectId,
     title,
     dragHandle,
+    size,
     onresize,
     onclose,
     onrename,
@@ -100,11 +101,15 @@
     {title}
     icon={toolPaneIcon('files')}
     {dragHandle}
+    {size}
     {onresize}
     {onclose}
     {onrename}
   />
-  <section {@attach overlayScrollbar} class="min-h-0 flex-1 overflow-auto px-3 pb-2">
+  <section
+    {@attach overlayScrollbar}
+    class="min-h-0 flex-1 overflow-auto px-3 pb-2"
+  >
     <div class="sticky top-0 z-10 -mx-3 bg-card px-3 pt-0.5 pb-4">
       <div class="relative">
         <Search
@@ -165,6 +170,7 @@
       {projectId}
       path={openFile}
       onclose={() => (openFile = '')}
+      {size}
       {onresize}
       onclosepanel={onclose}
     />

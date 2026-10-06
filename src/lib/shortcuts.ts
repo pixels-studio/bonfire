@@ -59,7 +59,7 @@ export const SHORTCUTS = define({
     chords: [mod('i')],
   },
   activity: {
-    group: 'General',
+    group: 'Projects',
     label: 'Activity',
     scope: 'global',
     chords: [mod('j')],
@@ -120,15 +120,21 @@ export const SHORTCUTS = define({
   },
   newFiles: {
     group: 'Panes',
-    label: 'Open files',
+    label: 'Toggle files',
     scope: 'global',
     chords: [mod('e')],
   },
   newDiff: {
     group: 'Panes',
-    label: 'Open code diff',
+    label: 'Toggle code diff',
     scope: 'global',
     chords: [mod('d')],
+  },
+  newBrowser: {
+    group: 'Panes',
+    label: 'Toggle browser',
+    scope: 'global',
+    chords: [mod('k')],
   },
   closePane: {
     group: 'Panes',

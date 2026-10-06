@@ -20,9 +20,12 @@
   let {
     open = $bindable(),
     value,
+    remote = false,
     ondone,
   }: {
     open: boolean;
+    /** Starts on an SSH connection, or asks for one when there is none. */
+    remote?: boolean;
     /** The folder chosen before, so the dialog can open on it. */
     value?: Folder;
     ondone: (folder: Folder) => void;
@@ -43,7 +46,12 @@
       connectionId = value?.connectionId;
       folder = value;
       browsing = false;
-      void connections.load();
+      void connections.load().then(() => {
+        if (!remote || connectionId || !open) return;
+        const first = connections.all[0];
+        if (first) chooseSource(first.id);
+        else addingConnection = true;
+      });
     });
   });
 

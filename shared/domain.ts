@@ -1,6 +1,7 @@
 import type {
   ActionId,
   AssistantProvider,
+  ConversationMessage,
   Pane,
   Preferences,
   Project,
@@ -14,6 +15,12 @@ const TITLE_MAX_LENGTH = 42;
 
 export const PROVIDER_LABELS: Record<AssistantProvider, string> = {
   claude: 'Claude',
+  codex: 'Codex',
+};
+
+/** What each provider's command-line tool is called. */
+export const CLI_NAMES: Record<AssistantProvider, string> = {
+  claude: 'Claude Code',
   codex: 'Codex',
 };
 
@@ -46,12 +53,24 @@ export const TOOL_PANE_TITLES: Record<ToolPaneType, string> = {
   files: 'Files',
   terminal: 'Terminal',
   diff: 'Changes',
+  browser: 'Browser',
 };
 
+/**
+ * Tool panes that show the branch itself. A second one would only repeat the first, so
+ * a project has at most one of each, at the end of the strip, and the header toggles it.
+ */
+export const VIEW_PANE_TYPES = ['files', 'diff', 'browser'] as const;
+export type ViewPaneType = (typeof VIEW_PANE_TYPES)[number];
+
+export function isViewPaneType(type: string): type is ViewPaneType {
+  return (VIEW_PANE_TYPES as readonly string[]).includes(type);
+}
+
 /** Whether the pane is a conversation with an agent, rather than a tool pane. */
-export function isAssistantPane(
-  pane: Pane,
-): pane is Pane & { type: AssistantProvider } {
+export function isAssistantPane<Item extends Pick<Pane, 'type'>>(
+  pane: Item,
+): pane is Item & { type: AssistantProvider } {
   return pane.type in PROVIDER_LABELS;
 }
 
@@ -67,6 +86,32 @@ export function titleFrom(text: string) {
   return compact.length > TITLE_MAX_LENGTH
     ? `${compact.slice(0, TITLE_MAX_LENGTH - 1).trimEnd()}…`
     : compact;
+}
+
+/** Tool calls that write a file, keyed by the name both providers use for them. */
+const FILE_EDIT_TOOLS = new Set(['Edit', 'MultiEdit', 'Write', 'NotebookEdit']);
+
+/**
+ * The files a turn's tool calls edited, each path once, in the order first touched. A
+ * Codex `fileChange` can cover several files at once, its paths joined with `, `.
+ */
+export function editedPaths(
+  messages: readonly Pick<ConversationMessage, 'kind' | 'tool'>[],
+): string[] {
+  const paths: string[] = [];
+  const seen = new Set<string>();
+  for (const message of messages) {
+    if (message.kind !== 'tool' || !message.tool) continue;
+    if (!FILE_EDIT_TOOLS.has(message.tool.name)) continue;
+    for (const raw of message.tool.input.split(', ')) {
+      const path = raw.trim();
+      if (path && !seen.has(path)) {
+        seen.add(path);
+        paths.push(path);
+      }
+    }
+  }
+  return paths;
 }
 
 /**
@@ -317,8 +362,24 @@ export function errorMessage(cause: unknown) {
   );
 }
 
+/**
+ * A CLI's output with its colors and cursor moves cut out, to read URLs and codes out of it.
+ * A program run over SSH often keeps coloring its output even though nothing shows it, since
+ * there is no terminal there to say otherwise.
+ */
+export function stripAnsi(text: string) {
+  return text.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '');
+}
+
 /** The most panes, of any type, a project can have open at once. */
 export const MAX_PANES = 18;
+
+/**
+ * The most terminal panes, run scripts' included, a project can have open at once: as many
+ * as the WebGL pool has contexts, so each can draw with WebGL while busy. Agent panes' CLI
+ * terminals share the pool too; any terminal past it draws with the DOM renderer.
+ */
+export const MAX_TERMINAL_PANES = 15;
 
 /**
  * Reorders `ids` among the layout slots they already occupy, leaving every other

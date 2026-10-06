@@ -20,9 +20,16 @@
   import { Button } from '$lib/components/ui/button';
   import * as Tooltip from '$lib/components/ui/tooltip';
   import Icon from '$lib/components/icon/icon.svelte';
+  import AudioBars from '$lib/components/icon/audio-bars.svelte';
   import ShortcutKeys from '$lib/components/shortcuts/shortcut-keys.svelte';
   import SkillMenu, { matchSkills } from './skill-menu.svelte';
+  import DictationGlow from './dictation-glow.svelte';
   import { composerExtensions, plainTextSlice } from './composer-editor';
+  import {
+    dictationErrorMessage,
+    startDictation as startDictationSession,
+    type DictationSession,
+  } from '$lib/dictation';
   import { preferences } from '$lib/stores/preferences.svelte';
   import { toast } from '$lib/stores/toast.svelte';
   import { matchShortcut } from '$lib/shortcuts';
@@ -71,6 +78,7 @@
     autofocus = false,
     onsend,
     children,
+    end,
   }: {
     /** The pane the composer sends to; unset when it starts something new. */
     paneId?: string;
@@ -97,6 +105,8 @@
       followUp?: FollowUpMode,
     ) => Promise<void>;
     children: Snippet;
+    /** Rendered on the right, before the attach/dictate/send controls. */
+    end?: Snippet;
   } = $props();
 
   let element = $state<HTMLDivElement>();
@@ -109,6 +119,25 @@
   let attachments = $state<Attachment[]>([]);
   /** Skills picked with `/`, in the order they sit in the text; they run with the message. */
   let skills = $state<Skill[]>([]);
+  let dictationSupported = $state(false);
+  let dictationSession = $state<DictationSession | null>(null);
+  let dictationStarting = $state(false);
+  let dictationStatus = $state('');
+  /** Bumped when a session starts or stops, so a stale one can't change the button. */
+  let dictationRequestId = 0;
+  /** Bumped when a session starts or the draft changes some other way; stale text is dropped. */
+  let dictationWriteId = 0;
+  /**
+   * Where the dictated text sits in the draft, replaced whole as recognition revises it;
+   * `prefix` is the space that separates it from the text before.
+   */
+  let dictationRange: { from: number; to: number; prefix: string } | null =
+    null;
+  /** Read by the glow's frame loop, not rendered as per-frame Svelte state. */
+  let dictationLevel = 0;
+  /** Set while dictated text is written, so that edit doesn't stop dictation. */
+  let insertingDictation = false;
+  const dictating = $derived(dictationStarting || !!dictationSession);
   const canAttach = $derived(attachments.length < MAX_ATTACHMENTS);
   const followUp = $derived(preferences.current.followUp);
   const hasMessage = $derived(!!prompt.trim() || skills.length > 0);
@@ -145,7 +174,18 @@
     });
     editor = instance;
     sync();
-    return () => instance.destroy();
+    return () => {
+      stopDictation(false);
+      dictationWriteId += 1;
+      instance.destroy();
+    };
+  });
+
+  onMount(() => {
+    void window.bonfire.dictation
+      .available()
+      .then((available) => (dictationSupported = available))
+      .catch(() => {});
   });
 
   // The placeholder is drawn by a decoration, which only redraws when the view updates.
@@ -201,6 +241,10 @@
 
   function sync() {
     if (!editor) return;
+    if (!insertingDictation) {
+      dictationWriteId += 1;
+      stopDictation(false);
+    }
     prompt = promptMarkdown(editor.getJSON());
     const placed = placedSkills(editor.state.doc);
     if (
@@ -216,6 +260,8 @@
   /** Sends the draft. While a turn runs, `invert` swaps queueing and steering for this message. */
   async function send(invert = false) {
     if (!editor) return;
+    stopDictation(false);
+    dictationWriteId += 1;
     sync();
     const text = prompt.trim();
     if ((!text && !skills.length && !allowEmpty) || disabled) return;
@@ -360,6 +406,11 @@
     }
   }
 
+  /** Puts an attachment already made elsewhere (e.g. a fork's summary) in the message box. */
+  export function seed(attachment: Attachment) {
+    insertAttachment(attachment);
+  }
+
   /** Attaches dropped files, up to the limit. */
   export async function addFiles(files: File[]) {
     for (const file of files) {
@@ -408,6 +459,97 @@
         ...(after.startsWith(' ') ? [] : [{ type: 'text', text: ' ' }]),
       ])
       .run();
+  }
+
+  /**
+   * Puts everything heard so far into the draft: at the caret the first time, then over
+   * what was written before, since recognition revises earlier words as it goes.
+   */
+  function writeDictation(text: string) {
+    if (!editor) return;
+    let range = dictationRange;
+    if (!range) {
+      if (!text) return;
+      const { from, to, $from: head } = editor.state.selection;
+      const before =
+        from > head.start() ? editor.state.doc.textBetween(from - 1, from) : '';
+      range = { from, to, prefix: before && !/\s/.test(before) ? ' ' : '' };
+    }
+    const content = text ? range.prefix + text : '';
+    insertingDictation = true;
+    try {
+      const chain = editor.chain().focus();
+      (content
+        ? chain.insertContentAt(
+            { from: range.from, to: range.to },
+            { type: 'text', text: content },
+          )
+        : chain.deleteRange({ from: range.from, to: range.to })
+      ).run();
+    } finally {
+      insertingDictation = false;
+    }
+    dictationRange = { ...range, to: range.from + content.length };
+  }
+
+  function settleDictation(requestId: number, status: string) {
+    if (requestId !== dictationRequestId) return;
+    dictationRequestId += 1;
+    dictationStarting = false;
+    dictationSession = null;
+    dictationLevel = 0;
+    dictationStatus = status;
+  }
+
+  async function startDictation() {
+    if (!dictationSupported || dictating || disabled) return;
+    const requestId = ++dictationRequestId;
+    const writeId = ++dictationWriteId;
+    dictationRange = null;
+    dictationStarting = true;
+    dictationStatus = 'Listening';
+    dictationLevel = 0;
+    let failed = '';
+    try {
+      const session = await startDictationSession({
+        api: window.bonfire.dictation,
+        language: navigator.language,
+        // Words still arriving after Stop are kept, unless the draft has moved on.
+        onText: (text) => {
+          if (writeId === dictationWriteId) writeDictation(text);
+        },
+        onLevel: (level) => {
+          if (requestId === dictationRequestId) dictationLevel = level;
+        },
+        onError: (error) => (failed = dictationErrorMessage(error)),
+        onEnd: () => {
+          if (failed && requestId === dictationRequestId)
+            toast(failed, { variant: 'error' });
+          settleDictation(requestId, failed || 'Dictation stopped');
+        },
+      });
+      if (requestId !== dictationRequestId) session.stop();
+      else {
+        dictationSession = session;
+        dictationStarting = false;
+      }
+    } catch (error) {
+      if (requestId === dictationRequestId)
+        toast(dictationErrorMessage(error), { variant: 'error' });
+      settleDictation(requestId, dictationErrorMessage(error));
+    }
+  }
+
+  function stopDictation(restoreFocus = true) {
+    if (!dictating) return;
+    const session = dictationSession;
+    dictationRequestId += 1;
+    dictationStarting = false;
+    dictationSession = null;
+    dictationLevel = 0;
+    dictationStatus = 'Dictation stopped';
+    session?.stop();
+    if (restoreFocus) editor?.commands.focus();
   }
 
   /**
@@ -512,6 +654,9 @@
     void send();
   }}
 >
+  {#if dictating}
+    <DictationGlow getLevel={() => dictationLevel} />
+  {/if}
   {#if slash}
     <SkillMenu
       id={menuId}
@@ -523,12 +668,20 @@
     />
   {/if}
   <!-- Grows with its content up to ten lines, then scrolls. -->
-  <div {@attach overlayScrollbar} class="relative max-h-50 overflow-y-auto" bind:this={element}></div>
+  <!-- overflow-y-auto also clips the x-axis per spec, so padding keeps a selected or
+       hovered chip's outline from being cut off at the box's edge. -->
+  <div
+    {@attach overlayScrollbar}
+    class="relative max-h-50 overflow-y-auto p-1 -m-1"
+    bind:this={element}
+  ></div>
+  <p class="sr-only" aria-live="polite">{dictationStatus}</p>
   <div class="flex items-center justify-between gap-3 pt-3">
     <div class="flex min-w-0 items-center gap-6">
       {@render children()}
     </div>
     <div class="flex items-center gap-2.5">
+      {@render end?.()}
       <Tooltip.Root>
         <Tooltip.Trigger>
           {#snippet child({ props })}
@@ -546,6 +699,35 @@
         </Tooltip.Trigger>
         <Tooltip.Content>
           Add attachment <ShortcutKeys id="attach" inverse />
+        </Tooltip.Content>
+      </Tooltip.Root>
+      <Tooltip.Root>
+        <Tooltip.Trigger>
+          {#snippet child({ props })}
+            <Button
+              {...props}
+              variant="secondary"
+              size="icon"
+              aria-label={dictating ? 'Stop dictation' : 'Dictate'}
+              aria-pressed={dictating}
+              class={dictating ? 'text-brand' : undefined}
+              disabled={!dictating && (disabled || !dictationSupported)}
+              onclick={dictating ? () => stopDictation() : startDictation}
+            >
+              {#if dictating}
+                <Icon name="stop" />
+              {:else}
+                <AudioBars />
+              {/if}
+            </Button>
+          {/snippet}
+        </Tooltip.Trigger>
+        <Tooltip.Content>
+          {dictating
+            ? 'Stop dictation'
+            : dictationSupported
+              ? 'Dictate'
+              : 'Dictation is unavailable in this browser'}
         </Tooltip.Content>
       </Tooltip.Root>
       <!-- One button: Stop while a turn runs with nothing typed; Send (queue/steer) once there's a draft. The stop shortcut still works either way. -->
@@ -658,6 +840,10 @@
     margin: 0.0625rem 0;
     vertical-align: middle;
     line-height: 0;
+  }
+  /* The wrapper's zero line-height would collapse the chip's truncated label. */
+  div :global(.composer-editor .composer-attachment > *) {
+    line-height: 1rem;
   }
   div :global(.composer-editor .composer-attachment.ProseMirror-selectednode) {
     border-radius: 0.375rem;

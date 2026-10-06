@@ -7,6 +7,7 @@
   import { shortcutText } from '$lib/shortcuts';
   import { cn, isMac } from '$lib/utils';
   import type { RunScript } from '$shared/contracts';
+  import HeaderTip from './header-tip.svelte';
   import ScriptDialog from './script-dialog.svelte';
 
   let menuOpen = $state(false);
@@ -55,7 +56,7 @@
     return selected.name;
   });
 
-  const title = $derived.by(() => {
+  const tip = $derived.by(() => {
     if (running)
       return `Stop ${scripts.running.map(({ name }) => name).join(', ')} (${shortcutText('run', isMac())})`;
     if (!selected) return 'Add a script that starts the project';
@@ -64,53 +65,58 @@
 </script>
 
 <div class="flex items-center gap-0.5" role="group" aria-label="Run scripts">
-  <button
-    type="button"
-    class={cn(
-      HALF_CLASS,
-      'relative max-w-44 min-w-20 rounded-r-none border-r-0 pr-3 pl-2.5',
-      pending && 'disabled:opacity-100',
-    )}
-    disabled={list === undefined || pending}
-    aria-busy={pending || undefined}
-    {title}
-    onclick={() => scripts.toggle()}
-  >
-    <span
-      class={cn('flex min-w-0 items-center gap-1.5', pending && 'invisible')}
+  <HeaderTip text={tip}>
+    <button
+      type="button"
+      class={cn(
+        HALF_CLASS,
+        'relative max-w-44 min-w-20 rounded-r-none border-r-0 pr-3 pl-2.5',
+        pending && 'disabled:opacity-100',
+      )}
+      disabled={list === undefined || pending}
+      aria-busy={pending || undefined}
+      onclick={() => scripts.toggle()}
     >
-      {#if running}
-        <Icon name="stop" class="size-2.5 text-destructive" />
-      {:else}
-        <Icon name="play" class="size-3" />
-      {/if}
-      <span class="truncate">{label}</span>
-      {#if runningCount > 1}
+      <span
+        class={cn('flex min-w-0 items-center gap-1.5', pending && 'invisible')}
+      >
+        {#if running}
+          <Icon name="stop" class="size-2.5 text-destructive" />
+        {:else}
+          <Icon name="play" class="size-3" />
+        {/if}
+        <span class="truncate">{label}</span>
+        {#if runningCount > 1}
+          <span
+            class="grid h-4 min-w-4 shrink-0 place-items-center rounded-full bg-foreground/15 px-1 text-[0.65rem] leading-none font-semibold tabular-nums"
+            aria-label={`${runningCount} running`}
+          >
+            {runningCount}
+          </span>
+        {/if}
+      </span>
+      {#if pending}
         <span
-          class="grid h-4 min-w-4 shrink-0 place-items-center rounded-full bg-foreground/15 px-1 text-[0.65rem] leading-none font-semibold tabular-nums"
-          aria-label={`${runningCount} running`}
+          class="absolute inset-0 grid place-items-center"
+          aria-hidden="true"
         >
-          {runningCount}
+          <span
+            class="size-3.5 animate-spin rounded-full border-2 border-current/30 border-t-current motion-reduce:animate-pulse"
+          ></span>
         </span>
       {/if}
-    </span>
-    {#if pending}
-      <span class="absolute inset-0 grid place-items-center" aria-hidden="true">
-        <span
-          class="size-3.5 animate-spin rounded-full border-2 border-current/30 border-t-current motion-reduce:animate-pulse"
-        ></span>
-      </span>
-    {/if}
-  </button>
+    </button>
+  </HeaderTip>
   <DropdownMenu.Root bind:open={menuOpen}>
-    <DropdownMenu.Trigger
-      class={cn(HALF_CLASS, 'rounded-l-none border-l-0 pr-2 pl-1.5')}
-      disabled={list === undefined}
-      aria-label="Run scripts"
-      title="Run scripts"
-    >
-      <ChevronDown class="size-3.5 text-muted-foreground" />
-    </DropdownMenu.Trigger>
+    <HeaderTip text="Run scripts">
+      <DropdownMenu.Trigger
+        class={cn(HALF_CLASS, 'rounded-l-none border-l-0 pr-2 pl-1.5')}
+        disabled={list === undefined}
+        aria-label="Run scripts"
+      >
+        <ChevronDown class="size-3.5 text-muted-foreground" />
+      </DropdownMenu.Trigger>
+    </HeaderTip>
     <DropdownMenu.Content align="end" class="w-76">
       <DropdownMenu.Label>Run scripts</DropdownMenu.Label>
       {#each list ?? [] as script (script.id)}

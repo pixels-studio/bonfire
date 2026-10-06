@@ -24,7 +24,14 @@ const usage = (threadId, turnId) =>
     threadId,
     turnId,
     tokenUsage: {
-      total: {},
+      // Total counts repeated calls; only last represents the latest context.
+      total: {
+        totalTokens: 5500,
+        inputTokens: 5000,
+        cachedInputTokens: 3000,
+        outputTokens: 500,
+        reasoningOutputTokens: 200,
+      },
       last: {
         totalTokens: 1100,
         inputTokens: 1000,
@@ -273,6 +280,14 @@ async function runTurn(threadId, turnId, text, params) {
       type: 'error',
       status: 400,
       error: { message: 'Model not supported' },
+    });
+    notify('error', { threadId, turnId, willRetry: false, error: { message } });
+    complete(threadId, turnId, 'failed', { message });
+  } else if (text.startsWith('capacity')) {
+    const message = JSON.stringify({
+      type: 'error',
+      status: 429,
+      error: { message: 'The selected model is at capacity. Please try again.' },
     });
     notify('error', { threadId, turnId, willRetry: false, error: { message } });
     complete(threadId, turnId, 'failed', { message });

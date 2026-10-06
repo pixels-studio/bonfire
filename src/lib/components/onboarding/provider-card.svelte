@@ -40,7 +40,11 @@
   async function connect() {
     connecting = true;
     try {
-      account = await window.bonfire.providers.connect(provider);
+      const result = await window.bonfire.providers.connect(provider);
+      // This computer never waits for a code; only a machine reached over SSH does.
+      if ('needsCode' in result || 'userCode' in result)
+        throw Error('Sign-in needs a code.');
+      account = result;
       error = undefined;
       limits.refresh();
     } catch (cause) {
@@ -67,7 +71,7 @@
   </div>
   {#if account?.signedIn && !connecting}
     <span
-      class="flex items-center gap-1 text-xs font-medium text-green-600"
+      class="flex items-center gap-1 text-xs font-medium text-success"
       aria-label={`Signed in to ${label}`}
     >
       <Icon name="check" class="size-4" /> Connected
