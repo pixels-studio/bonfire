@@ -6,15 +6,9 @@
   import { paneIcon } from '$lib/panes';
   import type { ShortcutId } from '$lib/shortcuts';
   import { scripts } from '$lib/stores/scripts.svelte';
-  import { cn } from '$lib/utils';
   import { PROVIDER_LABELS } from '$shared/domain';
-  import type {
-    AssistantProvider,
-    Pane,
-    PaneType,
-    RunScript,
-  } from '$shared/contracts';
-  import ScriptDialog from './script-dialog.svelte';
+  import type { AssistantProvider, Pane, PaneType } from '$shared/contracts';
+  import ScriptDialog from '../terminal-view/script-dialog.svelte';
 
   let {
     title,
@@ -84,7 +78,7 @@
     {
       type: 'terminal',
       label: 'Terminal',
-      hint: 'Shell',
+      hint: 'Shell, and your run scripts',
       shortcut: 'newTerminal',
       disabled: !canAddTerminal,
     },
@@ -101,11 +95,6 @@
     scripts.onNeedScript = () => (dialogOpen = true);
     return () => (scripts.onNeedScript = undefined);
   });
-
-  function toggleScript(script: RunScript) {
-    if (scripts.isRunning(script.id)) void scripts.stop(script.id);
-    else void scripts.run(script.id);
-  }
 </script>
 
 {#snippet choiceRow(choice: Choice)}
@@ -166,60 +155,6 @@
           {#each tools as choice (choice.type)}
             {@render choiceRow(choice)}
           {/each}
-        </div>
-      </section>
-
-      <section>
-        <h3 class={SECTION_LABEL}>Run in a terminal</h3>
-        <div class="grid gap-1.5">
-          {#each scripts.list ?? [] as script (script.id)}
-            {@const running = scripts.isRunning(script.id)}
-            <button
-              type="button"
-              class={ROW_CLASS}
-              title={running ? `Stop ${script.name}` : script.command}
-              disabled={disabled || !!scripts.pending[script.id]}
-              onclick={() => toggleScript(script)}
-            >
-              <span class="grid size-4 shrink-0 place-items-center">
-                {#if running}
-                  <Icon name="stop" class="size-3 text-destructive" />
-                {:else}
-                  <Icon
-                    name="play"
-                    class="size-3.5 text-muted-foreground transition-colors group-hover:text-foreground"
-                  />
-                {/if}
-              </span>
-              <span class="min-w-0 flex-1">
-                <span class="block truncate">{script.name}</span>
-                <span
-                  class="block truncate font-mono text-xs text-muted-foreground"
-                >
-                  {script.command}
-                </span>
-              </span>
-              {#if running}
-                <span
-                  class="dot-working size-1.5 shrink-0 rounded-full bg-success"
-                  role="img"
-                  aria-label="Running"
-                ></span>
-              {/if}
-            </button>
-          {/each}
-          <button
-            type="button"
-            class={cn(
-              ROW_CLASS,
-              'bg-transparent text-muted-foreground hover:bg-secondary/60 hover:text-foreground',
-            )}
-            disabled={disabled || scripts.list === undefined}
-            onclick={() => (dialogOpen = true)}
-          >
-            <Icon name="plus" class="shrink-0" />
-            Add script
-          </button>
         </div>
       </section>
 
