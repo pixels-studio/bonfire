@@ -107,7 +107,7 @@
   {#if message.kind === 'attachment'}
     {#if !placed.has(message.id)}
       <p
-        class="w-fit max-w-4/5 self-end rounded-3xl bg-surface-raised px-4 py-2 text-sm @lg:max-w-100"
+        class="w-fit max-w-4/5 self-end rounded-md bg-surface-raised px-4 py-2 text-sm @lg:max-w-100"
       >
         <AttachmentChip name={message.text} previewUrl={message.previewUrl} />
       </p>
@@ -117,7 +117,7 @@
     <!-- Chips and skills sit in the text where the user put them. -->
     <p
       class={[
-        'w-fit max-w-4/5 self-end rounded-3xl bg-surface-raised px-4 py-2 text-sm whitespace-pre-wrap text-foreground wrap-anywhere @lg:max-w-100',
+        'w-fit max-w-4/5 self-end rounded-md bg-surface-raised px-4 py-2 text-sm whitespace-pre-wrap text-foreground wrap-anywhere @lg:max-w-100',
         parts.some((part) => 'attachmentId' in part) && 'leading-7',
       ]}
     >
