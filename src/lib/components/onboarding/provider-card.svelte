@@ -40,7 +40,11 @@
   async function connect() {
     connecting = true;
     try {
-      account = await window.bonfire.providers.connect(provider);
+      const result = await window.bonfire.providers.connect(provider);
+      // This computer never waits for a code; only a machine reached over SSH does.
+      if ('needsCode' in result || 'userCode' in result)
+        throw Error('Sign-in needs a code.');
+      account = result;
       error = undefined;
       limits.refresh();
     } catch (cause) {

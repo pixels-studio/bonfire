@@ -16,6 +16,7 @@ import type {
 import type {
   ConversationMessage,
   ModelOption,
+  NeedsSignInCode,
   Pane,
   Project,
   ProviderAccount,
@@ -27,6 +28,7 @@ import type {
 } from '../../shared/contracts';
 import {
   SIMPLIFIED_ENGLISH_INSTRUCTIONS,
+  stripAnsi,
   withSkillNames,
 } from '../../shared/domain';
 import {
@@ -40,7 +42,7 @@ import {
 import { Cached } from './cached';
 import { Channel } from './channel';
 import { claudeLimits } from './limits';
-import type { Machine } from './machines';
+import type { Machine, PipedProcess } from './machines';
 import { clipOutput, partialToolInput, toolInput } from './tool-text';
 import type { PaneView, ProjectView } from './state';
 
@@ -225,16 +227,116 @@ export class ClaudeAssistant extends ChatAssistant {
     });
   }
 
-  /** Runs the CLI's own browser sign-in, which saves the new credentials where the SDK reads them. */
-  protected async signIn(signal: AbortSignal) {
-    try {
-      await execFileAsync(claudeExecutable(), ['auth', 'login', '--claudeai'], {
-        signal,
-      });
-    } catch (cause) {
-      if (signal.aborted) throw Error('Sign-in was cancelled.');
-      throw cause;
+  /** A remote sign-in waiting for the code its browser page showed, by provider instance. */
+  private pendingRemoteLogin?: { child: PipedProcess; output: string };
+
+  /**
+   * Runs the CLI's own browser sign-in, which saves the new credentials where the SDK reads
+   * them. This computer catches the browser's redirect itself; a machine reached over SSH has
+   * no browser of its own, so its CLI instead prints a code to paste back once the browser,
+   * opened here, shows it.
+   */
+  protected async signIn(
+    signal: AbortSignal,
+    machine: Machine,
+  ): Promise<void | NeedsSignInCode> {
+    if (!machine.remote) {
+      try {
+        await execFileAsync(
+          claudeExecutable(),
+          ['auth', 'login', '--claudeai'],
+          { signal },
+        );
+      } catch (cause) {
+        if (signal.aborted) throw Error('Sign-in was cancelled.');
+        throw cause;
+      }
+      return;
     }
+    return new Promise<void | NeedsSignInCode>((resolve, reject) => {
+      const child = machine.spawn('claude', ['auth', 'login', '--claudeai'], {});
+      const pending = { child, output: '' };
+      this.pendingRemoteLogin = pending;
+      let settled = false;
+      const onAbort = () => child.kill();
+      signal.addEventListener('abort', onAbort, { once: true });
+      const done = (act: () => void) => {
+        if (settled) return;
+        settled = true;
+        signal.removeEventListener('abort', onAbort);
+        act();
+      };
+      const read = (chunk: Buffer) => {
+        pending.output += chunk.toString('utf8');
+        const url = /https:\/\/\S+/.exec(stripAnsi(pending.output))?.[0];
+        if (!url) return;
+        done(() => {
+          void this.host.openUrl(url);
+          resolve({ needsCode: true });
+        });
+      };
+      child.stdout.on('data', read);
+      child.stderr.on('data', read);
+      child.on('error', (cause) =>
+        done(() => {
+          this.pendingRemoteLogin = undefined;
+          reject(cause);
+        }),
+      );
+      child.on('exit', (code) =>
+        done(() => {
+          this.pendingRemoteLogin = undefined;
+          if (signal.aborted) reject(Error('Sign-in was cancelled.'));
+          else if (code === 0) resolve();
+          else
+            reject(
+              Error(pending.output.trim() || `Sign-in exited with code ${code}`),
+            );
+        }),
+      );
+    });
+  }
+
+  /** Writes the code the browser showed to the CLI waiting for it on the remote machine. */
+  protected async provideSignInCode(code: string, signal: AbortSignal) {
+    const pending = this.pendingRemoteLogin;
+    if (!pending) throw Error('No remote sign-in is waiting for a code.');
+    this.pendingRemoteLogin = undefined;
+    const { child } = pending;
+    let output = pending.output;
+    await new Promise<void>((resolve, reject) => {
+      let settled = false;
+      const onAbort = () => child.kill();
+      signal.addEventListener('abort', onAbort, { once: true });
+      const finish = (act: () => void) => {
+        if (settled) return;
+        settled = true;
+        signal.removeEventListener('abort', onAbort);
+        act();
+      };
+      const read = (chunk: Buffer) => {
+        output += chunk.toString('utf8');
+        // The CLI reprompts rather than exiting on a bad code, so waiting for exit would hang.
+        if (/invalid code/i.test(stripAnsi(output)))
+          finish(() => {
+            child.kill();
+            reject(Error('That code was not accepted. Try signing in again.'));
+          });
+      };
+      child.stdout.on('data', read);
+      child.stderr.on('data', read);
+      child.on('exit', (exitCode) =>
+        finish(() => {
+          if (exitCode === 0) resolve();
+          else if (signal.aborted) reject(Error('Sign-in was cancelled.'));
+          else
+            reject(
+              Error(output.trim() || `Sign-in exited with code ${exitCode}`),
+            );
+        }),
+      );
+      child.stdin.write(`${code}\n`);
+    });
   }
 
   protected async complete(prompt: string, model: string, signal: AbortSignal) {

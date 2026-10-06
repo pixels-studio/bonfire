@@ -6,14 +6,22 @@
   import Icon from '$lib/components/icon/icon.svelte';
   import SettingsSection from './settings-section.svelte';
   import ConnectionDialog from './connection-dialog.svelte';
+  import ConnectionSignInDialog from './connection-sign-in-dialog.svelte';
   import { connections } from '$lib/stores/connections.svelte';
   import { toast } from '$lib/stores/toast.svelte';
   import { cn } from '$lib/utils';
-  import type { ConnectionCheck, SshConnection } from '$shared/contracts';
+  import type {
+    AssistantProvider,
+    ConnectionCheck,
+    SshConnection,
+  } from '$shared/contracts';
   import { errorMessage } from '$shared/domain';
 
   let editing = $state(false);
   let target = $state<SshConnection>();
+  let signingIn = $state(false);
+  let signInProvider = $state<AssistantProvider>('claude');
+  let signInTarget = $state<SshConnection>();
   /** How reaching each connection went, by id; missing while it is being tried. */
   let checks = $state<Record<string, ConnectionCheck>>({});
 
@@ -31,6 +39,12 @@
   function edit(connection?: SshConnection) {
     target = connection;
     editing = true;
+  }
+
+  function signIn(provider: AssistantProvider, connection: SshConnection) {
+    signInProvider = provider;
+    signInTarget = connection;
+    signingIn = true;
   }
 
   async function remove(connection: SshConnection) {
@@ -129,6 +143,12 @@
               {/snippet}
             </DropdownMenu.Trigger>
             <DropdownMenu.Content align="end">
+              <DropdownMenu.Item onclick={() => signIn('claude', connection)}>
+                <Icon name="claude" /> Sign in to Claude
+              </DropdownMenu.Item>
+              <DropdownMenu.Item onclick={() => signIn('codex', connection)}>
+                <Icon name="codex" /> Sign in to Codex
+              </DropdownMenu.Item>
               <DropdownMenu.Item onclick={() => edit(connection)}>
                 <Icon name="settings" /> Edit
               </DropdownMenu.Item>
@@ -168,4 +188,10 @@
   bind:open={editing}
   connection={target}
   onsaved={(saved) => check(saved)}
+/>
+
+<ConnectionSignInDialog
+  bind:open={signingIn}
+  provider={signInProvider}
+  connection={signInTarget}
 />
