@@ -977,7 +977,7 @@
 {#snippet launcher()}
   <section
     data-strip-id="launcher"
-    class={cn(SECTION_CLASS, stripCount ? 'basis-1/3 min-w-90' : 'basis-full')}
+    class={cn(SECTION_CLASS, stripCount ? 'basis-1/2 min-w-105' : 'basis-full')}
   >
     {#if !project}
       <Card.Root

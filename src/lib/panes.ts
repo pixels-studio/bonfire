@@ -58,9 +58,9 @@ export const PANE_SIZES: {
 ];
 
 /**
- * The size of a pane that hasn't been resized, given how many share the strip with the
- * launcher, which always takes a third: one pane takes the rest, more take a third each.
+ * The size of a pane that hasn't been resized. The sidebar takes its share of the window, so
+ * two panes fit at a time: each takes half the strip, and the launcher takes half too.
  */
-export function defaultPaneSize(paneCount: number): PaneSize {
-  return paneCount === 1 ? 'two-thirds' : 'third';
+export function defaultPaneSize(_paneCount: number): PaneSize {
+  return 'half';
 }
