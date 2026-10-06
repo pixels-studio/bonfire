@@ -1,7 +1,6 @@
 <script lang="ts">
   import { overlayScrollbar } from '$lib/scrollbar';
   import { onMount, tick } from 'svelte';
-  import CodeXml from '@lucide/svelte/icons/code-xml';
   import FolderX from '@lucide/svelte/icons/folder-x';
   import { Button } from '$lib/components/ui/button';
   import * as Dialog from '$lib/components/ui/dialog';
@@ -209,7 +208,7 @@
           class="flex flex-1 flex-col items-center justify-center gap-3 text-muted-foreground"
         >
           {#if status.isGit}
-            <CodeXml class="size-8 opacity-60" />
+            <Icon name={toolPaneIcon('diff')} class="size-8 opacity-60" />
           {:else}
             <FolderX class="size-8 opacity-60" />
           {/if}
