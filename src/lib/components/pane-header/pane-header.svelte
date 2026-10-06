@@ -29,6 +29,7 @@
     menuLabel,
     dragHandle,
     actions,
+    menuItems,
     onrename,
     size,
     onresize,
@@ -48,6 +49,8 @@
     dragHandle?: HTMLButtonAttributes;
     /** Buttons shown before the pane menu. */
     actions?: Snippet;
+    /** Pane-specific items added to the pane menu. */
+    menuItems?: Snippet;
     /** Lets the title be renamed by double-clicking it; fixed titles have none. */
     onrename?: (title: string) => void;
     size: PaneSize;
@@ -183,7 +186,7 @@
   <div class="flex shrink-0 items-center gap-2">
     {@render actions?.()}
     {#if resizable}
-      <PaneMenu {label} {size} {onresize} />
+      <PaneMenu {label} {size} {onresize} items={menuItems} />
     {/if}
     <Button
       variant="secondary"

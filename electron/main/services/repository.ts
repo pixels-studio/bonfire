@@ -78,6 +78,13 @@ export function repositoryService({
     return git.diff(root, path);
   }
 
+  /** Discards the uncommitted changes to one file, or to every file without a path. */
+  async function discard(projectId: string, path?: string) {
+    if (path?.includes('\0') || path?.split(/[\\/]/).includes('..'))
+      throw Error('Invalid path');
+    await git.discard(folder(projectId), path);
+  }
+
   async function checkout(projectId: string, branch: string) {
     const project = store.project(projectId);
     requireIdle(project);
@@ -107,6 +114,7 @@ export function repositoryService({
     status,
     changesAmong,
     diff,
+    discard,
     checkout,
     createBranch,
     pull,

@@ -704,6 +704,7 @@ export const requests = {
   'git.localBranches': z.tuple([id]),
   'git.branches': z.tuple([id]),
   'git.diff': z.tuple([id, filePath]),
+  'git.discard': z.tuple([id, filePath.optional()]),
   'git.changesAmong': z.tuple([id, z.array(filePath).min(1).max(32)]),
   'git.checkout': z.tuple([id, branchName]),
   'git.createBranch': z.tuple([id, branchName, branchName]),
@@ -969,6 +970,8 @@ export type API = {
     /** Local and remote-tracking branches, to start a new branch from. */
     branches(projectId: string): Promise<string[]>;
     diff(projectId: string, path: string): Promise<string>;
+    /** Throws away the uncommitted changes to one file, or to all of them without a path. */
+    discard(projectId: string, path?: string): Promise<void>;
     /** The current changes among the given paths, such as the files a turn edited. */
     changesAmong(projectId: string, paths: string[]): Promise<Change[]>;
     /**

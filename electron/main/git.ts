@@ -223,6 +223,41 @@ export async function diffUntracked(cwd: Place, path: string) {
   }
 }
 
+/**
+ * Throws away the uncommitted changes to one path, or to the whole tree without one:
+ * edits are restored from HEAD, and files that are new to the repository are deleted.
+ */
+export async function discard(cwd: Place, path?: string) {
+  const hasHead = await git(cwd, ['rev-parse', '--verify', 'HEAD']).then(
+    () => true,
+    () => false,
+  );
+  if (path === undefined) {
+    if (hasHead) await git(cwd, ['reset', '--hard', 'HEAD']);
+    else await git(cwd, ['rm', '-r', '-f', '--cached', '--ignore-unmatch', '.']);
+    await git(cwd, ['clean', '-f', '-d']);
+    return;
+  }
+  const item = await change(cwd, path);
+  if (!item) return;
+  if (item.index === '?') {
+    await git(cwd, ['--literal-pathspecs', 'clean', '-f', '--', path]);
+  } else if (!hasHead || 'ACR'.includes(item.index)) {
+    // Not in HEAD, so there is nothing to restore it to.
+    await git(cwd, ['--literal-pathspecs', 'rm', '-f', '--', path]);
+  } else {
+    await git(cwd, [
+      '--literal-pathspecs',
+      'restore',
+      '--source=HEAD',
+      '--staged',
+      '--worktree',
+      '--',
+      path,
+    ]);
+  }
+}
+
 /** Brings remote-tracking branches up to date, so a new branch starts from the latest commit. */
 export async function fetch(cwd: Place) {
   await git(cwd, ['fetch', '--quiet', 'origin']);

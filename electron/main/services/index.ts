@@ -322,6 +322,7 @@ export function services(options: ServiceOptions) {
       localBranches: async (projectId) => git.localBranches(folder(projectId)),
       branches: async (projectId) => git.branches(folder(projectId)),
       diff: async (projectId, path) => repository.diff(projectId, path),
+      discard: async (projectId, path) => repository.discard(projectId, path),
       changesAmong: async (projectId, paths) =>
         repository.changesAmong(projectId, paths),
       checkout: async (projectId, branch) =>

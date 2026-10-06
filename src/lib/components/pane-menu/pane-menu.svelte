@@ -1,4 +1,5 @@
 <script lang="ts">
+  import type { Snippet } from 'svelte';
   import { Button } from '$lib/components/ui/button';
   import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
   import Icon from '$lib/components/icon/icon.svelte';
@@ -9,12 +10,15 @@
     label,
     size,
     onresize,
+    items,
   }: {
     /** What the trigger is announced as, e.g. "Terminal options". */
     label: string;
     /** The pane's current size, left out of the list of sizes to switch to. */
     size: PaneSize;
     onresize: (size: PaneSize) => void;
+    /** Pane-specific menu items, shown after the sizes. */
+    items?: Snippet;
   } = $props();
 
   const otherSizes = $derived(PANE_SIZES.filter((item) => item.value !== size));
@@ -45,5 +49,9 @@
         {option.label}
       </DropdownMenu.Item>
     {/each}
+    {#if items}
+      <DropdownMenu.Separator />
+      {@render items()}
+    {/if}
   </DropdownMenu.Content>
 </DropdownMenu.Root>
