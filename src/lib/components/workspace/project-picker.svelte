@@ -2,7 +2,6 @@
   import { buttonVariants } from '$lib/components/ui/button';
   import { shortcutText } from '$lib/shortcuts';
   import { cn, isMac } from '$lib/utils';
-  import ChevronDown from '@lucide/svelte/icons/chevron-down';
   import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
   import Icon from '$lib/components/icon/icon.svelte';
   import { connections } from '$lib/stores/connections.svelte';
@@ -113,7 +112,6 @@
     {#if triggerAttention}
       {@render attentionDot(triggerAttention)}
     {/if}
-    <ChevronDown class="size-3.5 shrink-0 text-muted-foreground" />
   </DropdownMenu.Trigger>
   <DropdownMenu.Content align="start" {side} class="w-60">
     {#each projects as project (project.id)}
