@@ -400,7 +400,7 @@
     </nav>
   {/if}
   <footer
-    class="flex shrink-0 items-center gap-1 pt-2 pr-2 pl-1"
+    class="flex shrink-0 items-center justify-between pt-2 pr-3 pl-3"
     aria-label="App"
   >
     {#each PANEL_ITEMS as item (item.panel)}
@@ -451,7 +451,6 @@
             <Button
               {...props}
               size="icon-sm"
-              class="ml-auto"
               aria-label={`Update ${updateNames}`}
               loading={cliVersions.updating}
               disabled={cliVersions.updating}
