@@ -7,7 +7,7 @@
   } from 'svelte/elements';
 
   export const buttonVariants = tv({
-    base: "focus-visible:ring-ring/60 rounded-full border border-transparent bg-clip-padding text-sm font-medium leading-5 focus-visible:ring-2 active:not-aria-[haspopup]:scale-[0.97] [&_svg:not([class*='size-'])]:size-4 group/button inline-flex shrink-0 items-center justify-center whitespace-nowrap transition-[color,background-color,border-color,opacity,transform] duration-150 ease-out outline-none select-none disabled:pointer-events-none disabled:opacity-40 [&_svg]:pointer-events-none [&_svg]:shrink-0",
+    base: "focus-visible:ring-ring/60 rounded-md border border-transparent bg-clip-padding text-sm font-medium leading-5 focus-visible:ring-2 active:not-aria-[haspopup]:scale-[0.97] [&_svg:not([class*='size-'])]:size-4 group/button inline-flex shrink-0 items-center justify-center whitespace-nowrap transition-[color,background-color,border-color,opacity,transform] duration-150 ease-out outline-none select-none disabled:pointer-events-none disabled:opacity-40 [&_svg]:pointer-events-none [&_svg]:shrink-0",
     variants: {
       variant: {
         default: 'bg-primary text-primary-foreground hover:bg-primary/80',
