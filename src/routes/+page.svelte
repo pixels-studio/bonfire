@@ -19,6 +19,7 @@
   import ProjectPicker from '$lib/components/workspace/project-picker.svelte';
   import ShortcutsPane from '$lib/components/shortcuts/shortcuts-pane.svelte';
   import Onboarding from '$lib/components/onboarding/onboarding.svelte';
+  import Bloom from '$lib/components/onboarding/bloom.svelte';
   import { PANE_SIZES, defaultPaneSize, type PaneSize } from '$lib/panes';
   import { digitOf, matchShortcut, type ShortcutId } from '$lib/shortcuts';
   import { assistantEvents } from '$lib/main-events';
@@ -108,6 +109,8 @@
   let diffRequest = 0;
   /** Whether setup is on screen instead of the workspace: no agent signed in, or no project. */
   let onboarding = $state(false);
+  /** Carries the app in from setup on a bloom of light. */
+  let bloom = $state<Bloom>();
   let accounts = $state<Partial<Record<AssistantProvider, ProviderAccount>>>(
     {},
   );
@@ -859,14 +862,20 @@
 
   /** Leaves setup for the workspace, where the starting panes open on their own. */
   async function finishOnboarding() {
-    try {
-      await refresh();
-    } catch (cause) {
-      showError(cause);
-    }
-    // Setup may have just signed an agent in.
-    await loadAccounts();
+    const ready = (async () => {
+      try {
+        await refresh();
+      } catch (cause) {
+        showError(cause);
+      }
+      // Setup may have just signed an agent in.
+      await loadAccounts();
+    })();
+    // The workspace swaps in behind the light at its peak, then emerges as it clears.
+    await Promise.all([ready, bloom?.out()]);
     onboarding = false;
+    await tick();
+    await bloom?.reveal();
   }
 
   /** The agent that starts a project: Claude when connected, else whichever provider is. */
@@ -986,105 +995,175 @@
   {/if}
 {/snippet}
 
-{#if loading}
-  <div class="flex h-screen flex-col">
-    <div class="h-13 shrink-0 app-drag"></div>
-    <div
-      class="grid flex-1 place-content-center"
-      role="status"
-      aria-label="Loading"
-    >
+<Bloom bind:this={bloom}>
+  {#if loading}
+    <div class="flex h-screen flex-col">
+      <div class="h-13 shrink-0 app-drag"></div>
       <div
-        class="size-5 animate-spin rounded-full border-2 border-muted-foreground/30 border-t-muted-foreground motion-reduce:animate-pulse"
-      ></div>
-    </div>
-  </div>
-{:else if onboarding}
-  <Onboarding
-    bind:accounts
-    bind:accountErrors
-    hasProjects={workspace.projects.length > 0}
-    onfinish={() => void finishOnboarding()}
-  />
-{:else}
-  <div class="flex h-screen">
-    <AppRail
-      {panels}
-      ontogglePanel={togglePanel}
-      {trafficLightInset}
-      onhelp={() => window.bonfire.navigation.help()}
-      onaddPane={addPane}
-      startingProvider={startingProvider(
-        preferences.current,
-        workspace.settings.lastProvider,
-      )}
-      panes={panes.map(({ id, title }) => ({
-        id,
-        title,
-        status: scripts.runOfPane(id)?.running ? 'working' : statuses.get(id),
-      }))}
-      {canAddPane}
-      {canAddTerminal}
-      onselectPane={scrollToPane}
-      onselectPanel={scrollToPanel}
-    />
-    <div class="flex min-w-0 flex-1 flex-col">
-      <AppHeader
-        {trafficLightInset}
-        bind:pullRequestOpen
-        disabled={!project}
-        activityOpen={panels.includes('activity')}
-        ontoggleActivity={() => togglePanel('activity')}
-        {openViews}
-        ontoggleView={toggleView}
-        paneCount={panes.length + panels.length}
-        onclosePanes={() =>
-          void changePanes(async () => {
-            panels = [];
-            for (const { id } of panes) await window.bonfire.panes.archive(id);
-          })}
+        class="grid flex-1 place-content-center"
+        role="status"
+        aria-label="Loading"
       >
-        {#snippet location()}
-          <ProjectPicker
-            projects={workspace.projects}
-            active={project}
-            attention={projectAttention}
-            bind:open={projectMenuOpen}
-            onselect={openProject}
-            onadd={addProject}
-            onremove={removeProject}
-          />
-          {#if project}
-            <BranchPicker
-              projectId={project.id}
-              head={branch.head}
-              locked={agentsWorking}
-              bind:open={branchMenuOpen}
-              onswitch={switchBranch}
-              onnew={newBranch}
+        <div
+          class="size-5 animate-spin rounded-full border-2 border-muted-foreground/30 border-t-muted-foreground motion-reduce:animate-pulse"
+        ></div>
+      </div>
+    </div>
+  {:else if onboarding}
+    <Onboarding
+      bind:accounts
+      bind:accountErrors
+      hasProjects={workspace.projects.length > 0}
+      onfinish={() => void finishOnboarding()}
+    />
+  {:else}
+    <div class="flex h-screen">
+      <AppRail
+        {panels}
+        ontogglePanel={togglePanel}
+        {trafficLightInset}
+        onhelp={() => window.bonfire.navigation.help()}
+        onaddPane={addPane}
+        startingProvider={startingProvider(
+          preferences.current,
+          workspace.settings.lastProvider,
+        )}
+        panes={panes.map(({ id, title }) => ({
+          id,
+          title,
+          status: scripts.runOfPane(id)?.running ? 'working' : statuses.get(id),
+        }))}
+        {canAddPane}
+        {canAddTerminal}
+        onselectPane={scrollToPane}
+        onselectPanel={scrollToPanel}
+      />
+      <div class="flex min-w-0 flex-1 flex-col">
+        <AppHeader
+          {trafficLightInset}
+          bind:pullRequestOpen
+          disabled={!project}
+          activityOpen={panels.includes('activity')}
+          ontoggleActivity={() => togglePanel('activity')}
+          {openViews}
+          ontoggleView={toggleView}
+          paneCount={panes.length + panels.length}
+          onclosePanes={() =>
+            void changePanes(async () => {
+              panels = [];
+              for (const { id } of panes)
+                await window.bonfire.panes.archive(id);
+            })}
+        >
+          {#snippet location()}
+            <ProjectPicker
+              projects={workspace.projects}
+              active={project}
+              attention={projectAttention}
+              bind:open={projectMenuOpen}
+              onselect={openProject}
+              onadd={addProject}
+              onremove={removeProject}
             />
-          {/if}
-        {/snippet}
-      </AppHeader>
+            {#if project}
+              <BranchPicker
+                projectId={project.id}
+                head={branch.head}
+                locked={agentsWorking}
+                bind:open={branchMenuOpen}
+                onswitch={switchBranch}
+                onnew={newBranch}
+              />
+            {/if}
+          {/snippet}
+        </AppHeader>
 
-      <div class="flex min-h-0 flex-1">
-        <main class="flex min-h-0 min-w-0 flex-1 pr-2 pb-2">
-          <div class="min-w-0 flex-1">
-            <div
-              bind:this={paneStrip}
-              onfocusin={trackPane}
-              onpointerdowncapture={trackPane}
-              class={cn(
-                '-mx-1 flex h-full snap-x snap-mandatory overflow-x-auto overflow-y-hidden overscroll-x-contain scrollbar-none',
-                drag.active && 'select-none',
-                (drag.active || motion.active) && 'snap-none',
-              )}
-            >
-              {#each stripIds as id (id)}
-                {@const pane = isPanel(id)
-                  ? undefined
-                  : panes.find((pane) => pane.id === id)}
-                {#if !panes.length && id === 'activity'}
+        <div class="flex min-h-0 flex-1">
+          <main class="flex min-h-0 min-w-0 flex-1 pr-2 pb-2">
+            <div class="min-w-0 flex-1">
+              <div
+                bind:this={paneStrip}
+                onfocusin={trackPane}
+                onpointerdowncapture={trackPane}
+                class={cn(
+                  '-mx-1 flex h-full snap-x snap-mandatory overflow-x-auto overflow-y-hidden overscroll-x-contain scrollbar-none',
+                  drag.active && 'select-none',
+                  (drag.active || motion.active) && 'snap-none',
+                )}
+              >
+                {#each stripIds as id (id)}
+                  {@const pane = isPanel(id)
+                    ? undefined
+                    : panes.find((pane) => pane.id === id)}
+                  {#if !panes.length && id === 'activity'}
+                    <section
+                      data-strip-id="placeholder"
+                      class={cn(SECTION_CLASS, autoSizeClass)}
+                      out:leave={{ animate: paneMotion }}
+                    >
+                      {@render placeholder()}
+                    </section>
+                  {/if}
+                  <!-- One section for panels and panes alike: an `out:` only plays when its own
+                     block goes, so the section has to sit right in the `#each`. -->
+                  <section
+                    data-panel={pane ? undefined : id}
+                    data-pane-id={pane?.id}
+                    data-strip-id={id}
+                    class={cn(
+                      SECTION_CLASS,
+                      sizeOverrides[id]
+                        ? sizeClass(sizeOverrides[id])
+                        : autoSizeClass,
+                      HIGHLIGHT_CLASS,
+                      highlightedId === id && HIGHLIGHTED_CLASS,
+                      drag.isDragging(id) && '*:shadow-2xl *:shadow-black/50',
+                    )}
+                    style={drag.style(id)}
+                    out:leave={{ animate: !pane || paneMotion }}
+                  >
+                    {#if pane}
+                      <PaneView
+                        {pane}
+                        projectId={project!.id}
+                        badge={paneBadge(statuses.get(pane.id))}
+                        onviewChanges={viewChanges}
+                        selectedDiff={selectedDiff?.projectId === project!.id
+                          ? selectedDiff
+                          : undefined}
+                        dragHandle={gripOf(pane.id)}
+                        size={paneSize(pane.id)}
+                        onclose={() => closePane(pane.id)}
+                        onresize={(size) => (sizeOverrides[pane.id] = size)}
+                        onrename={(title) => {
+                          pane.title = title;
+                          void runAction(() =>
+                            window.bonfire.panes.rename(pane.id, title),
+                          );
+                        }}
+                        onnavigate={(url) => {
+                          if (pane.url === url) return;
+                          pane.url = url;
+                          window.bonfire.panes
+                            .navigate(pane.id, url)
+                            .catch(showError);
+                        }}
+                      />
+                    {:else if id === 'settings'}
+                      <SettingsPane {...panelProps(id)} />
+                    {:else if id === 'shortcuts'}
+                      <ShortcutsPane {...panelProps(id)} />
+                    {:else if id === 'activity'}
+                      <ActivityPane {projectId} {...panelProps(id)} />
+                    {:else if id === 'insights'}
+                      <InsightsPane
+                        bind:tab={insightsTab}
+                        {...panelProps(id)}
+                      />
+                    {/if}
+                  </section>
+                {/each}
+                {#if !panes.length && !panels.includes('activity')}
                   <section
                     data-strip-id="placeholder"
                     class={cn(SECTION_CLASS, autoSizeClass)}
@@ -1093,97 +1172,33 @@
                     {@render placeholder()}
                   </section>
                 {/if}
-                <!-- One section for panels and panes alike: an `out:` only plays when its own
-                     block goes, so the section has to sit right in the `#each`. -->
-                <section
-                  data-panel={pane ? undefined : id}
-                  data-pane-id={pane?.id}
-                  data-strip-id={id}
-                  class={cn(
-                    SECTION_CLASS,
-                    sizeOverrides[id]
-                      ? sizeClass(sizeOverrides[id])
-                      : autoSizeClass,
-                    HIGHLIGHT_CLASS,
-                    highlightedId === id && HIGHLIGHTED_CLASS,
-                    drag.isDragging(id) && '*:shadow-2xl *:shadow-black/50',
-                  )}
-                  style={drag.style(id)}
-                  out:leave={{ animate: !pane || paneMotion }}
-                >
-                  {#if pane}
-                    <PaneView
-                      {pane}
-                      projectId={project!.id}
-                      badge={paneBadge(statuses.get(pane.id))}
-                      onviewChanges={viewChanges}
-                      selectedDiff={selectedDiff?.projectId === project!.id
-                        ? selectedDiff
-                        : undefined}
-                      dragHandle={gripOf(pane.id)}
-                      size={paneSize(pane.id)}
-                      onclose={() => closePane(pane.id)}
-                      onresize={(size) => (sizeOverrides[pane.id] = size)}
-                      onrename={(title) => {
-                        pane.title = title;
-                        void runAction(() =>
-                          window.bonfire.panes.rename(pane.id, title),
-                        );
-                      }}
-                      onnavigate={(url) => {
-                        if (pane.url === url) return;
-                        pane.url = url;
-                        window.bonfire.panes
-                          .navigate(pane.id, url)
-                          .catch(showError);
-                      }}
+                {#if project && showPullRequest}
+                  <section
+                    data-strip-id={PULL_REQUEST_ID}
+                    class={cn(
+                      SECTION_CLASS,
+                      pullRequestSize
+                        ? sizeClass(pullRequestSize)
+                        : autoSizeClass,
+                    )}
+                    out:leave
+                  >
+                    <PullRequestView
+                      projectId={project.id}
+                      size={pullRequestSize ?? autoSize}
+                      onresize={(size) => (pullRequestSize = size)}
+                      onclose={() => (pullRequestOpen = false)}
                     />
-                  {:else if id === 'settings'}
-                    <SettingsPane {...panelProps(id)} />
-                  {:else if id === 'shortcuts'}
-                    <ShortcutsPane {...panelProps(id)} />
-                  {:else if id === 'activity'}
-                    <ActivityPane {projectId} {...panelProps(id)} />
-                  {:else if id === 'insights'}
-                    <InsightsPane bind:tab={insightsTab} {...panelProps(id)} />
-                  {/if}
-                </section>
-              {/each}
-              {#if !panes.length && !panels.includes('activity')}
-                <section
-                  data-strip-id="placeholder"
-                  class={cn(SECTION_CLASS, autoSizeClass)}
-                  out:leave={{ animate: paneMotion }}
-                >
-                  {@render placeholder()}
-                </section>
-              {/if}
-              {#if project && showPullRequest}
-                <section
-                  data-strip-id={PULL_REQUEST_ID}
-                  class={cn(
-                    SECTION_CLASS,
-                    pullRequestSize
-                      ? sizeClass(pullRequestSize)
-                      : autoSizeClass,
-                  )}
-                  out:leave
-                >
-                  <PullRequestView
-                    projectId={project.id}
-                    size={pullRequestSize ?? autoSize}
-                    onresize={(size) => (pullRequestSize = size)}
-                    onclose={() => (pullRequestOpen = false)}
-                  />
-                </section>
-              {/if}
+                  </section>
+                {/if}
+              </div>
             </div>
-          </div>
-        </main>
+          </main>
+        </div>
       </div>
     </div>
-  </div>
-{/if}
+  {/if}
+</Bloom>
 
 {#if project}
   <NewBranchDialog bind:open={creatingBranch} projectId={project.id} />

@@ -1,10 +1,8 @@
 <script lang="ts">
-  import { overlayScrollbar } from '$lib/scrollbar';
   import { onMount } from 'svelte';
   import { Button } from '$lib/components/ui/button';
   import Icon from '$lib/components/icon/icon.svelte';
   import Logo from '$lib/components/logo/logo.svelte';
-  import Backdrop from './backdrop.svelte';
   import GithubCard from './github-card.svelte';
   import ProjectStep, { FORM_ID } from './project-step.svelte';
   import ProviderCard from './provider-card.svelte';
@@ -14,7 +12,8 @@
     Project,
     ProviderAccount,
   } from '$shared/contracts';
-  import { cn, reducedMotion } from '$lib/utils';
+  import { cn } from '$lib/utils';
+  import { overlayScrollbar } from '$lib/scrollbar';
 
   type Step = 'agents' | 'github' | 'project';
 
@@ -33,21 +32,21 @@
     onfinish: (provider: AssistantProvider, project?: Project) => void;
   } = $props();
 
+  /** Each step's number badge, in order. */
+  const BADGES = ['bg-amber-500', 'bg-orange-500', 'bg-rose-500'];
+
   const PROVIDERS: AssistantProvider[] = ['claude', 'codex'];
 
-  const STEPS: Record<Step, { label: string; title: string; text: string }> = {
+  const STEPS: Record<Step, { title: string; text: string }> = {
     agents: {
-      label: 'Agents',
       title: 'Connect your agents',
-      text: 'Run Claude Code and Codex side by side on your repositories, right on your machine. Sign in to at least one to get started; you can add the other later in Settings.',
+      text: 'Run Claude Code and Codex side by side on your repositories, right on your machine. Sign in to at least one to get started.',
     },
     github: {
-      label: 'GitHub',
       title: 'Connect GitHub',
-      text: 'Pick from your repositories when adding projects, and push branches, open pull requests and merge them without leaving Bonfire.',
+      text: 'Pick from your repositories when adding projects. Push branches and open pull requests without leaving Bonfire.',
     },
     project: {
-      label: 'Project',
       title: 'Add your first project',
       text: 'Clone a repository, or use one you already have. Agents work in the project folder, on whichever branch it has checked out.',
     },
@@ -61,9 +60,10 @@
     PROVIDERS.filter((provider) => accounts[provider]?.signedIn),
   );
   let github = $state<GithubStatus>();
-  /** The project section's clone, once it has one to offer. */
+  /** The project step's clone, once it has one to offer. */
   let clone = $state<{ ready: boolean; cloning: boolean; name: string }>();
-  let sections = $state<Partial<Record<Step, HTMLElement>>>({});
+  /** Set once the last step is done, while the app blooms in. */
+  let finishing = $state(false);
 
   const githubSignedIn = $derived(!!(github?.installed && github.login));
   /** Whether GitHub is connected, once it is known. */
@@ -75,22 +75,12 @@
     return false;
   }
 
-  /** Later sections wait until an agent is signed in. */
-  function locked(item: Step) {
-    return item !== 'agents' && signedIn.length === 0;
+  function finish(provider: AssistantProvider, project?: Project) {
+    finishing = true;
+    onfinish(provider, project);
   }
 
-  function scrollTo(item: Step, instant = false) {
-    sections[item]?.scrollIntoView({
-      block: 'start',
-      behavior: instant || reducedMotion() ? 'instant' : 'smooth',
-    });
-  }
-
-  // The project section offers repositories once it knows GitHub is connected.
   onMount(() => {
-    // Signed in already but with no projects, as after removing the last one.
-    if (!hasProjects && signedIn.length) scrollTo('project', true);
     window.bonfire.github
       .status()
       .then((status) => (github ??= status))
@@ -98,115 +88,105 @@
   });
 </script>
 
-<div class="relative flex h-screen flex-col bg-background">
-  <Backdrop />
-  <div class="relative h-13 shrink-0 app-drag"></div>
-  <div {@attach overlayScrollbar} class="relative flex min-h-0 flex-1 overflow-y-auto px-6">
-    <div
-      class="mx-auto flex min-h-full w-full max-w-160 shrink-0 flex-col gap-16"
-    >
-      <header class="flex items-center gap-2.5">
-        <Logo active class="size-5" />
-        <span class="text-base font-semibold">Bonfire</span>
-      </header>
+<div class="flex h-screen flex-col bg-background">
+  <header class="flex h-13 shrink-0 items-center justify-center app-drag">
+    <Logo active class="size-6" />
+    <span class="sr-only">Bonfire setup</span>
+  </header>
 
-      <ol class="flex flex-col" aria-label="Setup">
-        {#each steps as item, position (item)}
-          {@const complete = done(item)}
-          {@const last = position === steps.length - 1}
-          <li
-            bind:this={sections[item]}
-            class={cn(
-              'flex scroll-mt-8 gap-4 transition-opacity duration-200',
-              locked(item) && 'pointer-events-none opacity-40 select-none',
-            )}
-            inert={locked(item)}
-          >
-            <div class="flex shrink-0 flex-col items-center" aria-hidden="true">
-              <span
-                class={cn(
-                  'mt-1 grid size-5 place-content-center rounded-full bg-secondary text-xs tabular-nums',
-                  complete && 'bg-green-600 text-white',
-                )}
-              >
-                {#if complete}
-                  <Icon name="check" class="size-3" />
-                {:else}
-                  {position + 1}
-                {/if}
-              </span>
-              {#if !last}
-                <span
-                  class="my-2 w-0 flex-1 border-l border-dashed border-border"
-                ></span>
-              {/if}
-            </div>
-
-            <div
-              class={cn('flex min-w-0 flex-1 flex-col gap-6', !last && 'pb-16')}
-            >
-              <div class="flex flex-col gap-1.5">
-                <h2 class="text-lg font-semibold text-balance">
-                  {STEPS[item].title}
-                </h2>
-                <p class="text-sm text-pretty text-muted-foreground">
-                  {STEPS[item].text}
-                </p>
-              </div>
-
-              {#if item === 'agents'}
-                <div class="flex flex-col gap-3">
-                  {#each PROVIDERS as provider (provider)}
-                    <ProviderCard
-                      {provider}
-                      bind:account={accounts[provider]}
-                      bind:error={accountErrors[provider]}
-                    />
-                  {/each}
-                </div>
-              {:else if item === 'github'}
-                <GithubCard bind:status={github} />
-              {:else}
-                <ProjectStep
-                  githubSignedIn={githubKnown}
-                  onconnectGithub={() => scrollTo('github')}
-                  oncreated={(project) => onfinish(signedIn[0], project)}
-                  bind:clone
-                />
-              {/if}
-            </div>
-          </li>
-        {/each}
-      </ol>
-
-      <footer class="flex items-center justify-between gap-4 pb-8">
-        <span class="text-xs text-muted-foreground" role="status">
-          {#if !signedIn.length}
-            Sign in to one agent to continue
-          {:else if clone?.cloning && clone.name}
-            Cloning {clone.name}; large repositories can take a minute
-          {/if}
+  <ol class="flex min-h-0 flex-1 gap-2 px-2 pb-2" aria-label="Setup">
+    {#each steps as item, index (item)}
+      {@const last = index === steps.length - 1}
+      <li
+        class={cn(
+          'flex min-w-0 flex-1 basis-0 flex-col overflow-hidden rounded-lg bg-card p-6',
+        )}
+      >
+        <span
+          class={cn(
+            'grid size-6 shrink-0 place-content-center rounded-full text-xs font-semibold text-white tabular-nums',
+            BADGES[index],
+          )}
+          aria-hidden="true"
+        >
+          {index + 1}
         </span>
-        {#if hasProjects}
-          <Button
-            class="min-w-24"
-            disabled={!signedIn.length}
-            onclick={() => onfinish(signedIn[0])}
-          >
-            Continue
-          </Button>
-        {:else}
-          <Button
-            type="submit"
-            form={FORM_ID}
-            class="min-w-24"
-            disabled={!signedIn.length || !clone?.ready}
-            loading={clone?.cloning}
-          >
-            Let’s go
-          </Button>
-        {/if}
-      </footer>
-    </div>
-  </div>
+
+        <div
+          {@attach overlayScrollbar}
+          class="-mx-1.5 mt-12 flex min-h-0 flex-1 flex-col gap-8 overflow-y-auto px-1.5 pb-1.5"
+        >
+          <div class="flex flex-col gap-2">
+            <h2 class="text-xl font-semibold text-balance">
+              {STEPS[item].title}
+            </h2>
+            <p class="text-sm text-pretty text-muted-foreground">
+              {STEPS[item].text}
+            </p>
+          </div>
+
+          {#if item === 'agents'}
+            <div class="flex flex-col gap-3">
+              {#each PROVIDERS as provider (provider)}
+                <ProviderCard
+                  {provider}
+                  bind:account={accounts[provider]}
+                  bind:error={accountErrors[provider]}
+                />
+              {/each}
+            </div>
+          {:else if item === 'github'}
+            <GithubCard bind:status={github} />
+          {:else}
+            <ProjectStep
+              githubSignedIn={githubKnown}
+              oncreated={(project) => finish(signedIn[0], project)}
+              bind:clone
+            />
+          {/if}
+        </div>
+
+        <footer
+          class="mt-6 flex min-h-9 shrink-0 items-center justify-between gap-4"
+        >
+          <span class="text-xs text-muted-foreground" role="status">
+            {#if done(item)}
+              <span
+                class="flex items-center gap-1.5 text-sm font-medium text-success"
+              >
+                <Icon name="check" class="size-4" /> Completed
+              </span>
+            {:else if item === 'agents'}
+              Sign in to one agent to continue
+            {:else if item === 'github'}
+              Optional; you can connect it later in Settings
+            {:else if clone?.cloning && clone.name}
+              Cloning {clone.name}; large repositories can take a minute
+            {/if}
+          </span>
+          {#if item === 'project'}
+            <Button
+              type="submit"
+              form={FORM_ID}
+              class="min-w-24"
+              disabled={!signedIn.length || !clone?.ready || finishing}
+              loading={clone?.cloning}
+            >
+              Let’s go
+              <Icon name="arrow-right" class="size-4" />
+            </Button>
+          {:else if last}
+            <Button
+              class="min-w-24"
+              disabled={!signedIn.length || finishing}
+              onclick={() => finish(signedIn[0])}
+            >
+              Let’s go
+              <Icon name="arrow-right" class="size-4" />
+            </Button>
+          {/if}
+        </footer>
+      </li>
+    {/each}
+  </ol>
 </div>

@@ -72,7 +72,7 @@
       </span>
     </div>
     {#if login}
-      <span class="flex items-center gap-1 text-xs font-medium text-green-600">
+      <span class="flex items-center gap-1 text-xs font-medium text-success">
         <Icon name="check" class="size-4" /> Connected
       </span>
     {:else if signIn}

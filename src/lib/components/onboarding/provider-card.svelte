@@ -71,7 +71,7 @@
   </div>
   {#if account?.signedIn && !connecting}
     <span
-      class="flex items-center gap-1 text-xs font-medium text-green-600"
+      class="flex items-center gap-1 text-xs font-medium text-success"
       aria-label={`Signed in to ${label}`}
     >
       <Icon name="check" class="size-4" /> Connected

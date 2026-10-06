@@ -6,42 +6,32 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { Button } from '$lib/components/ui/button';
-  import { Input } from '$lib/components/ui/input';
-  import { Label } from '$lib/components/ui/label';
-  import * as Select from '$lib/components/ui/select';
+  import { cn } from '$lib/utils';
   import Icon from '$lib/components/icon/icon.svelte';
   import FolderDialog, { type Folder } from './folder-dialog.svelte';
   import RepositoryList from './repository-list.svelte';
   import { toast } from '$lib/stores/toast.svelte';
   import type { Project } from '$shared/contracts';
-  import {
-    cloneUrl,
-    errorMessage,
-    folderName,
-    repositoryName,
-  } from '$shared/domain';
+  import { errorMessage, folderName, repositoryName } from '$shared/domain';
   import { connections } from '$lib/stores/connections.svelte';
 
-  type Source = 'github' | 'url' | 'folder';
+  type Source = 'github' | 'folder';
 
   let {
     githubSignedIn,
-    onconnectGithub,
     oncreated,
     clone: cloneState = $bindable(),
   }: {
     /** Undefined while GitHub is being checked. */
     githubSignedIn?: boolean;
-    /** Goes back to the GitHub step. */
-    onconnectGithub: () => void;
     oncreated: (project: Project) => void;
-    /** What the footer needs for its button; unset when the tab has nothing to do yet. */
+    /** What the footer needs for its button; unset when nothing is picked yet. */
     clone?: { ready: boolean; cloning: boolean; name: string };
   } = $props();
 
+  /** Whichever was picked last: a folder, or a GitHub repository. */
   let source = $state<Source>('folder');
-  let selected = $state<string>();
-  let typed = $state('');
+  let selectedRepository = $state<string>();
   /** Where a clone goes. */
   let parent = $state('');
   let cloning = $state(false);
@@ -51,30 +41,41 @@
   let choosingFolder = $state(false);
   const folderSource = $derived(connections.find(folder?.connectionId));
 
-  const SOURCES: { value: Source; label: string; icon: string }[] = [
-    { value: 'folder', label: 'Existing folder', icon: 'folder' },
-    { value: 'github', label: 'From GitHub', icon: 'github' },
-    { value: 'url', label: 'Clone URL', icon: 'git' },
-  ];
-
-  const current = $derived(SOURCES.find((option) => option.value === source)!);
-
-  const canClone = $derived(
-    source === 'url' || (source === 'github' && !!githubSignedIn),
+  // Picking a repository replaces a chosen folder, and the other way round.
+  const selected = $derived(
+    source === 'github' ? selectedRepository : undefined,
   );
 
   $effect(() => {
-    cloneState = canClone
-      ? { ready: !!url && !!parent.trim(), cloning, name }
-      : source === 'folder'
-        ? { ready: !!folder, cloning: adding, name: '' }
-        : undefined;
+    cloneState =
+      source === 'github' && githubSignedIn
+        ? { ready: !!url && !!parent.trim(), cloning, name }
+        : source === 'folder'
+          ? { ready: !!folder, cloning: adding, name: '' }
+          : undefined;
   });
 
-  const url = $derived(
-    source === 'github' ? selected : typed ? cloneUrl(typed) : undefined,
-  );
+  const url = $derived(source === 'github' ? selected : undefined);
   const name = $derived(url ? repositoryName(url) : '');
+
+  function chosen(next: Folder) {
+    folder = next;
+    source = 'folder';
+  }
+
+  async function browseLocal() {
+    try {
+      const path = await window.bonfire.projects.chooseFolder();
+      if (path) chosen({ path });
+    } catch (cause) {
+      toast(errorMessage(cause), { variant: 'error' });
+    }
+  }
+
+  function openSsh() {
+    choosingFolder = true;
+  }
+
   async function browse(current: string) {
     try {
       return (await window.bonfire.projects.chooseFolder()) ?? current;
@@ -131,153 +132,117 @@
   });
 </script>
 
-<form id={FORM_ID} class="flex min-h-0 flex-1 flex-col gap-5" onsubmit={submit}>
-  <Select.Root
-    type="single"
-    items={SOURCES}
-    value={source}
-    disabled={cloning || adding}
-    onValueChange={(next) => (source = next as Source)}
-  >
-    <Select.Trigger
-      class="h-9.5 w-full pl-3.5"
-      aria-label="Where the project comes from"
-    >
-      <span class="flex items-center gap-2">
-        <Icon name={current.icon} class="text-muted-foreground" />
-        {current.label}
-      </span>
-    </Select.Trigger>
-    <Select.Content class="bg-white/8 backdrop-blur-2xl">
-      {#each SOURCES as option (option.value)}
-        <Select.Item value={option.value} label={option.label} class="pl-3.75">
-          <Icon name={option.icon} class="text-muted-foreground" />
-          {option.label}
-        </Select.Item>
-      {/each}
-    </Select.Content>
-  </Select.Root>
-
-  {#if source === 'folder'}
-    {#if folder}
-      <div class="flex items-center gap-3.5 rounded-xl bg-foreground/4 p-4">
+<form id={FORM_ID} class="flex flex-col gap-12" onsubmit={submit}>
+  <section class="flex flex-col gap-3" aria-labelledby="folder-heading">
+    <h3 id="folder-heading" class="text-sm font-medium text-muted-foreground">
+      Open a folder
+    </h3>
+    {#each ['local', 'ssh'] as kind (kind)}
+      {@const remote = kind === 'ssh'}
+      {@const chosen =
+        source === 'folder' && folder && !!folder.connectionId === remote
+          ? folder
+          : undefined}
+      <div
+        class={cn(
+          'flex items-center gap-3.5 rounded-xl bg-foreground/4 p-4',
+          chosen && 'ring-[1.5px] ring-foreground',
+        )}
+      >
         <div
           class="grid size-10 shrink-0 place-content-center rounded-lg bg-muted"
         >
-          <Icon
-            name={folder.connectionId ? 'server' : 'computer'}
-            class="size-5"
-          />
+          <Icon name={remote ? 'server' : 'computer'} class="size-5" />
         </div>
         <div class="flex min-w-0 flex-1 flex-col">
-          <span class="truncate text-sm font-medium">
-            {folderName(folder.path)}
+          <span class="text-sm font-medium">
+            {remote ? 'SSH' : 'Local folder'}
           </span>
           <span
             class="truncate text-sm text-muted-foreground"
-            title={folder.path}
+            title={chosen?.path}
           >
-            {folderSource ? `${folderSource.name} · ` : ''}{folder.path}
+            {#if chosen}
+              {folderSource ? `${folderSource.name} · ` : ''}{chosen.path}
+            {:else if remote}
+              A repository on another machine
+            {:else}
+              A repository on this computer
+            {/if}
           </span>
         </div>
         <Button
           type="button"
           variant="secondary"
           size="sm"
-          disabled={adding}
-          onclick={() => (choosingFolder = true)}
+          disabled={cloning || adding}
+          onclick={() => (remote ? openSsh() : browseLocal())}
         >
-          Change
+          {chosen ? 'Change' : remote ? 'Choose' : 'Browse'}
         </Button>
       </div>
+    {/each}
+  </section>
+
+  <section class="flex flex-col gap-3" aria-labelledby="github-heading">
+    <h3 id="github-heading" class="text-sm font-medium text-muted-foreground">
+      GitHub
+    </h3>
+    {#if githubSignedIn}
+      <RepositoryList
+        bind:selected={
+          () => selected,
+          (value) => {
+            selectedRepository = value;
+            source = 'github';
+          }
+        }
+        disabled={cloning}
+      />
+      {#if selected}
+        <div class="flex items-center gap-3.5 rounded-xl bg-foreground/4 p-4">
+          <div
+            class="grid size-10 shrink-0 place-content-center rounded-lg bg-muted"
+          >
+            <Icon name="folder" class="size-5" />
+          </div>
+          <div class="flex min-w-0 flex-1 flex-col">
+            <span class="text-sm font-medium">Clone into</span>
+            <span class="truncate text-sm text-muted-foreground" title={parent}>
+              {parent
+                ? parent.replace(/[\\/]+$/, '')
+                : '…'}{#if name}/{name}{/if}
+            </span>
+          </div>
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            disabled={cloning}
+            onclick={async () => (parent = await browse(parent))}
+          >
+            Browse
+          </Button>
+        </div>
+      {/if}
+    {:else if githubSignedIn === undefined}
+      <div class="h-66 animate-pulse rounded-lg bg-muted/40"></div>
     {:else}
       <div
         class="flex flex-col items-center gap-4 rounded-xl border border-dashed border-border px-6 py-10 text-center"
       >
-        <div class="flex gap-2 text-muted-foreground">
-          <Icon name="computer" class="size-6" />
-          <Icon name="server" class="size-6" />
-        </div>
+        <Icon name="github" class="size-6 text-muted-foreground" />
         <p class="max-w-80 text-sm text-pretty text-muted-foreground">
-          Use a repository already on this computer, or on another machine over
-          SSH.
+          Connect GitHub in the previous step to pick from your repositories.
         </p>
-        <Button type="button" onclick={() => (choosingFolder = true)}>
-          Choose folder
-        </Button>
       </div>
     {/if}
-  {:else}
-    {#if source === 'github'}
-      {#if githubSignedIn}
-        <RepositoryList bind:selected disabled={cloning} />
-      {:else if githubSignedIn === undefined}
-        <div class="h-66 animate-pulse rounded-lg bg-muted/40"></div>
-      {:else}
-        <div
-          class="flex flex-col items-center gap-4 rounded-xl border border-dashed border-border px-6 py-10 text-center"
-        >
-          <Icon name="github" class="size-6 text-muted-foreground" />
-          <p class="max-w-80 text-sm text-pretty text-muted-foreground">
-            Connect GitHub to pick from your repositories, or paste a clone URL
-            instead.
-          </p>
-          <Button variant="secondary" onclick={onconnectGithub}>
-            Connect GitHub
-          </Button>
-        </div>
-      {/if}
-    {:else}
-      <label class="flex flex-col gap-2">
-        <Label>Repository</Label>
-        <Input
-          bind:value={typed}
-          class="h-9.5 px-3.5"
-          placeholder="https://github.com/owner/repo.git or owner/repo"
-          spellcheck={false}
-          autocomplete="off"
-          disabled={cloning}
-          aria-invalid={!!typed.trim() && !url}
-        />
-        {#if typed.trim() && !url}
-          <span class="text-xs text-destructive">
-            Enter an HTTPS or SSH clone URL, or owner/repo for GitHub.
-          </span>
-        {/if}
-      </label>
-    {/if}
-
-    {#if source === 'url' || githubSignedIn}
-      <div
-        class="mt-3 flex items-center gap-3.5 rounded-xl bg-foreground/4 p-4"
-      >
-        <div
-          class="grid size-10 shrink-0 place-content-center rounded-lg bg-muted"
-        >
-          <Icon name="folder" class="size-5" />
-        </div>
-        <div class="flex min-w-0 flex-1 flex-col">
-          <span class="text-sm font-medium">Choose location</span>
-          <span class="truncate text-sm text-muted-foreground" title={parent}>
-            {parent ? parent.replace(/[\\/]+$/, '') : '…'}{#if name}/{name}{/if}
-          </span>
-        </div>
-        <Button
-          type="button"
-          variant="secondary"
-          size="sm"
-          disabled={cloning}
-          onclick={async () => (parent = await browse(parent))}
-        >
-          Browse
-        </Button>
-      </div>
-    {/if}
-  {/if}
+  </section>
 </form>
 
 <FolderDialog
   bind:open={choosingFolder}
-  value={folder}
-  ondone={(chosen) => (folder = chosen)}
+  remote
+  value={folder?.connectionId ? folder : undefined}
+  ondone={chosen}
 />

@@ -1,6 +1,6 @@
 <script lang="ts">
   import Icon from '$lib/components/icon/icon.svelte';
-  import MatrixLoader from '$lib/components/matrix-loader/matrix-loader.svelte';
+  import ThinkingIcon from '$lib/components/icon/thinking-icon.svelte';
   import Markdown from './markdown.svelte';
   import type { ConversationMessage } from '$shared/contracts';
 
@@ -27,13 +27,9 @@
 <details class="group text-sm text-muted-foreground">
   <summary
     onclick={() => (opened = true)}
-    class="flex w-fit cursor-pointer list-none items-center gap-1 hover:text-foreground [&::-webkit-details-marker]:hidden"
+    class="flex w-fit cursor-pointer list-none items-center gap-2 hover:text-foreground [&::-webkit-details-marker]:hidden"
   >
-    {#if streaming}<MatrixLoader
-        variant="twinkle"
-        size="sm"
-        class="mr-1"
-      />{/if}
+    <ThinkingIcon class="size-4 shrink-0" />
     <span class={streaming ? 'shimmer-text' : ''}>
       {label}
     </span>
