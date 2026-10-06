@@ -340,7 +340,17 @@
    * Scrolls only the strip. `scrollIntoView` would also scroll the page
    * itself, pushing the header off-screen.
    */
-  function scrollToSection(selector: string, id: string) {
+  async function scrollToSection(selector: string, id: string) {
+    // A section still growing in is narrower than it will be, so the strip can't
+    // scroll to it yet; measure once the layout has settled.
+    await Promise.allSettled(
+      (
+        paneStrip?.querySelectorAll<HTMLElement>(':scope > [data-strip-id]') ??
+        []
+      )
+        .values()
+        .flatMap((node) => node.getAnimations().map((a) => a.finished)),
+    );
     const section = paneStrip?.querySelector<HTMLElement>(selector);
     if (!paneStrip || !section) return;
     highlight(id);
@@ -356,13 +366,12 @@
   function scrollToPane(paneId: string) {
     currentPaneId = paneId;
     statuses.markSeen(paneId);
-    scrollToSection(`[data-pane-id="${CSS.escape(paneId)}"]`, paneId);
+    return scrollToSection(`[data-pane-id="${CSS.escape(paneId)}"]`, paneId);
   }
 
   /** Scrolls to a pane and puts the cursor in it, in its message box, search or terminal. */
   async function focusPane(paneId: string) {
-    scrollToPane(paneId);
-    await tick();
+    await scrollToPane(paneId);
     paneStrip
       ?.querySelector<HTMLElement>(
         `[data-pane-id="${CSS.escape(paneId)}"] :is(textarea, input[type="search"], [contenteditable="true"])`,
@@ -391,7 +400,7 @@
 
   /** Panel names can't clash with pane ids, which are UUIDs. */
   function scrollToPanel(panel: AppPanel) {
-    scrollToSection(`[data-panel="${panel}"]`, panel);
+    return scrollToSection(`[data-panel="${panel}"]`, panel);
   }
 
   /** Closes an open panel, or opens it at the front of the strip. */
