@@ -1,7 +1,7 @@
 import type { HTMLButtonAttributes } from 'svelte/elements';
 import type { ToolPaneType } from '$shared/contracts';
 
-export type PaneSize = 'full' | 'half' | 'third';
+export type PaneSize = 'full' | 'two-thirds' | 'half' | 'third';
 
 /** What every pane in the strip is given by the page that lays them out. */
 export type PaneProps = {
@@ -37,6 +37,12 @@ export const PANE_SIZES: {
   class: string;
 }[] = [
   { value: 'full', label: 'Full', icon: 'full', class: 'basis-full' },
+  {
+    value: 'two-thirds',
+    label: 'Wide',
+    icon: 'two-thirds',
+    class: 'basis-2/3 min-w-105',
+  },
   { value: 'half', label: 'Half', icon: 'half', class: 'basis-1/2 min-w-105' },
   {
     value: 'third',
