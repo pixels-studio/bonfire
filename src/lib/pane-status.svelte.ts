@@ -11,6 +11,27 @@ export function paneBadge(status: PaneStatus): PaneBadge | undefined {
   return BADGES.includes(status) ? (status as PaneBadge) : undefined;
 }
 
+/** What a project other than the open one has to show for itself; the most urgent wins. */
+export type ProjectAttention = PaneBadge;
+
+export const ATTENTION_RANK: Record<ProjectAttention, number> = {
+  input: 3,
+  error: 2,
+  done: 1,
+};
+
+export const ATTENTION_LABELS: Record<ProjectAttention, string> = {
+  input: 'An agent is waiting for you',
+  error: 'An agent failed',
+  done: 'An agent finished',
+};
+
+export const ATTENTION_DOTS: Record<ProjectAttention, string> = {
+  input: 'bg-orange-400',
+  error: 'bg-destructive',
+  done: 'bg-success',
+};
+
 /** Tracks what each pane's assistant is doing, from the main process's event stream. */
 export class PaneStatuses {
   #running = $state<Record<string, boolean>>({});

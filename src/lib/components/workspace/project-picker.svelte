@@ -8,10 +8,17 @@
   import { connections } from '$lib/stores/connections.svelte';
   import type { Project } from '$shared/contracts';
   import { projectLocation } from '$shared/domain';
+  import {
+    ATTENTION_DOTS,
+    ATTENTION_LABELS,
+    ATTENTION_RANK,
+    type ProjectAttention,
+  } from '$lib/pane-status.svelte';
 
   let {
     projects,
     active,
+    attention = {},
     side = 'bottom',
     open = $bindable(false),
     onselect,
@@ -20,6 +27,8 @@
   }: {
     projects: Project[];
     active?: Project;
+    /** The most urgent thing each other project has for the user; the open one never shows. */
+    attention?: Record<string, ProjectAttention>;
     side?: 'top' | 'bottom';
     open?: boolean;
     onselect: (id: string) => void;
@@ -34,6 +43,14 @@
     for (const char of id) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
     return `color: oklch(0.72 0.15 ${hash % 360})`;
   }
+
+  /** The trigger repeats the most urgent of the others, so the signal shows with the menu closed. */
+  const triggerAttention = $derived(
+    Object.entries(attention)
+      .filter(([id]) => id !== active?.id)
+      .map(([, status]) => status)
+      .sort((a, b) => ATTENTION_RANK[b] - ATTENTION_RANK[a])[0],
+  );
 
   let favicons = $state<Record<string, string | null>>({});
   const requestedFavicons = new Set<string>();
@@ -68,6 +85,15 @@
   {/if}
 {/snippet}
 
+{#snippet attentionDot(status: ProjectAttention, class_?: string)}
+  <span
+    class={cn('size-2 shrink-0 rounded-full', ATTENTION_DOTS[status], class_)}
+    role="img"
+    aria-label={ATTENTION_LABELS[status]}
+    title={ATTENTION_LABELS[status]}
+  ></span>
+{/snippet}
+
 <DropdownMenu.Root bind:open>
   <DropdownMenu.Trigger
     class={cn(
@@ -78,6 +104,9 @@
   >
     {@render favicon(active)}
     <span class="truncate">{active?.name || 'Select project'}</span>
+    {#if triggerAttention}
+      {@render attentionDot(triggerAttention)}
+    {/if}
     <ChevronDown class="size-3.5 shrink-0 text-muted-foreground" />
   </DropdownMenu.Trigger>
   <DropdownMenu.Content align="start" {side} class="w-60">
@@ -96,6 +125,9 @@
                 {projectLocation(project, connections.all)}
               </span>
             </span>
+          {/if}
+          {#if project.id !== active?.id && attention[project.id]}
+            {@render attentionDot(attention[project.id])}
           {/if}
           {#if onremove}
             <DropdownMenu.Root>

@@ -3,6 +3,7 @@ import ListTodo from '@lucide/svelte/icons/list-todo';
 import Search from '@lucide/svelte/icons/search';
 import Wrench from '@lucide/svelte/icons/wrench';
 import AgentIcon from '$lib/components/icon/agent-icon.svelte';
+import AskUserQuestionIcon from '$lib/components/icon/ask-user-question-icon.svelte';
 import BashIcon from '$lib/components/icon/bash-icon.svelte';
 import EditIcon from '$lib/components/icon/edit-icon.svelte';
 import ReadIcon from '$lib/components/icon/read-icon.svelte';
@@ -23,6 +24,7 @@ const ICONS: Record<
   | typeof WebFetchIcon
   | typeof ToolSearchIcon
   | typeof AgentIcon
+  | typeof AskUserQuestionIcon
 > = {
   Bash: BashIcon,
   Read: ReadIcon,
@@ -38,6 +40,7 @@ const ICONS: Record<
   Task: AgentIcon,
   Agent: AgentIcon,
   TodoWrite: ListTodo,
+  AskUserQuestion: AskUserQuestionIcon,
 };
 
 /** Full class names so Tailwind can see them; each tool family gets its own hue for icon and label. */

@@ -24,7 +24,12 @@
   import { assistantEvents } from '$lib/main-events';
   import { PaneDrag } from '$lib/pane-drag.svelte';
   import { StripMotion, leave } from '$lib/strip-motion.svelte';
-  import { PaneStatuses, paneBadge } from '$lib/pane-status.svelte';
+  import {
+    ATTENTION_RANK,
+    PaneStatuses,
+    paneBadge,
+    type ProjectAttention,
+  } from '$lib/pane-status.svelte';
   import { playCompletionSound } from '$lib/sounds';
   import { branch } from '$lib/stores/branch.svelte';
   import { cliVersions } from '$lib/stores/cli-versions.svelte';
@@ -217,6 +222,9 @@
 
   function openProject(projectId: string) {
     if (projectId === project?.id) return;
+    // Opening a project is looking at it, so its finished turns no longer need a reminder.
+    for (const pane of workspace.panes)
+      if (pane.projectId === projectId) statuses.markSeen(pane.id);
     void runAction(() => window.bonfire.projects.open(projectId));
   }
 
@@ -462,10 +470,28 @@
     if (paneIds.length > 1) reorder(paneIds);
   }
 
-  // Pane status needs events for every agent, including ones scrolled out of view.
+  // Pane status needs events for every agent, including ones scrolled out of view and
+  // ones in other projects, whose state the project picker flags.
   $effect(() => {
     if (!loaded) return;
-    for (const { id } of assistantPanes) void statuses.load(id);
+    for (const pane of workspace.panes)
+      if (!pane.archived && isAssistantPane(pane)) void statuses.load(pane.id);
+  });
+
+  /** What needs the user in each project other than the open one: the most urgent state wins. */
+  const projectAttention = $derived.by(() => {
+    const attention: Record<string, ProjectAttention> = {};
+    for (const pane of workspace.panes) {
+      if (pane.archived || !isAssistantPane(pane)) continue;
+      const owner = pane.projectId;
+      if (!owner || owner === projectId) continue;
+      const status = paneBadge(statuses.get(pane.id));
+      if (!status) continue;
+      const current = attention[owner];
+      if (!current || ATTENTION_RANK[status] > ATTENTION_RANK[current])
+        attention[owner] = status;
+    }
+    return attention;
   });
 
   $effect(() => {
@@ -996,6 +1022,7 @@
           <ProjectPicker
             projects={workspace.projects}
             active={project}
+            attention={projectAttention}
             bind:open={projectMenuOpen}
             onselect={openProject}
             onadd={addProject}
