@@ -45,7 +45,7 @@
   {#if opened && message.text}
     <Markdown
       text={message.text}
-      class="mt-2 border-l border-border pl-3 prose-muted"
+      class="mt-2 border-l border-dashed border-border pl-3 prose-muted thinking-steps"
     />
   {/if}
 </details>
