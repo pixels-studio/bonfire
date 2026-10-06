@@ -53,8 +53,8 @@ const COLORS: Record<string, string> = {
   WebFetch: 'text-cyan-600 dark:text-cyan-400',
   WebSearch: 'text-teal-600 dark:text-teal-400',
   ToolSearch: 'text-yellow-600 dark:text-yellow-400',
-  Task: 'text-pink-600 dark:text-pink-400',
-  Agent: 'text-pink-600 dark:text-pink-400',
+  Task: 'text-pink-500 dark:text-pink-300',
+  Agent: 'text-pink-500 dark:text-pink-300',
   TodoWrite: 'text-lime-600 dark:text-lime-400',
 };
 

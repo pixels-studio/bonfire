@@ -211,12 +211,12 @@ const ACTIVITY_FIELDS =
 /** How many pull requests, and how many default branch commits, the activity panel reads. */
 const ACTIVITY_LIMIT = 100;
 /** The newest commits on the default branch; `{owner}` and `{repo}` are filled in by gh. */
-const HISTORY_QUERY = `query($owner: String!, $repo: String!, $first: Int!) {
+const HISTORY_QUERY = `query($owner: String!, $repo: String!, $first: Int!, $author: ID!) {
   repository(owner: $owner, name: $repo) {
     defaultBranchRef {
       target {
         ... on Commit {
-          history(first: $first) {
+          history(first: $first, author: { id: $author }) {
             nodes {
               oid
               messageHeadline
@@ -396,8 +396,8 @@ export class GitHub {
   }
 
   /**
-   * The repository's pull requests in any state, and the commits pushed straight to its
-   * default branch, newest first.
+   * The signed-in user's pull requests in any state, and their commits pushed straight to
+   * the repository's default branch, newest first.
    */
   async activity(cwd: Place): Promise<Activity[]> {
     const [pulls, pushes] = await Promise.all([
@@ -407,6 +407,8 @@ export class GitHub {
           'list',
           '--state',
           'all',
+          '--author',
+          '@me',
           '--search',
           'sort:updated-desc',
           '--limit',
@@ -423,20 +425,37 @@ export class GitHub {
         [
           'api',
           'graphql',
-          '-F',
-          'owner={owner}',
-          '-F',
-          'repo={repo}',
-          '-F',
-          `first=${ACTIVITY_LIMIT}`,
           '-f',
-          `query=${HISTORY_QUERY}`,
+          'query={ viewer { id } }',
+          '--jq',
+          '.data.viewer.id',
         ],
         cwd,
-      ).then(parsePushActivity, (cause) => {
-        console.warn(`Could not read pushes: ${ghError(cause).message}`);
-        return [];
-      }),
+      )
+        .then((viewer) =>
+          gh(
+            [
+              'api',
+              'graphql',
+              '-F',
+              'owner={owner}',
+              '-F',
+              'repo={repo}',
+              '-F',
+              `first=${ACTIVITY_LIMIT}`,
+              '-F',
+              `author=${viewer.trim()}`,
+              '-f',
+              `query=${HISTORY_QUERY}`,
+            ],
+            cwd,
+          ),
+        )
+        .then(parsePushActivity)
+        .catch((cause) => {
+          console.warn(`Could not read pushes: ${ghError(cause).message}`);
+          return [];
+        }),
     ]);
     return [...pulls, ...pushes].sort((first, second) => second.at - first.at);
   }
