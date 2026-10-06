@@ -292,7 +292,7 @@
 <aside class="flex w-72 shrink-0 flex-col pb-2" aria-label="Workspaces">
   <div
     class={cn(
-      'flex h-13 shrink-0 items-center gap-1.5 px-4 app-drag',
+      'flex shrink-0 items-center gap-1.5 px-4 pt-4 pb-2 app-drag',
       trafficLightInset && 'pl-20!',
     )}
   >
