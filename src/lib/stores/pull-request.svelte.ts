@@ -35,6 +35,8 @@ class PullRequestStore {
   /** `undefined` until looked up; `null` when the branch has none. */
   current = $state<PullRequest | null>();
   merging = $state(false);
+  /** Whether the pull request pane is open after the panes. */
+  paneOpen = $state(false);
   /** What the checked-out branch holds, looked up while it has no open pull request. */
   draft = $state<PullRequestDraft>();
   /** On the base branch, where a pull request makes no sense. */

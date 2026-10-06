@@ -10,6 +10,7 @@
   import * as Card from '$lib/components/ui/card';
   import FileDiff from '$lib/components/diff/file-diff.svelte';
   import FileIcon from '$lib/components/file-tree/file-icon.svelte';
+  import GitActions from '$lib/components/git-actions/git-actions.svelte';
   import PaneHeader from '$lib/components/pane-header/pane-header.svelte';
   import { watchFiles } from '$lib/file-watch';
   import { toolPaneIcon, type PaneProps } from '$lib/panes';
@@ -143,6 +144,9 @@
     {onclose}
     {onrename}
   >
+    {#snippet actions()}
+      <GitActions />
+    {/snippet}
     {#snippet menuItems()}
       <DropdownMenu.Item
         disabled={!status?.changes.length}

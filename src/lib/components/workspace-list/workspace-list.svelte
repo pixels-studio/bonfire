@@ -1,5 +1,35 @@
 <script lang="ts" module>
   import type { WorkspaceStatus } from '$shared/contracts';
+  import type { ShortcutId } from '$lib/shortcuts';
+
+  /** A view that opens over the workspace from the sidebar's footer. */
+  export type RailPanel = 'insights' | 'settings' | 'shortcuts';
+
+  const PANEL_ITEMS: {
+    panel: RailPanel;
+    icon: string;
+    label: string;
+    shortcut: ShortcutId;
+  }[] = [
+    {
+      panel: 'insights',
+      icon: 'insights',
+      label: 'Insights',
+      shortcut: 'insights',
+    },
+    {
+      panel: 'settings',
+      icon: 'settings',
+      label: 'Settings',
+      shortcut: 'settings',
+    },
+    {
+      panel: 'shortcuts',
+      icon: 'keyboard',
+      label: 'Keyboard shortcuts',
+      shortcut: 'shortcuts',
+    },
+  ];
 
   const SECTIONS: { status: WorkspaceStatus; label: string }[] = [
     { status: 'in_progress', label: 'In progress' },
@@ -35,7 +65,9 @@
   import ShortcutKeys from '$lib/components/shortcuts/shortcut-keys.svelte';
   import ProjectPicker from '$lib/components/workspace/project-picker.svelte';
   import type { PaneStatus, ProjectAttention } from '$lib/pane-status.svelte';
+  import { cliVersions } from '$lib/stores/cli-versions.svelte';
   import { cn } from '$lib/utils';
+  import { CLI_NAMES } from '$shared/domain';
   import { landmarkLabel } from '$shared/landmarks';
   import { workspaceLabel } from '$shared/domain';
   import type { Project, Workspace } from '$shared/contracts';
@@ -51,6 +83,9 @@
     creating = false,
     settingsOpen = false,
     trafficLightInset = false,
+    panel,
+    onpanel,
+    onhelp,
     onselectProject,
     onaddProject,
     onremoveProject,
@@ -78,6 +113,10 @@
     settingsOpen?: boolean;
     /** Keeps the project picker clear of the native window controls. */
     trafficLightInset?: boolean;
+    /** The panel open over the workspace, if any. */
+    panel?: RailPanel;
+    onpanel: (panel: RailPanel) => void;
+    onhelp: () => void;
     onselectProject: (id: string) => void;
     onaddProject: () => void;
     onremoveProject: (id: string) => void;
@@ -123,6 +162,17 @@
     node.focus();
     node.select();
   }
+
+  const FOOTER_BUTTON_CLASS = 'text-muted-foreground hover:text-foreground';
+
+  /** The CLIs the update button would update, such as `Claude Code and Codex`. */
+  const updateNames = $derived(
+    [
+      ...new Set(
+        cliVersions.outdated.map(({ provider }) => CLI_NAMES[provider]),
+      ),
+    ].join(' and '),
+  );
 
   const ROW_CLASS =
     'group/row relative flex w-full min-w-0 items-center gap-2.5 rounded-lg px-2 py-1.5 text-left text-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/60';
@@ -243,7 +293,7 @@
   <div
     class={cn(
       'flex h-13 shrink-0 items-center gap-1.5 pr-2 app-drag',
-      trafficLightInset && 'pl-8',
+      trafficLightInset && 'pl-20',
     )}
   >
     <div class="flex min-w-0 flex-1 app-no-drag">
@@ -349,6 +399,86 @@
       {/each}
     </nav>
   {/if}
+  <footer
+    class="flex shrink-0 items-center gap-1 pt-2 pr-2 pl-1"
+    aria-label="App"
+  >
+    {#each PANEL_ITEMS as item (item.panel)}
+      {@const pressed = panel === item.panel}
+      <Tooltip.Root>
+        <Tooltip.Trigger>
+          {#snippet child({ props })}
+            <Button
+              {...props}
+              variant={pressed ? 'default' : 'ghost'}
+              size="icon-sm"
+              class={cn(!pressed && FOOTER_BUTTON_CLASS)}
+              aria-label={item.label}
+              aria-pressed={pressed}
+              onclick={() => onpanel(item.panel)}
+            >
+              <Icon name={item.icon} />
+            </Button>
+          {/snippet}
+        </Tooltip.Trigger>
+        <Tooltip.Content side="top">
+          {item.label}
+          <ShortcutKeys id={item.shortcut} inverse />
+        </Tooltip.Content>
+      </Tooltip.Root>
+    {/each}
+    <Tooltip.Root>
+      <Tooltip.Trigger>
+        {#snippet child({ props })}
+          <Button
+            {...props}
+            variant="ghost"
+            size="icon-sm"
+            class={FOOTER_BUTTON_CLASS}
+            aria-label="Help"
+            onclick={onhelp}
+          >
+            <Icon name="help" />
+          </Button>
+        {/snippet}
+      </Tooltip.Trigger>
+      <Tooltip.Content side="top">Help</Tooltip.Content>
+    </Tooltip.Root>
+    {#if cliVersions.outdated.length}
+      <Tooltip.Root>
+        <Tooltip.Trigger>
+          {#snippet child({ props })}
+            <Button
+              {...props}
+              size="icon-sm"
+              class="ml-auto"
+              aria-label={`Update ${updateNames}`}
+              loading={cliVersions.updating}
+              disabled={cliVersions.updating}
+              onclick={() => cliVersions.update()}
+            >
+              <Icon name="update" />
+            </Button>
+          {/snippet}
+        </Tooltip.Trigger>
+        <Tooltip.Content side="top">
+          <div class="flex flex-col gap-0.5">
+            <span>
+              {cliVersions.updating
+                ? `Updating ${updateNames}…`
+                : `Update ${updateNames} to use Bonfire`}
+            </span>
+            {#each cliVersions.outdated as version (`${version.provider}:${version.machineId}`)}
+              <span class="opacity-70">
+                {CLI_NAMES[version.provider]} on {version.machineName}: {version.installed},
+                needs {version.required}
+              </span>
+            {/each}
+          </div>
+        </Tooltip.Content>
+      </Tooltip.Root>
+    {/if}
+  </footer>
 </aside>
 
 <Dialog.Root

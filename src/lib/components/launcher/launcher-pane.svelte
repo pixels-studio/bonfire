@@ -2,9 +2,19 @@
   import * as Card from '$lib/components/ui/card';
   import Icon from '$lib/components/icon/icon.svelte';
   import ShortcutKeys from '$lib/components/shortcuts/shortcut-keys.svelte';
+  import { overlayScrollbar } from '$lib/scrollbar';
+  import { paneIcon } from '$lib/panes';
   import type { ShortcutId } from '$lib/shortcuts';
+  import { scripts } from '$lib/stores/scripts.svelte';
+  import { cn } from '$lib/utils';
   import { PROVIDER_LABELS } from '$shared/domain';
-  import type { AssistantProvider, PaneType } from '$shared/contracts';
+  import type {
+    AssistantProvider,
+    Pane,
+    PaneType,
+    RunScript,
+  } from '$shared/contracts';
+  import ScriptDialog from './script-dialog.svelte';
 
   let {
     title,
@@ -13,7 +23,10 @@
     startingProvider,
     canAddTerminal = true,
     disabled = false,
+    openViews = [],
+    closedPanes = [],
     onadd,
+    onrestore,
   }: {
     title: string;
     subtitle: string;
@@ -23,7 +36,12 @@
     startingProvider: AssistantProvider;
     canAddTerminal?: boolean;
     disabled?: boolean;
+    /** The view panes already open, which a click brings into sight rather than adds. */
+    openViews?: PaneType[];
+    /** The workspace's closed panes that can be reopened, most recently closed first. */
+    closedPanes?: Pane[];
     onadd: (type: PaneType) => void;
+    onrestore?: (id: string) => void;
   } = $props();
 
   type Choice = {
@@ -34,14 +52,35 @@
     disabled?: boolean;
   };
 
-  const choices = $derived<Choice[]>([
-    ...providers.map((provider): Choice => ({
+  const agents = $derived<Choice[]>(
+    providers.map((provider) => ({
       type: provider,
       label: PROVIDER_LABELS[provider],
       hint: 'Agent',
       shortcut:
         provider === startingProvider ? 'newConversation' : 'newOtherAgent',
     })),
+  );
+
+  const tools = $derived<Choice[]>([
+    {
+      type: 'files',
+      label: 'Project tree',
+      hint: 'Browse and open files',
+      shortcut: 'newFiles',
+    },
+    {
+      type: 'diff',
+      label: 'Git changes',
+      hint: 'Diff, push, pull request, merge',
+      shortcut: 'newDiff',
+    },
+    {
+      type: 'browser',
+      label: 'Browser',
+      hint: 'Preview the running app',
+      shortcut: 'newBrowser',
+    },
     {
       type: 'terminal',
       label: 'Terminal',
@@ -50,35 +89,160 @@
       disabled: !canAddTerminal,
     },
   ]);
+
+  const SECTION_LABEL = 'px-1 pb-1.5 text-xs font-medium text-muted-foreground';
+  const ROW_CLASS =
+    'group flex w-full items-center gap-3 rounded-lg bg-secondary px-3 py-2 text-left text-sm transition-colors outline-none hover:bg-secondary/70 focus-visible:ring-2 focus-visible:ring-ring/60 disabled:pointer-events-none disabled:opacity-50';
+
+  let dialogOpen = $state(false);
+
+  // The run shortcut asks for a script through the same dialog when the project has none.
+  $effect(() => {
+    scripts.onNeedScript = () => (dialogOpen = true);
+    return () => (scripts.onNeedScript = undefined);
+  });
+
+  function toggleScript(script: RunScript) {
+    if (scripts.isRunning(script.id)) void scripts.stop(script.id);
+    else void scripts.run(script.id);
+  }
 </script>
 
-<Card.Root
-  class="grid h-full place-content-center justify-items-center gap-0 px-6 text-center"
-  role="region"
-  aria-label="New pane"
->
-  <h2 class="font-medium text-pretty text-foreground">{title}</h2>
-  <p class="mt-1 max-w-80 text-sm text-pretty text-muted-foreground">
-    {subtitle}
-  </p>
-  <div class="mt-6 grid w-64 gap-2">
-    {#each choices as choice (choice.type)}
-      <button
-        type="button"
-        class="group flex items-center gap-3 rounded-lg bg-secondary px-3 py-2.5 text-left text-sm transition-colors outline-none hover:bg-secondary/70 focus-visible:ring-2 focus-visible:ring-ring/60 disabled:pointer-events-none disabled:opacity-50"
-        disabled={disabled || choice.disabled}
-        onclick={() => onadd(choice.type)}
-      >
-        <Icon
-          name={choice.type}
-          class="text-muted-foreground transition-colors group-hover:text-foreground"
-        />
-        <span class="flex-1">
-          {choice.label}
-          <span class="text-muted-foreground"> · {choice.hint}</span>
-        </span>
-        <ShortcutKeys id={choice.shortcut} />
-      </button>
-    {/each}
+{#snippet choiceRow(choice: Choice)}
+  {@const open = openViews.includes(choice.type)}
+  <button
+    type="button"
+    class={ROW_CLASS}
+    disabled={disabled || choice.disabled}
+    onclick={() => onadd(choice.type)}
+  >
+    <Icon
+      name={choice.type === 'files' || choice.type === 'diff'
+        ? paneIcon(choice.type)
+        : choice.type}
+      class="shrink-0 text-muted-foreground transition-colors group-hover:text-foreground"
+    />
+    <span class="min-w-0 flex-1">
+      <span class="block truncate">{choice.label}</span>
+      <span class="block truncate text-xs text-muted-foreground">
+        {choice.hint}
+      </span>
+    </span>
+    {#if open}
+      <span class="shrink-0 text-xs text-muted-foreground">Open</span>
+    {:else}
+      <ShortcutKeys id={choice.shortcut} />
+    {/if}
+  </button>
+{/snippet}
+
+<Card.Root class="h-full min-w-0 gap-0 p-0" role="region" aria-label="New pane">
+  <div
+    {@attach overlayScrollbar}
+    class="min-h-0 flex-1 overflow-y-auto px-5 py-8"
+  >
+    <div class="mx-auto flex w-full max-w-72 flex-col gap-6">
+      <header class="text-center">
+        <h2 class="font-medium text-pretty text-foreground">{title}</h2>
+        <p class="mt-1 text-sm text-pretty text-muted-foreground">
+          {subtitle}
+        </p>
+      </header>
+
+      {#if agents.length}
+        <section>
+          <h3 class={SECTION_LABEL}>Agents</h3>
+          <div class="grid gap-1.5">
+            {#each agents as choice (choice.type)}
+              {@render choiceRow(choice)}
+            {/each}
+          </div>
+        </section>
+      {/if}
+
+      <section>
+        <h3 class={SECTION_LABEL}>Project</h3>
+        <div class="grid gap-1.5">
+          {#each tools as choice (choice.type)}
+            {@render choiceRow(choice)}
+          {/each}
+        </div>
+      </section>
+
+      <section>
+        <h3 class={SECTION_LABEL}>Run in a terminal</h3>
+        <div class="grid gap-1.5">
+          {#each scripts.list ?? [] as script (script.id)}
+            {@const running = scripts.isRunning(script.id)}
+            <button
+              type="button"
+              class={ROW_CLASS}
+              title={running ? `Stop ${script.name}` : script.command}
+              disabled={disabled || !!scripts.pending[script.id]}
+              onclick={() => toggleScript(script)}
+            >
+              <span class="grid size-4 shrink-0 place-items-center">
+                {#if running}
+                  <Icon name="stop" class="size-3 text-destructive" />
+                {:else}
+                  <Icon
+                    name="play"
+                    class="size-3.5 text-muted-foreground transition-colors group-hover:text-foreground"
+                  />
+                {/if}
+              </span>
+              <span class="min-w-0 flex-1">
+                <span class="block truncate">{script.name}</span>
+                <span
+                  class="block truncate font-mono text-xs text-muted-foreground"
+                >
+                  {script.command}
+                </span>
+              </span>
+              {#if running}
+                <span
+                  class="dot-working size-1.5 shrink-0 rounded-full bg-success"
+                  role="img"
+                  aria-label="Running"
+                ></span>
+              {/if}
+            </button>
+          {/each}
+          <button
+            type="button"
+            class={cn(
+              ROW_CLASS,
+              'bg-transparent text-muted-foreground hover:bg-secondary/60 hover:text-foreground',
+            )}
+            disabled={disabled || scripts.list === undefined}
+            onclick={() => (dialogOpen = true)}
+          >
+            <Icon name="plus" class="shrink-0" />
+            Add script
+          </button>
+        </div>
+      </section>
+
+      {#if closedPanes.length && onrestore}
+        <section>
+          <h3 class={SECTION_LABEL}>Recently closed</h3>
+          <div class="grid gap-0.5">
+            {#each closedPanes.slice(0, 4) as pane (pane.id)}
+              <button
+                type="button"
+                class="flex w-full items-center gap-3 rounded-lg px-3 py-1.5 text-left text-sm text-muted-foreground transition-colors outline-none hover:bg-secondary/60 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60"
+                {disabled}
+                onclick={() => onrestore(pane.id)}
+              >
+                <Icon name={paneIcon(pane.type)} class="shrink-0" />
+                <span class="min-w-0 flex-1 truncate">{pane.title}</span>
+              </button>
+            {/each}
+          </div>
+        </section>
+      {/if}
+    </div>
   </div>
 </Card.Root>
+
+<ScriptDialog bind:open={dialogOpen} />

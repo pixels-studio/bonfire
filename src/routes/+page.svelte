@@ -2,10 +2,6 @@
   import { onMount, tick, untrack } from 'svelte';
   import { Button } from '$lib/components/ui/button';
   import * as Card from '$lib/components/ui/card';
-  import AppHeader from '$lib/components/app-header/app-header.svelte';
-  import AppRail, {
-    type RailPanel,
-  } from '$lib/components/app-rail/app-rail.svelte';
   import CreateProjectDialog from '$lib/components/workspace/create-project-dialog.svelte';
   import Icon from '$lib/components/icon/icon.svelte';
   import InsightsPane from '$lib/components/insights/insights-pane.svelte';
@@ -16,7 +12,9 @@
   import PaneView from '$lib/components/pane-view/pane-view.svelte';
   import PullRequestView from '$lib/components/pull-request/pull-request-view.svelte';
   import ShortcutsPane from '$lib/components/shortcuts/shortcuts-pane.svelte';
-  import WorkspaceList from '$lib/components/workspace-list/workspace-list.svelte';
+  import WorkspaceList, {
+    type RailPanel,
+  } from '$lib/components/workspace-list/workspace-list.svelte';
   import Onboarding from '$lib/components/onboarding/onboarding.svelte';
   import Bloom from '$lib/components/onboarding/bloom.svelte';
   import { PANE_SIZES, defaultPaneSize, type PaneSize } from '$lib/panes';
@@ -82,7 +80,8 @@
     (ids) => reorderStrip(ids),
   );
   const motion = new StripMotion(() => paneStrip);
-  let pullRequestOpen = $state(false);
+  /** Whether the pull request pane is open, which the diff pane's git actions toggle. */
+  const pullRequestOpen = $derived(pullRequest.paneOpen);
   let overlay = $state<OverlayPanel>();
   /**
    * The strip's order after panes are arranged by hand, or one is put at the end. Unlisted
@@ -573,21 +572,11 @@
     return attention;
   });
 
-  /** Whether any agent anywhere is working, which stirs the logo. */
-  const anyWorking = $derived(
-    appState.panes.some(
-      (pane) =>
-        !pane.archived &&
-        isAssistantPane(pane) &&
-        statuses.get(pane.id) === 'working',
-    ),
-  );
-
   // A workspace's strip arrangement and pull request are its own.
   $effect(() => {
     void workspaceId;
     untrack(() => {
-      pullRequestOpen = false;
+      pullRequest.paneOpen = false;
       stripOrder = [];
     });
   });
@@ -706,7 +695,7 @@
       void pullRequest.run('createPr');
       return;
     }
-    pullRequestOpen = !pullRequestOpen;
+    pullRequest.paneOpen = !pullRequest.paneOpen;
   }
 
   /** Opens insights on `tab`, or switches to it; pressed again on that tab, closes it. */
@@ -972,12 +961,6 @@
     }
   });
 
-  /** What the header calls the workspace on screen, and the branch it works on. */
-  const heading = $derived.by(() => {
-    if (!project || !current) return {};
-    return { title: workspaceLabel(current), detail: current.branch };
-  });
-
   const launcherSubtitle = $derived.by(() => {
     if (!current) return '';
     return `Agents and terminals work on ${current.branch}, apart from your other workspaces.`;
@@ -1059,7 +1042,10 @@
         )}
         {canAddTerminal}
         disabled={!canAddPane || busy}
+        {openViews}
+        {closedPanes}
         onadd={(type) => void addPane(type)}
+        onrestore={(id) => void restorePane(id)}
       />
     {/if}
   </section>
@@ -1088,13 +1074,6 @@
     />
   {:else}
     <div class="flex h-screen">
-      <AppRail
-        open={overlay === 'project' ? undefined : overlay}
-        ontoggle={toggleOverlay}
-        onhelp={() => window.bonfire.navigation.help()}
-        working={anyWorking}
-        {trafficLightInset}
-      />
       <div class="relative flex min-w-0 flex-1">
         <div class="flex min-w-0 flex-1" inert={!!overlay}>
           <WorkspaceList
@@ -1108,6 +1087,9 @@
             creating={creatingWorkspace}
             settingsOpen={overlay === 'project'}
             {trafficLightInset}
+            panel={overlay === 'project' ? undefined : overlay}
+            onpanel={toggleOverlay}
+            onhelp={() => window.bonfire.navigation.help()}
             onselectProject={openProject}
             onaddProject={addProject}
             onremoveProject={removeProject}
@@ -1124,24 +1106,7 @@
               void runAction(() => window.bonfire.workspaces.remove(id))}
           />
           <div class="flex min-w-0 flex-1 flex-col">
-            <AppHeader
-              bind:pullRequestOpen
-              disabled={!activeId}
-              title={heading.title}
-              detail={heading.detail}
-              {openViews}
-              ontoggleView={toggleView}
-              {closedPanes}
-              onrestorePane={(id) => void restorePane(id)}
-              paneCount={panes.length}
-              onclosePanes={() =>
-                void changePanes(async () => {
-                  for (const { id } of panes)
-                    await window.bonfire.panes.archive(id);
-                })}
-            />
-
-            <main class="flex min-h-0 min-w-0 flex-1 pr-2 pb-2">
+            <main class="flex min-h-0 min-w-0 flex-1 py-2 pr-2">
               <div class="min-w-0 flex-1">
                 <div
                   bind:this={paneStrip}
@@ -1215,7 +1180,7 @@
                         workspaceId={activeId}
                         size={pullRequestSize ?? autoSize}
                         onresize={(size) => (pullRequestSize = size)}
-                        onclose={() => (pullRequestOpen = false)}
+                        onclose={() => (pullRequest.paneOpen = false)}
                       />
                     </section>
                   {/if}
