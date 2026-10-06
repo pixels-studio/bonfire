@@ -1,7 +1,7 @@
 <script lang="ts">
   import { overlayScrollbar } from '$lib/scrollbar';
   import { onMount, tick } from 'svelte';
-  import GitCommitHorizontal from '@lucide/svelte/icons/git-commit-horizontal';
+  import CodeXml from '@lucide/svelte/icons/code-xml';
   import FolderX from '@lucide/svelte/icons/folder-x';
   import { Button } from '$lib/components/ui/button';
   import * as Dialog from '$lib/components/ui/dialog';
@@ -209,15 +209,20 @@
           class="flex flex-1 flex-col items-center justify-center gap-3 text-muted-foreground"
         >
           {#if status.isGit}
-            <GitCommitHorizontal class="size-8 opacity-60" />
+            <CodeXml class="size-8 opacity-60" />
           {:else}
             <FolderX class="size-8 opacity-60" />
           {/if}
-          <p class="text-sm">
-            {status.isGit
-              ? 'Your working tree is clean.'
-              : 'This folder is not a Git repository.'}
-          </p>
+          {#if status.isGit}
+            <div class="flex flex-col items-center gap-1 text-center">
+              <p class="text-sm font-medium text-foreground">No changes yet</p>
+              <p class="text-sm text-pretty">
+                Edits you make will show up here as a diff.
+              </p>
+            </div>
+          {:else}
+            <p class="text-sm">This folder is not a Git repository.</p>
+          {/if}
         </div>
       {/if}
     {/each}
