@@ -34,25 +34,20 @@
   const SECTIONS: { status: WorkspaceStatus; label: string }[] = [
     { status: 'in_progress', label: 'In progress' },
     { status: 'done', label: 'Done' },
-    { status: 'archived', label: 'Archived' },
+    { status: 'archived', label: 'Closed' },
   ];
 
   const ACTIVITY_DOTS: Record<Exclude<PaneStatus, 'idle'>, string> = {
     working: 'bg-success dot-working',
     input: 'bg-orange-400',
     error: 'bg-destructive',
-    done: 'bg-success',
+    done: 'bg-yellow-400',
   };
   const ACTIVITY_LABELS: Record<Exclude<PaneStatus, 'idle'>, string> = {
     working: 'An agent is working',
     input: 'An agent is waiting for you',
     error: 'An agent failed',
     done: 'An agent finished',
-  };
-  const STATUS_ICONS: Record<WorkspaceStatus, string> = {
-    in_progress: 'branch',
-    done: 'check',
-    archived: 'branch',
   };
 </script>
 
@@ -68,7 +63,6 @@
   import { cliVersions } from '$lib/stores/cli-versions.svelte';
   import { cn } from '$lib/utils';
   import { CLI_NAMES } from '$shared/domain';
-  import { landmarkLabel } from '$shared/landmarks';
   import { workspaceLabel } from '$shared/domain';
   import type { Project, Workspace } from '$shared/contracts';
 
@@ -138,7 +132,6 @@
         .toSorted((a, b) => b.createdAt - a.createdAt),
     })),
   );
-  let archivedOpen = $state(false);
 
   let renamingId = $state<string>();
   let draft = $state('');
@@ -180,29 +173,24 @@
 
 {#snippet marker(workspace: Workspace)}
   {@const status = activity[workspace.id]}
+  {@const active = status && status !== 'idle'}
   <span class="grid size-4 shrink-0 place-content-center">
-    {#if status && status !== 'idle'}
-      <span
-        class={cn('size-2 rounded-full', ACTIVITY_DOTS[status])}
-        role="img"
-        aria-label={ACTIVITY_LABELS[status]}
-        title={ACTIVITY_LABELS[status]}
-      ></span>
-    {:else}
-      <Icon
-        name={STATUS_ICONS[workspace.status]}
-        class="size-3.5 text-muted-foreground"
-      />
-    {/if}
+    <!-- Green: working. Orange: waiting for you. Yellow: finished, not yet seen. Gray: quiet. -->
+    <span
+      class={cn(
+        'size-2 rounded-full',
+        active ? ACTIVITY_DOTS[status] : 'bg-muted-foreground/40',
+      )}
+      role="img"
+      aria-label={active ? ACTIVITY_LABELS[status] : 'Idle'}
+      title={active ? ACTIVITY_LABELS[status] : 'Idle'}
+    ></span>
   </span>
 {/snippet}
 
 {#snippet row(workspace: Workspace)}
   {@const current = workspace.id === currentId}
   {@const label = workspaceLabel(workspace)}
-  {@const detail = workspace.title
-    ? landmarkLabel(workspace.name)
-    : workspace.branch}
   <li class="relative">
     {#if renamingId === workspace.id}
       <div class={cn(ROW_CLASS, 'bg-secondary')}>
@@ -243,12 +231,7 @@
         ondblclick={() => startRename(workspace)}
       >
         {@render marker(workspace)}
-        <span class="flex min-w-0 flex-col">
-          <span class="truncate">{label}</span>
-          {#if detail}
-            <span class="truncate text-xs text-muted-foreground">{detail}</span>
-          {/if}
-        </span>
+        <span class="truncate">{label}</span>
       </button>
       <DropdownMenu.Root>
         <DropdownMenu.Trigger>
@@ -347,66 +330,46 @@
   </div>
 
   {#if project}
-    <nav class="min-h-0 flex-1 overflow-y-auto px-4 scrollbar-none">
+    <nav
+      class="flex min-h-0 flex-1 flex-col gap-8 overflow-y-auto px-4 scrollbar-none"
+    >
       {#each sections as section (section.status)}
         {#if section.items.length || section.status === 'in_progress'}
-          {@const collapsible = section.status === 'archived'}
-          <section class="mt-3">
-            {#if collapsible}
-              <button
-                type="button"
-                class="flex w-full items-center gap-1 px-2 pb-1 text-xs font-medium text-muted-foreground transition-colors outline-none hover:text-foreground focus-visible:text-foreground"
-                aria-expanded={archivedOpen}
-                onclick={() => (archivedOpen = !archivedOpen)}
-              >
+          <section class="shrink-0">
+            <div class="flex items-center justify-between pr-1 pb-1">
+              <h3 class="px-2 text-xs font-medium text-muted-foreground">
                 {section.label}
-                <span class="tabular-nums">{section.items.length}</span>
-                <Icon
-                  name="chevron-down"
-                  class={cn(
-                    'size-3 transition-transform',
-                    !archivedOpen && '-rotate-90',
-                  )}
-                />
-              </button>
-            {:else}
-              <div class="flex items-center justify-between pr-1 pb-1">
-                <h3 class="px-2 text-xs font-medium text-muted-foreground">
-                  {section.label}
-                </h3>
-                {#if section.status === 'in_progress'}
-                  <Tooltip.Root>
-                    <Tooltip.Trigger>
-                      {#snippet child({ props })}
-                        <Button
-                          {...props}
-                          variant="ghost"
-                          size="icon-sm"
-                          class="size-6 text-muted-foreground hover:text-foreground"
-                          aria-label="New workspace"
-                          loading={creating}
-                          disabled={creating}
-                          onclick={oncreate}
-                        >
-                          <Icon name="plus" />
-                        </Button>
-                      {/snippet}
-                    </Tooltip.Trigger>
-                    <Tooltip.Content side="bottom">
-                      {creating ? 'Making a workspace…' : 'New workspace'}
-                      <ShortcutKeys id="newWorkspace" />
-                    </Tooltip.Content>
-                  </Tooltip.Root>
-                {/if}
-              </div>
-            {/if}
-            {#if !collapsible || archivedOpen}
-              <ul class="flex flex-col gap-0.5">
-                {#each section.items as workspace (workspace.id)}
-                  {@render row(workspace)}
-                {/each}
-              </ul>
-            {/if}
+              </h3>
+              {#if section.status === 'in_progress'}
+                <Tooltip.Root>
+                  <Tooltip.Trigger>
+                    {#snippet child({ props })}
+                      <Button
+                        {...props}
+                        variant="ghost"
+                        size="icon-sm"
+                        class="size-6 text-muted-foreground hover:text-foreground"
+                        aria-label="New workspace"
+                        loading={creating}
+                        disabled={creating}
+                        onclick={oncreate}
+                      >
+                        <Icon name="plus" />
+                      </Button>
+                    {/snippet}
+                  </Tooltip.Trigger>
+                  <Tooltip.Content side="bottom">
+                    {creating ? 'Making a workspace…' : 'New workspace'}
+                    <ShortcutKeys id="newWorkspace" />
+                  </Tooltip.Content>
+                </Tooltip.Root>
+              {/if}
+            </div>
+            <ul class="flex flex-col gap-0.5">
+              {#each section.items as workspace (workspace.id)}
+                {@render row(workspace)}
+              {/each}
+            </ul>
           </section>
         {/if}
       {/each}
