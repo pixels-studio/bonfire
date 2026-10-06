@@ -24,6 +24,7 @@
     onselect,
     onadd,
     onremove,
+    class: className,
   }: {
     projects: Project[];
     active?: Project;
@@ -35,6 +36,8 @@
     onadd: () => void;
     /** Shows per-project actions when given; without it the picker only picks. */
     onremove?: (id: string) => void;
+    /** Classes for the trigger, such as to fill a column. */
+    class?: string;
   } = $props();
 
   /** Stable pseudo-random hue per project so each folder keeps its color. */
@@ -99,11 +102,14 @@
     class={cn(
       buttonVariants({ variant: 'secondary' }),
       'h-7.5 max-w-56 min-w-0 gap-2 py-0 pr-2.5 pl-2',
+      className,
     )}
     title={`Switch project (${shortcutText('switchProject', isMac())})`}
   >
     {@render favicon(active)}
-    <span class="truncate">{active?.name || 'Select project'}</span>
+    <span class="flex-1 truncate text-left"
+      >{active?.name || 'Select project'}</span
+    >
     {#if triggerAttention}
       {@render attentionDot(triggerAttention)}
     {/if}

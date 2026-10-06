@@ -17,14 +17,14 @@
   const SEARCH_DEBOUNCE_MS = 120;
 
   let {
-    projectId,
+    workspaceId,
     title,
     dragHandle,
     size,
     onresize,
     onclose,
     onrename,
-  }: PaneProps & { projectId: string; title: string } = $props();
+  }: PaneProps & { workspaceId: string; title: string } = $props();
 
   /** Loaded directory listings by path; the project root is `''`. */
   let entries = $state<Record<string, Entry[]>>({});
@@ -46,7 +46,7 @@
     const listings = await Promise.all(
       // A folder deleted while open fails to list; it just drops out of the tree.
       directories.map((path) =>
-        window.bonfire.filesystem.list(projectId, path).catch(() => null),
+        window.bonfire.filesystem.list(workspaceId, path).catch(() => null),
       ),
     );
     if (token !== generation) return;
@@ -72,7 +72,7 @@
     let stale = false;
     const timer = setTimeout(async () => {
       try {
-        const found = await window.bonfire.filesystem.search(projectId, text);
+        const found = await window.bonfire.filesystem.search(workspaceId, text);
         if (!stale) results = found;
       } catch (cause) {
         if (!stale) error = errorMessage(cause);
@@ -86,7 +86,7 @@
 
   onMount(() => {
     void refresh();
-    const stop = watchFiles(projectId, refresh, {
+    const stop = watchFiles(workspaceId, refresh, {
       onerror: (cause) => (error = errorMessage(cause)),
     });
     return () => {
@@ -167,7 +167,7 @@
   </section>
   {#if openFile}
     <FileViewer
-      {projectId}
+      {workspaceId}
       path={openFile}
       onclose={() => (openFile = '')}
       {size}

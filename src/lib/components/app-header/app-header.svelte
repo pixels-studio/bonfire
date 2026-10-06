@@ -1,5 +1,4 @@
 <script lang="ts">
-  import type { Snippet } from 'svelte';
   import { Button } from '$lib/components/ui/button';
   import Icon from '$lib/components/icon/icon.svelte';
   import { shortcutText } from '$lib/shortcuts';
@@ -12,24 +11,29 @@
     type ViewPaneType,
   } from '$shared/domain';
   import HeaderTip from './header-tip.svelte';
+  import PaneHistory from './pane-history.svelte';
   import RunButton from './run-button.svelte';
+  import type { Pane } from '$shared/contracts';
 
   let {
     pullRequestOpen = $bindable(false),
     disabled,
-    location,
-    trafficLightInset = false,
+    title,
+    detail,
     paneCount = 0,
     onclosePanes,
-    activityOpen,
-    ontoggleActivity,
     openViews = [],
     ontoggleView,
+    closedPanes = [],
+    onrestorePane,
   }: {
-    /** Whether this project's Activity panel is open. */
-    activityOpen: boolean;
-    /** Opens or closes this project's Activity panel. */
-    ontoggleActivity: () => void;
+    /** What the workspace on screen is called. */
+    title?: string;
+    /** Shown after the title, such as the branch. */
+    detail?: string;
+    /** The workspace's closed panes that can be reopened, most recently closed first. */
+    closedPanes?: Pane[];
+    onrestorePane?: (id: string) => void;
     /** The view panes open in the strip, whose toggles show as pressed. */
     openViews?: ViewPaneType[];
     /** Opens a view pane at the end of the strip, or closes it. */
@@ -40,12 +44,8 @@
     onclosePanes?: () => void;
     /** Whether the pull request pane is open after the panes. */
     pullRequestOpen?: boolean;
-    /** No project is open, so there is no pull request to show. */
+    /** No workspace can be worked in, so there are no panes or pull request to show. */
     disabled: boolean;
-    /** The project and workspace pickers. */
-    location: Snippet;
-    /** Keeps the pickers clear of the native window controls. */
-    trafficLightInset?: boolean;
   } = $props();
 
   const pull = $derived(pullRequest.current);
@@ -73,7 +73,6 @@
   );
 
   const pullRequestHint = `(${shortcutText('pullRequest', isMac())})`;
-  const activityShortcut = shortcutText('activity', isMac());
 
   const VIEW_SHORTCUTS = {
     files: 'newFiles',
@@ -116,30 +115,23 @@
 {/snippet}
 
 <header
-  class={cn(
-    'sticky top-0 z-20 flex min-h-13 shrink-0 items-center justify-between bg-background py-2 window-controls-inset app-drag',
-    trafficLightInset && 'pl-11',
-  )}
+  class="sticky top-0 z-20 flex min-h-13 shrink-0 items-center justify-between gap-4 bg-background py-2 pl-1 window-controls-inset app-drag"
 >
-  <div class="flex min-w-0 items-center gap-2 app-no-drag">
-    {@render location()}
+  <div class="flex min-w-0 items-baseline gap-2">
+    {#if title}
+      <h1 class="truncate text-sm font-semibold">{title}</h1>
+    {/if}
+    {#if detail}
+      <span class="truncate font-mono text-xs text-muted-foreground">
+        {detail}
+      </span>
+    {/if}
   </div>
-  <div class="flex items-center gap-3 app-no-drag">
+  <div class="flex shrink-0 items-center gap-3 app-no-drag">
     {#if !disabled}
-      <HeaderTip
-        text={`${activityOpen ? 'Close' : 'Open'} activity (${activityShortcut})`}
-      >
-        <Button
-          variant={activityOpen ? 'default' : 'secondary'}
-          size="icon-sm"
-          class={cn(!activityOpen && UTILITY_BUTTON_CLASS)}
-          aria-label="Activity"
-          aria-pressed={activityOpen}
-          onclick={ontoggleActivity}
-        >
-          <Icon name="activity" />
-        </Button>
-      </HeaderTip>
+      {#if onrestorePane}
+        <PaneHistory panes={closedPanes} onrestore={onrestorePane} />
+      {/if}
       {#each viewToggles as view (view.type)}
         {@const open = openViews.includes(view.type)}
         <HeaderTip

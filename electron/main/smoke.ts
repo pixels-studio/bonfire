@@ -14,6 +14,7 @@ import { join } from 'node:path';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { app, webContents, type BrowserWindow } from 'electron';
+import { mainWorkspaceOf } from '../../shared/domain';
 import { git } from './git';
 import { Store } from './persistence';
 import type { services } from './services';
@@ -165,21 +166,15 @@ async function verifyRemote(backend: ReturnType<typeof services>) {
   });
   assert.equal(project.path, repository);
   await assert.rejects(() => api.connections.remove(connection.id));
+  const main = mainWorkspaceOf(backend.store.state, project.id)!.id;
 
-  assert.equal(
-    await api.filesystem.readFile(project.id, 'hello.txt'),
-    'remote\n',
-  );
-  assert.deepEqual(await api.filesystem.search(project.id, 'hello'), [
-    'hello.txt',
-  ]);
-  await assert.rejects(() =>
-    api.filesystem.readFile(project.id, '../secret.txt'),
-  );
+  assert.equal(await api.filesystem.readFile(main, 'hello.txt'), 'remote\n');
+  assert.deepEqual(await api.filesystem.search(main, 'hello'), ['hello.txt']);
+  await assert.rejects(() => api.filesystem.readFile(main, '../secret.txt'));
 
   const shellPane = await api.panes.add('terminal');
   const terminalId = await api.terminal.create({
-    projectId: project.id,
+    workspaceId: main,
     paneId: shellPane.id,
     type: 'shell',
   });
@@ -193,26 +188,32 @@ async function verifyRemote(backend: ReturnType<typeof services>) {
       `BONFIRE_REMOTE_PTY_OK ${repository}`,
     ),
   );
-  const status = await api.git.status(project.id);
+  const status = await api.git.status(main);
   assert.equal(status.branch, 'main');
   assert(status.changes.some((change) => change.path === 'hello.txt'));
-  assert.match(await api.git.diff(project.id, 'hello.txt'), /\+changed/);
+  assert.match(await api.git.diff(main, 'hello.txt'), /\+changed/);
 
-  // A new branch takes the uncommitted change along.
-  await api.git.createBranch(project.id, 'remote-feature', 'main');
-  assert.deepEqual(await api.git.head(project.id), {
-    isGit: true,
-    branch: 'remote-feature',
-  });
-  assert.deepEqual(
-    (await api.git.localBranches(project.id)).map(({ name }) => name).sort(),
-    ['main', 'remote-feature'],
+  // A workspace is a worktree of its own on the remote machine, under ~/.bonfire there.
+  const workspace = await api.workspaces.create(project.id);
+  assert(workspace.path.startsWith(`${home}/.bonfire/worktrees/`));
+  assert.equal(
+    await api.filesystem.readFile(workspace.id, 'hello.txt'),
+    'remote\n',
   );
-  assert.match(await api.git.diff(project.id, 'hello.txt'), /\+changed/);
+  assert.equal((await api.git.head(workspace.id)).branch, workspace.branch);
+  await api.workspaces.archive(workspace.id);
+  await api.workspaces.unarchive(workspace.id);
+  assert.equal(
+    await api.filesystem.readFile(workspace.id, 'hello.txt'),
+    'remote\n',
+  );
+  await api.workspaces.remove(workspace.id);
   await api.projects.remove(project.id);
   await api.connections.remove(connection.id);
   assert.deepEqual(await api.connections.list(), []);
-  console.log('BONFIRE_REMOTE_OK: SSH project, files, git, branches, terminal');
+  console.log(
+    'BONFIRE_REMOTE_OK: SSH project, files, git, workspaces, terminal',
+  );
 }
 
 /**
@@ -299,7 +300,7 @@ function hostPid(name: string) {
 async function verifyHosts(
   backend: ReturnType<typeof services>,
   page: BrowserWindow['webContents'],
-  projectId: string,
+  workspaceId: string,
   terminalId: string,
 ) {
   const { api } = backend;
@@ -315,7 +316,7 @@ async function verifyHosts(
   await assert.rejects(() => api.terminal.snapshot(terminalId), /not found/);
   const pane = await api.panes.add('terminal');
   const fresh = await api.terminal.create({
-    projectId,
+    workspaceId,
     paneId: pane.id,
     type: 'shell',
   });
@@ -355,8 +356,9 @@ async function verifyHostsAnywhere(
   const pane = await api.panes.add('terminal');
   await reloadAndWait(mainWindow, 1500);
   const page = mainWindow.webContents;
+  const workspaceId = mainWorkspaceOf(backend.store.state, project.id)!.id;
   const create = (paneId: string) =>
-    api.terminal.create({ projectId: project.id, paneId, type: 'shell' });
+    api.terminal.create({ workspaceId, paneId, type: 'shell' });
   // PowerShell and POSIX shells both print the sum, which the typed command doesn't contain.
   const sum = (name: string) =>
     process.platform === 'win32'
@@ -423,11 +425,12 @@ export async function smoke(
     lastOpenedAt: Date.now(),
   };
   backend.store.projects.add(project);
+  const main = mainWorkspaceOf(backend.store.state, project.id)!.id;
 
-  // Panes work in the project folder itself.
+  // Panes work in the project folder itself, its main workspace, until another is made.
   await api.projects.open(project.id);
   assert.equal(backend.store.state.lastProjectId, project.id);
-  assert.deepEqual(await api.git.head(project.id), {
+  assert.deepEqual(await api.git.head(main), {
     isGit: true,
     branch: 'main',
   });
@@ -446,7 +449,7 @@ export async function smoke(
 
   const firstShellPane = await api.panes.add('terminal');
   const firstTerminalId = await api.terminal.create({
-    projectId: project.id,
+    workspaceId: main,
     paneId: firstShellPane.id,
     type: 'shell',
   });
@@ -459,16 +462,16 @@ export async function smoke(
   const firstSnapshot = await api.terminal.snapshot(firstTerminalId);
   assert.match(firstSnapshot.data, /BONFIRE_PTY_OK/);
   assert.equal(
-    await api.filesystem.readFile(project.id, 'hello.txt'),
+    await api.filesystem.readFile(main, 'hello.txt'),
     'shared change\n',
   );
-  const gitStatus = await api.git.status(project.id);
+  const gitStatus = await api.git.status(main);
   assert(gitStatus.changes.some((change) => change.path === 'hello.txt'));
-  assert.match(await api.git.diff(project.id, 'hello.txt'), /shared change/);
+  assert.match(await api.git.diff(main, 'hello.txt'), /shared change/);
 
   const secondShellPane = await api.panes.add('terminal');
   const secondTerminalId = await api.terminal.create({
-    projectId: project.id,
+    workspaceId: main,
     paneId: secondShellPane.id,
     type: 'shell',
   });
@@ -481,7 +484,7 @@ export async function smoke(
   // A pane's shell is reused while it runs, and ends with the pane.
   assert.equal(
     await api.terminal.create({
-      projectId: project.id,
+      workspaceId: main,
       paneId: secondShellPane.id,
       type: 'shell',
     }),
@@ -496,18 +499,18 @@ export async function smoke(
   await verifyFlowControl(backend, project.path, firstTerminalId);
 
   await assert.rejects(() =>
-    api.filesystem.readFile(project.id, '../outside/secret.txt'),
+    api.filesystem.readFile(main, '../outside/secret.txt'),
   );
   await symlink(outsideDirectory, join(repository, 'escape'));
   await assert.rejects(() =>
-    api.filesystem.readFile(project.id, 'escape/secret.txt'),
+    api.filesystem.readFile(main, 'escape/secret.txt'),
   );
 
   let secondChatShell: string | undefined;
   for (const provider of ['claude', 'codex'] as const) {
     const chatPane = await api.panes.add(provider);
     const cliTerminalId = await api.terminal.create({
-      projectId: project.id,
+      workspaceId: main,
       paneId: chatPane.id,
       type: provider,
     });
@@ -525,7 +528,7 @@ export async function smoke(
       `${provider} must produce terminal output`,
     );
     const chatShellTerminalId = await api.terminal.create({
-      projectId: project.id,
+      workspaceId: main,
       paneId: chatPane.id,
       type: 'shell',
     });
@@ -537,21 +540,37 @@ export async function smoke(
     secondChatShell = chatShellTerminalId;
   }
 
-  // Switching branches is refused only while an agent works; the shared change comes along.
-  await api.git.createBranch(project.id, 'feature/smoke', 'main');
-  assert.equal((await api.git.head(project.id)).branch, 'feature/smoke');
+  // A workspace is a worktree on a branch of its own, from the committed work.
+  const workspace = await api.workspaces.create(project.id);
+  assert.equal(backend.store.currentWorkspace()?.id, workspace.id);
   assert.equal(
-    await api.filesystem.readFile(project.id, 'hello.txt'),
+    await api.filesystem.readFile(workspace.id, 'hello.txt'),
+    'original\n',
+  );
+  assert.equal((await api.git.head(workspace.id)).branch, workspace.branch);
+  // Archiving saves its uncommitted work and removes the folder; unarchiving brings both back.
+  await writeFile(join(workspace.path, 'hello.txt'), 'workspace change\n');
+  await writeFile(join(workspace.path, 'new.txt'), 'untracked\n');
+  await api.workspaces.archive(workspace.id);
+  assert.equal(backend.store.workspace(workspace.id).status, 'archived');
+  await assert.rejects(() => readFile(join(workspace.path, 'hello.txt')));
+  await api.workspaces.unarchive(workspace.id);
+  assert.equal(
+    await api.filesystem.readFile(workspace.id, 'hello.txt'),
+    'workspace change\n',
+  );
+  assert.equal(
+    await api.filesystem.readFile(workspace.id, 'new.txt'),
+    'untracked\n',
+  );
+  // The main workspace is left as it was.
+  assert.equal(
+    await api.filesystem.readFile(main, 'hello.txt'),
     'shared change\n',
   );
-  await assert.rejects(
-    () => api.git.createBranch(project.id, 'bad name..', 'main'),
-    /valid branch name/,
-  );
-  await api.git.checkout(project.id, 'main');
-  assert.deepEqual(
-    (await api.git.localBranches(project.id)).map(({ name }) => name).sort(),
-    ['feature/smoke', 'main'],
+  await api.workspaces.remove(workspace.id);
+  await assert.rejects(() =>
+    git(repository, ['rev-parse', '--verify', workspace.branch!]),
   );
 
   await verifyRemote(backend);
@@ -593,12 +612,7 @@ export async function smoke(
   assert(['webgl', 'dom'].includes(renderer), 'the terminal is drawn');
   console.log(`BONFIRE_RENDERER: ${renderer}`);
   await saveScreenshot(mainWindow);
-  await verifyHosts(
-    backend,
-    mainWindow.webContents,
-    project.id,
-    secondChatShell!,
-  );
+  await verifyHosts(backend, mainWindow.webContents, main, secondChatShell!);
   await verifyBrowserPane(mainWindow, backend);
   console.log(
     'BONFIRE_SMOKE_OK: renderer, isolated IPC, concurrent PTYs, CLIs, Git diff, confined files, persistence',

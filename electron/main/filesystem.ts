@@ -66,7 +66,7 @@ export async function safePath(root: Place, path: string) {
 }
 
 export class Filesystem {
-  private readonly watchers = new Map<string, ProjectWatch>();
+  private readonly watchers = new Map<string, FolderWatch>();
 
   async list(root: Place, path: string): Promise<Entry[]> {
     const { machine, path: rootPath } = resolvePlace(root);
@@ -115,32 +115,32 @@ export class Filesystem {
    * folders aren't watched, so their views check back instead.
    */
   watch(
-    projectId: string,
+    workspaceId: string,
     root: Place,
     emit: (event: FileChangeEvent) => void,
   ) {
-    if (this.watchers.has(projectId)) return true;
+    if (this.watchers.has(workspaceId)) return true;
     const { machine, path: rootPath } = resolvePlace(root);
     if (machine.remote) return false;
     // Watching the whole disk or home folder would reach into Music, Photos, and Contacts,
     // which macOS guards with a prompt each, for changes no pane needs.
     if (rootPath === '/' || rootPath === homedir()) return false;
-    const project = new ProjectWatch((kind) => emit({ projectId, kind }));
+    const folder = new FolderWatch((kind) => emit({ workspaceId, kind }));
     try {
-      project.watchFolder(rootPath);
+      folder.watchFolder(rootPath);
     } catch (cause) {
       console.error('Watcher:', cause);
-      project.close();
+      folder.close();
       return false;
     }
-    void project.watchGit(root);
-    this.watchers.set(projectId, project);
+    void folder.watchGit(root);
+    this.watchers.set(workspaceId, folder);
     return true;
   }
 
-  async unwatch(projectId: string) {
-    this.watchers.get(projectId)?.close();
-    this.watchers.delete(projectId);
+  async unwatch(workspaceId: string) {
+    this.watchers.get(workspaceId)?.close();
+    this.watchers.delete(workspaceId);
   }
 
   async close() {
@@ -174,11 +174,11 @@ function gitChange(path: string, { refs = true, head = true } = {}) {
 }
 
 /**
- * The OS's own watchers on one project: one for the whole folder, however deep, and one or
+ * The OS's own watchers on one folder: one for the whole folder, however deep, and one or
  * two for Git's. Changes come in bursts, a checkout touching thousands of files, so each
  * kind is reported once a burst settles, or every so often while it goes on.
  */
-class ProjectWatch {
+class FolderWatch {
   private readonly watchers: FSWatcher[] = [];
   private readonly pending = new Map<
     ChangeKind,

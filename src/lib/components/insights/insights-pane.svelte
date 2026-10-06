@@ -14,27 +14,14 @@
     { value: 'usage', label: 'Usage' },
   ];
 
-  let {
-    tab = $bindable('tokens'),
-    dragHandle,
-    size,
-    onresize,
-    onclose,
-  }: { tab?: string } & PanelProps = $props();
+  let { tab = $bindable('tokens'), onclose }: { tab?: string } & PanelProps =
+    $props();
 
   onMount(() => void limits.refresh());
 </script>
 
 <Card.Root class="h-full min-w-0 gap-0">
-  <PaneHeader
-    title="Insights"
-    icon="insights"
-    {dragHandle}
-    {size}
-    {onresize}
-    {onclose}
-    resizable={false}
-  >
+  <PaneHeader title="Insights" icon="insights" {onclose}>
     {#snippet actions()}
       <SegmentedControl
         items={TABS}

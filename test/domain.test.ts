@@ -8,6 +8,8 @@ import {
   repositoryName,
 } from '../shared/domain';
 import type { ConversationMessage } from '../shared/contracts';
+import { LANDMARKS, landmarkLabel, landmarkName } from '../shared/landmarks';
+import { slug } from '../shared/domain';
 
 test('reorderLayout keeps hidden panes in their slots', () => {
   assert.deepEqual(
@@ -80,4 +82,24 @@ test('editedPaths collects each file-editing tool call once, in order', () => {
 
 test('editedPaths splits a Codex fileChange covering several paths at once', () => {
   assert.deepEqual(editedPaths([tool('Edit', 'a.ts, b.ts')]), ['a.ts', 'b.ts']);
+});
+
+test('landmarks are valid folder and branch names, each once', () => {
+  assert.equal(new Set(LANDMARKS).size, LANDMARKS.length);
+  for (const name of LANDMARKS) assert.equal(slug(name), name);
+  assert.equal(landmarkLabel('machu-picchu'), 'Machu Picchu');
+});
+
+test('a new workspace takes a free landmark, then numbered ones once all are taken', () => {
+  const taken = new Set<string>(LANDMARKS.slice(1));
+  assert.equal(landmarkName(taken), LANDMARKS[0]);
+  taken.add(LANDMARKS[0]);
+  assert.equal(
+    landmarkName(taken, () => 0),
+    `${LANDMARKS[0]}-2`,
+  );
+});
+
+test('slugs are lowercase words joined by hyphens', () => {
+  assert.equal(slug('  Abhi Ñandú!! '), 'abhi-nandu');
 });

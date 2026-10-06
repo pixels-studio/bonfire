@@ -11,7 +11,7 @@
   import type { PullRequest, PullRequestDraft } from '$shared/contracts';
   import { errorMessage } from '$shared/domain';
 
-  let { projectId }: { projectId: string } = $props();
+  let { workspaceId }: { workspaceId: string } = $props();
 
   const CHECKS: Record<
     PullRequest['checks'],
@@ -35,25 +35,25 @@
   let creating = $state(false);
 
   async function loadDraft() {
-    const id = projectId;
+    const id = workspaceId;
     draft = undefined;
     loadError = '';
     try {
       const next = await window.bonfire.github.pullRequestDraft(id);
-      if (id !== projectId) return;
+      if (id !== workspaceId) return;
       draft = next;
       title = next.title;
       body = next.body;
       commit = true;
     } catch (cause) {
-      if (id === projectId) loadError = errorMessage(cause);
+      if (id === workspaceId) loadError = errorMessage(cause);
     }
   }
 
   // Each time there is a pull request to compose, start from what the branch holds.
   $effect(() => {
     if (!composing) return;
-    void projectId;
+    void workspaceId;
     untrack(() => void loadDraft());
   });
 
@@ -77,12 +77,15 @@
 
   function open() {
     window.bonfire.github
-      .openPullRequest(projectId)
+      .openPullRequest(workspaceId)
       .catch((cause) => toast(errorMessage(cause), { variant: 'error' }));
   }
 </script>
 
-<div {@attach overlayScrollbar} class="flex h-full min-h-0 flex-col overflow-y-auto px-4 pb-4">
+<div
+  {@attach overlayScrollbar}
+  class="flex h-full min-h-0 flex-col overflow-y-auto px-4 pb-4"
+>
   {#if pull === undefined}
     <div
       class="grid flex-1 place-content-center"

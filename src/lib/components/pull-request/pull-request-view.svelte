@@ -5,12 +5,12 @@
   import PullRequestPane from './pull-request-pane.svelte';
 
   let {
-    projectId,
+    workspaceId,
     size,
     onresize,
     onclose,
   }: {
-    projectId: string;
+    workspaceId: string;
     size: PaneSize;
     onresize: (size: PaneSize) => void;
     onclose: () => void;
@@ -20,8 +20,8 @@
 <Card.Root class="h-full min-w-0">
   <PaneHeader title="Pull request" icon="git" {size} {onresize} {onclose} />
   <div class="relative min-h-0 flex-1">
-    {#key projectId}
-      <PullRequestPane {projectId} />
+    {#key workspaceId}
+      <PullRequestPane {workspaceId} />
     {/key}
   </div>
 </Card.Root>

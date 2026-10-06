@@ -1,7 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type {
-  Pane,
-  Project,
+  BonfireConfig,
   RunScript,
   RunScriptInput,
   ScriptList,
@@ -12,7 +11,12 @@ import type {
 import { quote, type Machine } from './machines';
 import type { Store } from './persistence';
 import type { Terminals } from './terminal';
-import { sendable, type PaneView, type ProjectView } from './state';
+import {
+  sendable,
+  type PaneView,
+  type ProjectView,
+  type WorkspaceView,
+} from './state';
 
 /** Config files are small; anything bigger isn't one worth reading. */
 const READ_LIMIT = 512 * 1024;
@@ -209,19 +213,42 @@ function makeTarget(makefile: string | undefined) {
   );
 }
 
+/** The scripts a repository's `bonfire.json` asks for, each unset if it doesn't. */
+export async function readBonfireConfig(
+  machine: Machine,
+  root: string,
+): Promise<BonfireConfig> {
+  return parseBonfireConfig(await reader(machine, root).text('bonfire.json'));
+}
+
+export function parseBonfireConfig(text: string | undefined): BonfireConfig {
+  const scripts = parseJson<{ scripts?: Record<string, unknown> }>(
+    text,
+  )?.scripts;
+  const script = (name: keyof BonfireConfig) => {
+    const value = scripts?.[name];
+    return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+  };
+  return {
+    setup: script('setup'),
+    run: script('run'),
+    archive: script('archive'),
+  };
+}
+
 /**
  * Commands that start the project, best first, read from its files: package scripts (and
- * one per app in a monorepo), `conductor.json`, and the usual entry points of other stacks.
+ * one per app in a monorepo), `bonfire.json`, and the usual entry points of other stacks.
  */
 export async function detectScripts(
   machine: Machine,
   root: string,
 ): Promise<ScriptSuggestion[]> {
   const files = reader(machine, root);
-  const [packageText, conductorText, denoText, denoCText, makefile, others] =
+  const [packageText, bonfireText, denoText, denoCText, makefile, others] =
     await Promise.all([
       files.text('package.json'),
-      files.text('conductor.json'),
+      files.text('bonfire.json'),
       files.text('deno.json'),
       files.text('deno.jsonc'),
       files.text('Makefile'),
@@ -244,9 +271,8 @@ export async function detectScripts(
   );
   const suggestions: ScriptSuggestion[] = [];
 
-  const conductor = parseJson<{ scripts?: { run?: string } }>(conductorText);
-  if (conductor?.scripts?.run?.trim())
-    suggestions.push({ name: 'Run', command: conductor.scripts.run.trim() });
+  const { run } = parseBonfireConfig(bonfireText);
+  if (run) suggestions.push({ name: 'Run', command: run });
 
   const manifest = parseJson<PackageJson>(packageText);
   if (manifest) {
@@ -323,18 +349,33 @@ function uniqueNames(suggestions: ScriptSuggestion[]) {
   });
 }
 
+/** The id a workspace's setup run goes by, as no project script has it. */
+export const SETUP_SCRIPT_ID = '00000000-0000-4000-8000-000000000001';
+
+/** What scripts in a workspace are told of it, so they can find their way around. */
+export function workspaceEnvironment(
+  workspace: WorkspaceView,
+  project: ProjectView,
+): Record<string, string> {
+  return {
+    BONFIRE_WORKSPACE_NAME: workspace.name,
+    BONFIRE_WORKSPACE_PATH: workspace.path,
+    BONFIRE_ROOT_PATH: project.path,
+  };
+}
+
 type ScriptsOptions = {
   store: Store;
   terminals: Terminals;
   machine: (project: ProjectView) => Machine;
-  /** Opens a terminal pane in the project for a script's output. */
-  addPane: (project: ProjectView) => PaneView;
+  /** Opens a terminal pane in the workspace for a script's output. */
+  addPane: (workspace: WorkspaceView) => PaneView;
   /** Archives a pane, ending its terminal. */
   archivePane: (pane: PaneView) => void;
   emit: (run: ScriptRun) => void;
 };
 
-/** The projects' run scripts, and the processes running them. */
+/** The projects' run scripts, and the processes running them in workspaces. */
 export class Scripts {
   /** The latest run of each script pane, by pane id. */
   private readonly runs = new Map<string, ScriptRun>();
@@ -395,9 +436,9 @@ export class Scripts {
     if (index === -1) scripts.push(script);
     else scripts[index] = script;
     store.projects.update(project, { scripts });
-    // An open pane keeps the script's name.
-    const pane = this.paneOf(project, script.id);
-    if (pane) store.panes.update(pane, { title: script.name });
+    // Open panes keep the script's name.
+    for (const pane of this.panesOf(project, script.id))
+      store.panes.update(pane, { title: script.name });
     return script;
   }
 
@@ -408,32 +449,54 @@ export class Scripts {
       scripts: project.scripts?.filter(({ id }) => id !== scriptId),
       ...(project.runScriptId === scriptId && { runScriptId: undefined }),
     });
-    const pane = this.paneOf(project, scriptId);
-    if (pane) this.options.archivePane(pane);
+    for (const pane of this.panesOf(project, scriptId))
+      this.options.archivePane(pane);
   }
 
-  /** Runs a script in its pane, opening one if it has none, and restarting it if it runs. */
-  async run(projectId: string, scriptId: string) {
-    const { store, terminals } = this.options;
-    const project = store.project(projectId);
+  /** Runs a script in the workspace, in its pane there, restarting it if it runs. */
+  async run(workspaceId: string, scriptId: string) {
+    const { store } = this.options;
+    const workspace = store.workspace(workspaceId);
+    const project = store.project(workspace.projectId);
     const script = project.scripts?.find(({ id }) => id === scriptId);
     if (!script) throw Error('That script was deleted.');
-    let pane = this.paneOf(project, scriptId);
+    store.projects.update(project, { runScriptId: script.id });
+    return this.start(workspace, script);
+  }
+
+  /** Runs a workspace's setup command in a pane of its own, as a script is run. */
+  runSetup(workspace: WorkspaceView, command: string) {
+    return this.start(workspace, {
+      id: SETUP_SCRIPT_ID,
+      name: 'Setup',
+      command,
+    });
+  }
+
+  /** Runs the command in the script's pane, opening one if it has none. */
+  private async start(workspace: WorkspaceView, script: RunScript) {
+    const { store, terminals } = this.options;
+    let pane = this.paneOf(workspace, script.id);
     if (!pane) {
-      pane = this.options.addPane(project);
+      pane = this.options.addPane(workspace);
       // Reruns keep a title the user gave the pane.
       store.panes.update(pane, { scriptId: script.id, title: script.name });
     }
-    store.projects.update(project, { runScriptId: script.id });
     const paneId = pane.id;
-    const terminalId = await terminals.run(project.id, paneId, script.command);
+    const project = store.project(workspace.projectId);
+    const terminalId = await terminals.run(
+      workspace.id,
+      paneId,
+      script.command,
+      workspaceEnvironment(workspace, project),
+    );
     // The pane may have been closed while its previous run was stopping.
     if (pane.archived) {
       terminals.closePane(paneId);
       return paneId;
     }
     this.update({
-      projectId: project.id,
+      workspaceId: workspace.id,
       scriptId: script.id,
       paneId,
       terminalId,
@@ -442,17 +505,17 @@ export class Scripts {
     return paneId;
   }
 
-  async stop(projectId: string, scriptId: string) {
+  async stop(workspaceId: string, scriptId: string) {
     const run = [...this.runs.values()].find(
-      (item) => item.projectId === projectId && item.scriptId === scriptId,
+      (item) => item.workspaceId === workspaceId && item.scriptId === scriptId,
     );
     if (run?.running) await this.options.terminals.stop(run.terminalId);
   }
 
-  /** Runs of the project's open script panes. */
-  activeRuns(projectId: string) {
+  /** Runs of the workspace's open script panes. */
+  activeRuns(workspaceId: string) {
     return [...this.runs.values()].filter(
-      (run) => run.projectId === projectId && this.isOpen(run.paneId),
+      (run) => run.workspaceId === workspaceId && this.isOpen(run.paneId),
     );
   }
 
@@ -483,8 +546,18 @@ export class Scripts {
     );
   }
 
-  private paneOf(project: ProjectView, scriptId: string) {
+  private paneOf(workspace: WorkspaceView, scriptId: string) {
     return this.options.store.state.panes.find(
+      (pane) =>
+        pane.workspaceId === workspace.id &&
+        pane.scriptId === scriptId &&
+        !pane.archived,
+    );
+  }
+
+  /** The script's open panes, one in each workspace it runs in. */
+  private panesOf(project: ProjectView, scriptId: string) {
+    return this.options.store.state.panes.filter(
       (pane) =>
         pane.projectId === project.id &&
         pane.scriptId === scriptId &&

@@ -4,7 +4,6 @@ import type {
   AssistantProvider,
   Pane,
   PaneType,
-  Project,
 } from '../../../shared/contracts';
 import {
   DEFAULT_TITLE,
@@ -12,6 +11,7 @@ import {
   MAX_TERMINAL_PANES,
   TOOL_PANE_TITLES,
   isAssistantPane,
+  isReopenable,
   isViewPaneType,
   otherProvider,
   startingProvider,
@@ -21,7 +21,7 @@ import type { Store } from '../persistence';
 import type { Scripts } from '../scripts';
 import type { Terminals } from '../terminal';
 import type { Agents } from './agents';
-import type { PaneView, ProjectView } from '../state';
+import type { PaneView, WorkspaceView } from '../state';
 
 type PaneOptions = {
   store: Store;
@@ -32,7 +32,7 @@ type PaneOptions = {
   emit: (event: AssistantEvent) => void;
 };
 
-/** Opening, closing, arranging and forking a project's panes. */
+/** Opening, closing, arranging and forking a workspace's panes. */
 export function paneService({
   store,
   agents,
@@ -40,10 +40,33 @@ export function paneService({
   scripts,
   emit,
 }: PaneOptions) {
-  const openPanesOf = (project: ProjectView) =>
+  const openPanesOf = (workspace: WorkspaceView) =>
     store.state.panes.filter(
-      (pane) => pane.projectId === project.id && !pane.archived,
+      (pane) => pane.workspaceId === workspace.id && !pane.archived,
     );
+
+  /** The workspace's open view pane of the type; there is at most one, and never of other types. */
+  const openViewOf = (workspace: WorkspaceView, type: PaneType) =>
+    isViewPaneType(type)
+      ? openPanesOf(workspace).find((pane) => pane.type === type)
+      : undefined;
+
+  /** Throws unless the workspace is open and has room for another pane of the type. */
+  function requireRoom(workspace: WorkspaceView, type?: PaneType) {
+    if (workspace.status === 'archived')
+      throw Error('Unarchive the workspace to open panes in it.');
+    const open = openPanesOf(workspace);
+    if (open.length >= MAX_PANES)
+      throw new Error(`A workspace can have up to ${MAX_PANES} panes open.`);
+    if (
+      type === 'terminal' &&
+      open.filter((pane) => pane.type === 'terminal').length >=
+        MAX_TERMINAL_PANES
+    )
+      throw new Error(
+        `A workspace can have up to ${MAX_TERMINAL_PANES} terminal panes open.`,
+      );
+  }
 
   /** The provider and model new panes start with: the chosen default, else the last used. */
   function startingModel() {
@@ -63,34 +86,21 @@ export function paneService({
   }
 
   /**
-   * Adds a pane to the project on screen, at the front unless placed at the end; agents
+   * Adds a pane to the workspace on screen, at the front unless placed at the end; agents
    * start with the last-used provider and model. A view pane always goes at the end, and
    * only once: an open one is returned as it is.
    */
   function add(
     type?: PaneType,
-    project = store.state.lastProjectId
-      ? store.project(store.state.lastProjectId)
-      : undefined,
+    workspace = store.currentWorkspace(),
     other = false,
     at: 'front' | 'end' = 'front',
   ) {
-    if (!project) throw Error('Add a project first.');
+    if (!workspace) throw Error('Add a project first.');
     const view = type && isViewPaneType(type);
-    const open = view
-      ? openPanesOf(project).find((pane) => pane.type === type)
-      : undefined;
+    const open = type && openViewOf(workspace, type);
     if (open) return open;
-    if (openPanesOf(project).length >= MAX_PANES)
-      throw new Error(`A project can have up to ${MAX_PANES} panes open.`);
-    if (
-      type === 'terminal' &&
-      openPanesOf(project).filter((pane) => pane.type === 'terminal').length >=
-        MAX_TERMINAL_PANES
-    )
-      throw new Error(
-        `A project can have up to ${MAX_TERMINAL_PANES} terminal panes open.`,
-      );
+    requireRoom(workspace, type);
     const starting = startingModel();
     const paneType =
       type ??
@@ -102,7 +112,8 @@ export function paneService({
     return store.panes.add(
       {
         id: randomUUID(),
-        projectId: project.id,
+        projectId: workspace.projectId,
+        workspaceId: workspace.id,
         type: paneType,
         title: agent ? DEFAULT_TITLE : TOOL_PANE_TITLES[paneType],
         messages: [],
@@ -124,6 +135,24 @@ export function paneService({
     store.panes.archive(pane);
   }
 
+  /**
+   * Reopens a closed pane where `add` would put a new one of its kind, under the same
+   * limits. A view pane of a kind already open stays closed, and the open one is returned.
+   */
+  function restore(pane: PaneView) {
+    if (!pane.archived) return pane;
+    if (!isReopenable(pane))
+      throw Error('Run the script again to see its output.');
+    if (!pane.workspaceId) throw Error('This pane has no project to open in.');
+    const workspace = store.workspace(pane.workspaceId);
+    const open = openViewOf(workspace, pane.type);
+    if (open) return open;
+    requireRoom(workspace, pane.type);
+    if (isAssistantPane(pane)) agents.requireEnabled(pane.type);
+    store.panes.restore(pane, isViewPaneType(pane.type) ? 'end' : 'front');
+    return pane;
+  }
+
   /** Starts a pane with another agent from a summary of the conversation up to a reply. */
   async function fork(
     paneId: string,
@@ -132,7 +161,7 @@ export function paneService({
   ) {
     agents.requireEnabled(provider);
     const pane = store.pane(paneId);
-    if (!pane.projectId) throw Error('Select a project first.');
+    if (!pane.workspaceId) throw Error('Select a project first.');
     const index = pane.messages.findIndex(
       (message) => message.id === messageId,
     );
@@ -143,7 +172,7 @@ export function paneService({
       )
     ).trim();
     if (!summary) throw Error('Could not summarize this conversation.');
-    const forked = add(provider, store.project(pane.projectId));
+    const forked = add(provider, store.workspace(pane.workspaceId));
     const attachment = await agents.call(
       'attachText',
       forked.id,
@@ -162,7 +191,8 @@ export function paneService({
 
   function navigate(id: string, url: string) {
     const pane = store.pane(id);
-    if (pane.type !== 'browser') throw Error('Only a browser pane opens pages.');
+    if (pane.type !== 'browser')
+      throw Error('Only a browser pane opens pages.');
     if (pane.url !== url) store.panes.update(pane, { url });
   }
 
@@ -170,6 +200,7 @@ export function paneService({
     openPanesOf,
     add,
     archive,
+    restore,
     fork,
     rename,
     navigate,

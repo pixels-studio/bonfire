@@ -21,6 +21,7 @@ export function fakeStore(type: 'claude' | 'codex') {
   const pane: Pane = {
     id: 'pane',
     projectId: 'project',
+    workspaceId: 'workspace',
     type,
     title: 'Test',
     messages: [],
@@ -37,6 +38,15 @@ export function fakeStore(type: 'claude' | 'codex') {
     createdAt: 0,
     lastOpenedAt: 0,
   };
+  const workspace = {
+    id: 'workspace',
+    projectId: 'project',
+    name: 'main',
+    path: project.path,
+    main: true,
+    status: 'in_progress',
+    createdAt: 0,
+  };
   const state = {
     panes: [pane],
     layout: { paneIds: [pane.id] },
@@ -52,6 +62,7 @@ export function fakeStore(type: 'claude' | 'codex') {
     flush() {},
     pane: () => pane,
     project: () => project,
+    workspace: () => workspace,
   } as unknown as Store;
   return { pane, store };
 }

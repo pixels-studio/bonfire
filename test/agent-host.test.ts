@@ -3,6 +3,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
+import { mainWorkspaceOf } from '../shared/domain';
 import type { AssistantEvent, Pane } from '../shared/contracts';
 import {
   AGENT_HOST_STOPPED,
@@ -88,6 +89,7 @@ function setUp() {
     {
       id: 'pane',
       projectId: project.id,
+      workspaceId: mainWorkspaceOf(store.state, project.id)!.id,
       type: 'claude',
       title: 'New Conversation',
       messages: [],
@@ -259,6 +261,7 @@ test("the host's copy keeps its own changes until main's copy has them", () => {
   };
   const copy = (panes: (typeof fields & { threadId?: string })[]) => ({
     projects: [],
+    workspaces: [],
     connections: [],
     preferences: {},
     panes,
@@ -298,6 +301,7 @@ test("the host's copy is sent again only when the state changes, not when a conv
     {
       id: 'pane',
       projectId: project.id,
+      workspaceId: mainWorkspaceOf(store.state, project.id)!.id,
       type: 'claude',
       title: 'Pane',
       messages: [],
@@ -362,6 +366,7 @@ test("the host's own pane changes are confirmed, not sent back to it in a copy",
     {
       id: 'pane',
       projectId: project.id,
+      workspaceId: mainWorkspaceOf(store.state, project.id)!.id,
       type: 'claude',
       title: 'Pane',
       messages: [],
@@ -426,6 +431,7 @@ test('connections that did not change keep their objects in the host', () => {
   };
   const copy = (connections: (typeof connection)[]) => ({
     projects: [],
+    workspaces: [],
     connections: structuredClone(connections),
     preferences: {},
     panes: [],

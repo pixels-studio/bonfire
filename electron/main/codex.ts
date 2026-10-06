@@ -47,7 +47,7 @@ import type {
 import { codexLimits, type CodexRateLimits } from './limits';
 import { localMachine, type Machine, type PipedProcess } from './machines';
 import { CodexRpc, codexCommand, type CodexCommand } from './codex-rpc';
-import type { ProjectView } from './state';
+import type { WorkFolder } from './state';
 
 /** If Codex sends nothing for this long, the turn is assumed hung and ended. */
 const SILENCE_LIMIT_MS = 10 * 60_000;
@@ -105,7 +105,7 @@ export class CodexAssistant extends ChatAssistant {
   }
 
   protected async run(turn: Turn) {
-    const { pane, project, machine, input, attachments } = turn;
+    const { pane, folder, machine, input, attachments } = turn;
     const rpc = await this.connection(machine);
     const auto = turn.approvals === 'auto';
     const settings = {
@@ -113,7 +113,7 @@ export class CodexAssistant extends ChatAssistant {
       developerInstructions: this.store.preferences.simplifiedEnglish
         ? SIMPLIFIED_ENGLISH_INSTRUCTIONS
         : undefined,
-      cwd: project.path,
+      cwd: folder.path,
       // The sandbox keeps writes inside the project; "on-request" asks before leaving it.
       approvalPolicy: auto ? 'never' : 'on-request',
       approvalsReviewer: 'user',
@@ -196,15 +196,15 @@ export class CodexAssistant extends ChatAssistant {
     return models;
   }
 
-  /** Enabled skills for the project's folder: its own, the user's, plugins', and Codex's. */
+  /** Enabled skills for the workspace's folder: its own, the user's, plugins', and Codex's. */
   protected async listSkills(
-    project: ProjectView,
+    folder: WorkFolder,
     machine: Machine,
   ): Promise<Skill[]> {
     const rpc = await this.connection(machine);
     const { data } = await rpc.request<{ data: SkillsListEntry[] }>(
       'skills/list',
-      { cwds: [project.path] },
+      { cwds: [folder.path] },
     );
     const skills = new Map<string, Skill>();
     for (const entry of data)

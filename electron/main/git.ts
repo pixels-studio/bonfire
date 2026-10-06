@@ -1,20 +1,15 @@
-import type {
-  Branch,
-  Change,
-  GitHead,
-  GitStatus,
-} from '../../shared/contracts';
+import type { Change, GitHead, GitStatus } from '../../shared/contracts';
 import { localMachine, resolvePlace, type Place } from './machines';
 
 /** How long a clone may take before it is given up on. */
 const CLONE_TIMEOUT_MS = 15 * 60_000;
 
-/** Runs git in a folder, on whichever machine the folder is. */
-export function git(at: Place, args: string[]) {
+/** Runs git in a folder, on whichever machine the folder is, with `env` added. */
+export function git(at: Place, args: string[], env?: Record<string, string>) {
   const { machine, path } = resolvePlace(at);
   return machine.exec('git', args, {
     cwd: path,
-    env: { GIT_TERMINAL_PROMPT: '0' },
+    env: { GIT_TERMINAL_PROMPT: '0', ...env },
     // git is in the usual install folders, and runs after every file change.
     profile: false,
   });
@@ -184,27 +179,6 @@ async function untrackedLineCount(
   }
 }
 
-/** Local branches, then remote-tracking ones such as `origin/main`. */
-export async function branches(cwd: Place) {
-  try {
-    const output = await git(cwd, [
-      'for-each-ref',
-      '--format=%(refname)\t%(refname:short)',
-      'refs/heads',
-      'refs/remotes',
-    ]);
-    return output
-      .trim()
-      .split('\n')
-      .filter(Boolean)
-      .map((line) => line.split('\t'))
-      .filter(([fullName]) => !fullName.endsWith('/HEAD'))
-      .map(([, shortName]) => shortName);
-  } catch {
-    return [];
-  }
-}
-
 export function diff(cwd: Place, path: string) {
   return git(cwd, ['diff', 'HEAD', '--', path]).catch(() =>
     git(cwd, ['diff', '--', path]),
@@ -234,7 +208,8 @@ export async function discard(cwd: Place, path?: string) {
   );
   if (path === undefined) {
     if (hasHead) await git(cwd, ['reset', '--hard', 'HEAD']);
-    else await git(cwd, ['rm', '-r', '-f', '--cached', '--ignore-unmatch', '.']);
+    else
+      await git(cwd, ['rm', '-r', '-f', '--cached', '--ignore-unmatch', '.']);
     await git(cwd, ['clean', '-f', '-d']);
     return;
   }
@@ -266,69 +241,11 @@ export async function fetch(cwd: Place) {
 /** git's own explanation of a failure, without the command line it ran. */
 export function gitError(cause: unknown) {
   const { stderr = '' } = cause as { stderr?: string };
-  // git lists the files a switch would overwrite one per line, which reads poorly as a sentence.
-  const overwritten = /would be overwritten by checkout:\n((?:\t.*\n)+)/.exec(
-    stderr,
-  );
-  if (overwritten) {
-    const files = overwritten[1].trim().split(/\n\t/);
-    return Error(
-      `Switching would overwrite uncommitted changes to ${files.join(', ')}. Commit or stash them first.`,
-    );
-  }
   const lines = stderr
     .split('\n')
     .map((line) => line.replace(/^(error|fatal|hint): /, '').trim())
     .filter((line) => line && !line.startsWith('Aborting'));
   return lines.length ? Error(lines.join(' ')) : (cause as Error);
-}
-
-/** Local branches, most recently committed first. */
-export async function localBranches(cwd: Place): Promise<Branch[]> {
-  const output = await git(cwd, [
-    'for-each-ref',
-    '--sort=-committerdate',
-    '--format=%(refname:short)%00%(committerdate:unix)%00%(contents:subject)',
-    'refs/heads',
-  ]);
-  return output
-    .split('\n')
-    .filter(Boolean)
-    .map((line) => {
-      const [name, date, subject] = line.split('\0');
-      return { name, subject: subject ?? '', committedAt: Number(date) * 1000 };
-    });
-}
-
-/** Switches to `branch`, bringing uncommitted changes along unless they would conflict. */
-export async function switchBranch(cwd: Place, branch: string) {
-  await git(cwd, ['switch', '--no-guess', '--', branch]).catch((cause) => {
-    throw gitError(cause);
-  });
-}
-
-/**
- * Creates `name` from `base` and switches to it. The branch doesn't track `base`, so a
- * later push or pull never lands on the base branch by mistake.
- */
-export async function createBranch(cwd: Place, name: string, base: string) {
-  try {
-    await git(cwd, ['check-ref-format', '--branch', name]);
-  } catch {
-    throw Error(`“${name}” isn’t a valid branch name.`);
-  }
-  await git(cwd, ['switch', '--no-track', '--create', name, '--', base]).catch(
-    (cause) => {
-      throw gitError(cause);
-    },
-  );
-}
-
-/** Fast-forwards the checked-out branch to its upstream, refusing to merge. */
-export async function pull(cwd: Place) {
-  await git(cwd, ['pull', '--ff-only', '--quiet']).catch((cause) => {
-    throw gitError(cause);
-  });
 }
 
 /** What the folder has checked out; a new repository's branch has a name before any commit. */
@@ -415,4 +332,118 @@ export async function unpushedCount(cwd: Place) {
 /** Pushes the checked-out branch to a branch of the same name on origin and tracks it. */
 export async function pushBranch(cwd: Place) {
   await git(cwd, ['push', '--set-upstream', 'origin', 'HEAD']);
+}
+
+/** Runs git, failing with git's own explanation. */
+function gitOrExplain(at: Place, args: string[], env?: Record<string, string>) {
+  return git(at, args, env).catch((cause: unknown) => {
+    throw gitError(cause);
+  });
+}
+
+/** Whether the repository has the ref, such as `refs/heads/main`. */
+export function hasRef(cwd: Place, ref: string) {
+  return git(cwd, ['rev-parse', '--verify', '--quiet', ref]).then(
+    () => true,
+    () => false,
+  );
+}
+
+/**
+ * Adds a worktree at `path`: on a new `branch` from `base` when given one, else on the
+ * existing `branch`. The new branch doesn't track `base`, so a push never lands on it.
+ */
+export async function addWorktree(
+  repository: Place,
+  path: string,
+  branch: string,
+  base?: string,
+) {
+  await gitOrExplain(
+    repository,
+    base
+      ? ['worktree', 'add', '--no-track', '-b', branch, '--', path, base]
+      : ['worktree', 'add', '--', path, branch],
+  );
+}
+
+/** Removes the worktree at `path` and anything in it; one already gone is forgotten. */
+export async function removeWorktree(repository: Place, path: string) {
+  await git(repository, ['worktree', 'remove', '--force', '--', path]).catch(
+    () => git(repository, ['worktree', 'prune']),
+  );
+}
+
+export async function deleteBranch(repository: Place, branch: string) {
+  await gitOrExplain(repository, ['branch', '-D', '--', branch]);
+}
+
+export async function deleteRef(repository: Place, ref: string) {
+  await git(repository, ['update-ref', '-d', ref]);
+}
+
+/** Who a snapshot is by; it never leaves the repository, so the user's name isn't needed. */
+const SNAPSHOT_AUTHOR = {
+  GIT_AUTHOR_NAME: 'Bonfire',
+  GIT_AUTHOR_EMAIL: 'bonfire@localhost',
+  GIT_COMMITTER_NAME: 'Bonfire',
+  GIT_COMMITTER_EMAIL: 'bonfire@localhost',
+};
+
+/**
+ * Saves the working tree, uncommitted and untracked files included, as a commit on top of
+ * HEAD under `ref`. A separate index keeps the real one as it was; ignored files stay out.
+ */
+export async function saveWorkingTree(
+  cwd: Place,
+  ref: string,
+  message: string,
+) {
+  const index = (
+    await git(cwd, ['rev-parse', '--git-path', 'bonfire-snapshot-index'])
+  ).trim();
+  const env = { GIT_INDEX_FILE: index };
+  await gitOrExplain(cwd, ['read-tree', 'HEAD'], env);
+  await gitOrExplain(cwd, ['add', '--all'], env);
+  const tree = (await gitOrExplain(cwd, ['write-tree'], env)).trim();
+  const commit = (
+    await gitOrExplain(
+      cwd,
+      ['commit-tree', tree, '-p', 'HEAD', '-m', message],
+      SNAPSHOT_AUTHOR,
+    )
+  ).trim();
+  await gitOrExplain(cwd, ['update-ref', ref, commit]);
+}
+
+/**
+ * Puts the working tree back as `saveWorkingTree` saved it under `ref`, on a checkout of
+ * the commit it was saved on. Everything comes back uncommitted, as it was, but unstaged.
+ */
+export async function restoreWorkingTree(cwd: Place, ref: string) {
+  const deleted = (
+    await git(cwd, [
+      'diff',
+      '--name-only',
+      '--no-renames',
+      '--diff-filter=D',
+      '-z',
+      'HEAD',
+      ref,
+    ])
+  )
+    .split('\0')
+    .filter(Boolean);
+  // A snapshot with no files at all has nothing to check out, which git would refuse.
+  if ((await git(cwd, ['ls-tree', '--name-only', ref])).trim())
+    await gitOrExplain(cwd, ['checkout', ref, '--', '.']);
+  if (deleted.length)
+    await gitOrExplain(cwd, [
+      '--literal-pathspecs',
+      'rm',
+      '--quiet',
+      '--',
+      ...deleted,
+    ]);
+  await gitOrExplain(cwd, ['reset', '--quiet']);
 }

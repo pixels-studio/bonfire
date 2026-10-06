@@ -1,5 +1,5 @@
 import type { HTMLButtonAttributes } from 'svelte/elements';
-import type { ToolPaneType } from '$shared/contracts';
+import type { PaneType, ToolPaneType } from '$shared/contracts';
 
 export type PaneSize = 'full' | 'two-thirds' | 'half' | 'third';
 
@@ -14,8 +14,8 @@ export type PaneProps = {
   onrename: (title: string) => void;
 };
 
-/** What every panel (activity, insights, settings, shortcuts) is given; it has a fixed title. */
-export type PanelProps = Omit<PaneProps, 'onrename'>;
+/** What every panel (insights, settings, shortcuts) is given; it opens over the app. */
+export type PanelProps = { onclose: () => void };
 
 /** The tool panes, in the order the add menu lists them. */
 export const TOOL_PANES: { type: ToolPaneType; label: string; icon: string }[] =
@@ -28,6 +28,11 @@ export const TOOL_PANES: { type: ToolPaneType; label: string; icon: string }[] =
 
 export function toolPaneIcon(type: ToolPaneType) {
   return TOOL_PANES.find((pane) => pane.type === type)!.icon;
+}
+
+/** Any pane's icon: an agent's is its provider's logo, named after it. */
+export function paneIcon(type: PaneType) {
+  return TOOL_PANES.find((pane) => pane.type === type)?.icon ?? type;
 }
 
 export const PANE_SIZES: {
@@ -52,8 +57,10 @@ export const PANE_SIZES: {
   },
 ];
 
+/**
+ * The size of a pane that hasn't been resized, given how many share the strip with the
+ * launcher, which always takes a third: one pane takes the rest, more take a third each.
+ */
 export function defaultPaneSize(paneCount: number): PaneSize {
-  if (paneCount === 1) return 'full';
-  if (paneCount === 2) return 'half';
-  return 'third';
+  return paneCount === 1 ? 'two-thirds' : 'third';
 }

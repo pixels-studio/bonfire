@@ -12,7 +12,7 @@
   let {
     messages,
     paneId,
-    projectId,
+    workspaceId,
     expanded,
     inProgress = false,
     onviewChanges,
@@ -22,7 +22,7 @@
     /** The pane the turn belongs to, so its last reply can be forked into a new one. */
     paneId: string;
     /** The pane's project, so the turn's edited files can be looked up; unset for very old panes. */
-    projectId?: string;
+    workspaceId?: string;
     /** Keeps the turn as it streamed, rather than folding its work away. */
     expanded: boolean;
     /** The active turn can pause between messages without being finished. */
@@ -148,8 +148,8 @@
 {#each replies.slice(workLength) as message (message.id)}
   {@render entry(message)}
 {/each}
-{#if turnComplete && projectId && editedFilePaths.length}
-  <EditedFiles {projectId} paths={editedFilePaths} {onviewChanges} />
+{#if turnComplete && workspaceId && editedFilePaths.length}
+  <EditedFiles {workspaceId} paths={editedFilePaths} {onviewChanges} />
 {/if}
 {#if turnComplete && lastReply?.status === 'complete'}
   <TurnFooter message={lastReply} {paneId} />

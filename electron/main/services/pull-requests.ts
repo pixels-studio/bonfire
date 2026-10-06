@@ -50,7 +50,7 @@ function branchTitle(branch: string) {
   return words.charAt(0).toUpperCase() + words.slice(1);
 }
 
-/** Drafting, opening and acting on the pull request of a project's branch. */
+/** Drafting, opening and acting on the pull request of a workspace's branch. */
 export function pullRequestService({
   store,
   github,
@@ -59,14 +59,14 @@ export function pullRequestService({
   agents,
   toWindow,
 }: PullRequestOptions) {
-  async function draft(projectId: string): Promise<PullRequestDraft> {
-    const cwd = repository.folder(projectId);
+  async function draft(workspaceId: string): Promise<PullRequestDraft> {
+    const cwd = repository.folder(workspaceId);
     // Independent lookups go at once; over SSH each is a round trip. The status is the one
-    // the project's views share, as this runs whenever its files change.
+    // the workspace's views share, as this runs whenever its files change.
     const [currentBranch, base, changes] = await Promise.all([
       git.currentBranch(cwd),
       pullRequestBase(cwd),
-      repository.status(projectId),
+      repository.status(workspaceId),
     ]);
     const branch = currentBranch ?? '';
     const [commits, unpushed] = await Promise.all([
@@ -98,11 +98,11 @@ export function pullRequestService({
   }
 
   async function create(
-    projectId: string,
+    workspaceId: string,
     { title, body, commit }: PullRequestInput,
   ) {
-    const cwd = repository.folder(projectId);
-    const current = await draft(projectId);
+    const cwd = repository.folder(workspaceId);
+    const current = await draft(workspaceId);
     if (current.blocked) throw Error(current.blocked);
     if (commit && current.uncommitted) await git.commitAll(cwd, title);
     await git.pushBranch(cwd);
@@ -110,8 +110,8 @@ export function pullRequestService({
   }
 
   /** Hands a pull request action to a new agent pane; resolves with the pane's id. */
-  async function runAction(projectId: string, action: ActionId) {
-    const current = await draft(projectId);
+  async function runAction(workspaceId: string, action: ActionId) {
+    const current = await draft(workspaceId);
     if (action === 'push') {
       if (!current.branch) throw Error('Check out a branch to push.');
       if (!current.uncommitted && !current.unpushed)
@@ -119,7 +119,12 @@ export function pullRequestService({
     } else if (action === 'createPr' && current.blocked) {
       throw Error(current.blocked);
     }
-    const pane = panes.add(undefined, store.project(projectId), false, 'end');
+    const pane = panes.add(
+      undefined,
+      store.workspace(workspaceId),
+      false,
+      'end',
+    );
     // The turn runs on its own; its progress reaches the pane through events.
     void agents
       .send({
@@ -150,10 +155,10 @@ export function pullRequestService({
     create,
     runAction,
     open: async (
-      projectId: string,
+      workspaceId: string,
       openUrl: (url: string) => Promise<void>,
     ) => {
-      const pull = await github.pullRequest(repository.folder(projectId));
+      const pull = await github.pullRequest(repository.folder(workspaceId));
       if (pull) await openUrl(pull.url);
     },
   };

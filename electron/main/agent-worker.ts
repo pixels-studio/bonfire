@@ -69,7 +69,7 @@ export function startAgentWorker(
           ? main.call('imagePreviewOf', path, mimeType)
           : main.call('imagePreview', data, mimeType),
       ),
-      machineOf: (project) => machines.get(project.connectionId),
+      machineOf: (folder) => machines.get(folder.connectionId),
     },
   );
   const assistantFor = (paneId: string) => {

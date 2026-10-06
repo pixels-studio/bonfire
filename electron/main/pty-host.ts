@@ -32,9 +32,9 @@ export type Pty = {
 
 export type SpawnPty = (command: TerminalCommand) => Pty;
 
-/** Whose a terminal is. `script` runs a project's run script rather than a shell or CLI. */
+/** Whose a terminal is. `script` runs a run or setup script rather than a shell or CLI. */
 export type TerminalOwner = {
-  projectId: string;
+  workspaceId: string;
   paneId: string;
   type: TerminalCreateInput['type'] | 'script';
 };
@@ -134,8 +134,8 @@ export class PtyHost {
     if (record.exitCode === undefined) record.process.resize(cols, rows);
   }
 
-  closeProject(projectId: string) {
-    this.closeWhere((record) => record.projectId === projectId);
+  closeWorkspace(workspaceId: string) {
+    this.closeWhere((record) => record.workspaceId === workspaceId);
   }
 
   /** Ends the pane's terminals; their scrollback goes with them. */

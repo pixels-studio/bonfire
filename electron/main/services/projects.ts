@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import type {
   ProjectCloneInput,
   ProjectCreateInput,
+  ProjectSettingsInput,
 } from '../../../shared/contracts';
 import {
   cloneUrl,
@@ -15,6 +16,7 @@ import type { Filesystem } from '../filesystem';
 import * as git from '../git';
 import { localMachine, type Machines } from '../machines';
 import type { Store } from '../persistence';
+import { readBonfireConfig } from '../scripts';
 import type { Terminals } from '../terminal';
 import type { Panes } from './panes';
 
@@ -97,12 +99,34 @@ export function projectService({
     return create({ name, path });
   }
 
+  /**
+   * Removes the project from the app, with its workspaces and panes. Its folders stay on
+   * disk, worktrees included, as they may hold work.
+   */
   async function remove(id: string) {
     const project = store.project(id);
-    for (const pane of panes.openPanesOf(project)) panes.archive(pane);
-    terminals.closeProject(project.id);
-    await files.unwatch(project.id);
+    for (const workspace of store.state.workspaces) {
+      if (workspace.projectId !== project.id) continue;
+      for (const pane of panes.openPanesOf(workspace)) panes.archive(pane);
+      terminals.closeWorkspace(workspace.id);
+      await files.unwatch(workspace.id);
+    }
     store.projects.remove(project);
+  }
+
+  function update(id: string, input: ProjectSettingsInput) {
+    const project = store.project(id);
+    store.projects.update(project, {
+      setupScript: input.setupScript.trim() || undefined,
+      archiveScript: input.archiveScript.trim() || undefined,
+    });
+    return project;
+  }
+
+  /** What the project's `bonfire.json` asks for, in the project folder. */
+  function config(id: string) {
+    const project = store.project(id);
+    return readBonfireConfig(machines.get(project.connectionId), project.path);
   }
 
   return {
@@ -111,5 +135,7 @@ export function projectService({
     cloneFolder,
     open: (id: string) => store.projects.open(store.project(id)),
     remove,
+    update,
+    config,
   };
 }

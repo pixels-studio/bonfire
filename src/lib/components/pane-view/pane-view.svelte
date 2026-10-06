@@ -11,7 +11,7 @@
 
   let {
     pane,
-    projectId,
+    workspaceId,
     badge,
     onnavigate,
     onviewChanges,
@@ -19,7 +19,7 @@
     ...props
   }: PaneProps & {
     pane: Pane;
-    projectId: string;
+    workspaceId: string;
     /** An agent's status worth flagging on its icon. */
     badge?: PaneBadge;
     /** A browser pane moved to another page. */
@@ -39,14 +39,14 @@
     {...props}
   />
 {:else if pane.type === 'files'}
-  <FilesView {projectId} title={pane.title} {...props} />
+  <FilesView {workspaceId} title={pane.title} {...props} />
 {:else if pane.type === 'diff'}
-  <DiffView {projectId} title={pane.title} {selectedDiff} {...props} />
+  <DiffView {workspaceId} title={pane.title} {selectedDiff} {...props} />
 {:else if pane.type === 'browser'}
   <BrowserView title={pane.title} url={pane.url} {onnavigate} {...props} />
 {:else}
   <TerminalView
-    {projectId}
+    {workspaceId}
     paneId={pane.id}
     scriptId={pane.scriptId}
     title={pane.title}

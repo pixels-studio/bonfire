@@ -13,14 +13,14 @@
   import FileIcon from './file-icon.svelte';
 
   let {
-    projectId,
+    workspaceId,
     path,
     onclose,
     size,
     onresize,
     onclosepanel,
   }: {
-    projectId: string;
+    workspaceId: string;
     path: string;
     /** Closes the file, back to the tree. */
     onclose: () => void;
@@ -50,7 +50,7 @@
 
   async function load() {
     try {
-      const next = await window.bonfire.filesystem.readFile(projectId, path);
+      const next = await window.bonfire.filesystem.readFile(workspaceId, path);
       if (next !== content) content = next;
       error = '';
     } catch (cause) {
@@ -73,7 +73,7 @@
 
   onMount(() => {
     void load();
-    return watchFiles(projectId, load, { poll: false });
+    return watchFiles(workspaceId, load, { poll: false });
   });
 
   function lineTokens(index: number): Token[] {

@@ -91,10 +91,10 @@ test('npm workspaces run through --workspace', () =>
     },
   ));
 
-test('conductor.json and other stacks are detected', () =>
+test('bonfire.json and other stacks are detected', () =>
   withProject(
     {
-      'conductor.json': { scripts: { run: 'make serve' } },
+      'bonfire.json': { scripts: { run: 'make serve' } },
       'Cargo.toml': '[package]',
       Makefile: 'VAR := 1\nserve:\n\tcargo run\n',
     },

@@ -58,12 +58,6 @@ export const SHORTCUTS = define({
     scope: 'global',
     chords: [mod('i')],
   },
-  activity: {
-    group: 'Projects',
-    label: 'Activity',
-    scope: 'global',
-    chords: [mod('j')],
-  },
   run: {
     group: 'General',
     label: 'Run or stop the project',
@@ -82,17 +76,11 @@ export const SHORTCUTS = define({
     scope: 'global',
     chords: [mod('p')],
   },
-  switchBranch: {
+  newWorkspace: {
     group: 'Projects',
-    label: 'Switch branch',
+    label: 'New workspace',
     scope: 'global',
     chords: [mod('b')],
-  },
-  newBranch: {
-    group: 'Projects',
-    label: 'New branch',
-    scope: 'global',
-    chords: [mod('b', { shift: true })],
   },
   pullRequest: {
     group: 'Projects',
@@ -141,6 +129,12 @@ export const SHORTCUTS = define({
     label: 'Close pane',
     scope: 'global',
     chords: [mod('w', { shift: true })],
+  },
+  reopenPane: {
+    group: 'Panes',
+    label: 'Reopen closed pane',
+    scope: 'global',
+    chords: [mod('t', { shift: true })],
   },
   goToPane: {
     group: 'Panes',

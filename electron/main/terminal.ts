@@ -5,10 +5,9 @@ import type {
 } from '../../shared/contracts';
 import { isAssistantPane } from '../../shared/domain';
 import { HostProcess } from './host-process';
-import type { Machine, Program } from './machines';
+import { resolvePlace, scriptProgram, type Place } from './machines';
 import type { Store } from './persistence';
 import type { PtyHost } from './pty-host';
-import { defaultShell, isWindows } from './shell';
 
 /** The terminal host's methods, as main calls them. */
 type PtyMethods = Pick<
@@ -21,32 +20,20 @@ type PtyMethods = Pick<
   | 'write'
   | 'resize'
   | 'closePane'
-  | 'closeProject'
+  | 'closeWorkspace'
   | 'close'
 >;
 
 /** Whose a terminal the host runs is. */
-type Known = { paneId: string; projectId: string; type: string };
+type Known = { paneId: string; workspaceId: string; type: string };
 
 /** The exit code a terminal reports when the terminal host stopped under it. */
 const HOST_STOPPED_EXIT_CODE = -1;
 
-/**
- * Runs a command through the user's shell, so their PATH and version managers apply. Over
- * SSH, the remote login shell wraps it already.
- */
-function scriptProgram(machine: Machine, command: string): Program {
-  if (machine.remote) return { file: 'sh', args: ['-c', command] };
-  if (isWindows())
-    return { file: defaultShell(), args: ['-NoLogo', '-Command', command] };
-  // Interactive as well as login, as tools like nvm are often set up only in the rc file.
-  return { file: defaultShell(), args: ['-ilc', command] };
-}
-
 type TerminalOptions = {
   store: Store;
-  /** The machine the project's folder is on. */
-  machine: (projectId: string) => Machine;
+  /** The workspace's folder, on its machine. */
+  folder: (workspaceId: string) => Place;
   /** The bundled terminal host. */
   modulePath: string;
   /** A terminal's process ended. */
@@ -60,8 +47,8 @@ type TerminalOptions = {
 
 /**
  * The terminals, as main sees them. Their processes and output live in the terminal host;
- * main checks each request against the projects and panes, works out the command for the
- * project's machine, and supervises the host.
+ * main checks each request against the workspaces and panes, works out the command for the
+ * workspace's machine, and supervises the host.
  */
 export class Terminals {
   private readonly host: HostProcess<PtyMethods>;
@@ -82,21 +69,19 @@ export class Terminals {
    * Starts a PTY for the pane, or returns its running one. Any pane may run a
    * shell; an agent pane may also run its provider's CLI.
    */
-  async create({ projectId, paneId, type }: TerminalCreateInput) {
-    const { store } = this.options;
-    const project = store.project(projectId);
-    const pane = store.pane(paneId);
+  async create({ workspaceId, paneId, type }: TerminalCreateInput) {
+    const pane = this.options.store.pane(paneId);
     const cli = isAssistantPane(pane) ? pane.type : undefined;
-    if (pane.projectId !== project.id || (type !== 'shell' && type !== cli))
-      throw Error('Pane/project mismatch');
-    const machine = this.options.machine(project.id);
+    if (pane.workspaceId !== workspaceId || (type !== 'shell' && type !== cli))
+      throw Error('Pane/workspace mismatch');
+    const { machine, path } = resolvePlace(this.options.folder(workspaceId));
     const program =
       type === 'shell' ? machine.shell() : { file: type, args: [] };
-    const owner = { projectId: project.id, paneId, type };
+    const owner = { workspaceId, paneId, type };
     const id = await this.call(
       'create',
       owner,
-      machine.terminal(program, { cwd: project.path }),
+      machine.terminal(program, { cwd: path }),
     );
     // A relaunch replaces the pane's terminal of that kind, which the host has let go.
     this.forget(
@@ -108,17 +93,22 @@ export class Terminals {
   }
 
   /**
-   * Runs a command in the pane's terminal. Whatever it ran before is stopped first and
-   * waited for, so a restarted server finds its port free.
+   * Runs a command in the pane's terminal, in the workspace's folder with `env` added.
+   * Whatever it ran before is stopped first and waited for, so a restarted server finds its
+   * port free.
    */
-  async run(projectId: string, paneId: string, command: string) {
-    const project = this.options.store.project(projectId);
-    const machine = this.options.machine(project.id);
-    const owner = { projectId: project.id, paneId, type: 'script' as const };
+  async run(
+    workspaceId: string,
+    paneId: string,
+    command: string,
+    env?: Record<string, string>,
+  ) {
+    const { machine, path } = resolvePlace(this.options.folder(workspaceId));
+    const owner = { workspaceId, paneId, type: 'script' as const };
     const id = await this.call(
       'run',
       owner,
-      machine.terminal(scriptProgram(machine, command), { cwd: project.path }),
+      machine.terminal(scriptProgram(machine, command), { cwd: path, env }),
     );
     this.forget((known) => known.paneId === paneId);
     this.known.set(id, owner);
@@ -146,9 +136,10 @@ export class Terminals {
     return this.call('resize', id, cols, rows);
   }
 
-  closeProject(projectId: string) {
-    this.forget((known) => known.projectId === projectId);
-    this.whenRunning('closeProject', projectId);
+  /** Ends every terminal of the workspace. */
+  closeWorkspace(workspaceId: string) {
+    this.forget((known) => known.workspaceId === workspaceId);
+    this.whenRunning('closeWorkspace', workspaceId);
   }
 
   /** Ends the pane's terminals; their scrollback goes with them. */
@@ -172,7 +163,7 @@ export class Terminals {
   }
 
   /** Something only a running host has to do; one that isn't running has no terminals. */
-  private whenRunning(method: 'closePane' | 'closeProject', id: string) {
+  private whenRunning(method: 'closePane' | 'closeWorkspace', id: string) {
     if (this.host.running) this.host.call(method, id).catch(() => {});
   }
 

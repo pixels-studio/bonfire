@@ -15,7 +15,7 @@
   import { isMac } from '$lib/utils';
   import ShortcutKeys from './shortcut-keys.svelte';
 
-  let { dragHandle, size, onresize, onclose }: PanelProps = $props();
+  let { onclose }: PanelProps = $props();
 
   let query = $state('');
   let search = $state<HTMLInputElement | null>(null);
@@ -49,14 +49,7 @@
   role="region"
   aria-label="Keyboard shortcuts"
 >
-  <PaneHeader
-    title="Keyboard shortcuts"
-    icon="keyboard"
-    {dragHandle}
-    {size}
-    {onresize}
-    {onclose}
-  />
+  <PaneHeader title="Keyboard shortcuts" icon="keyboard" {onclose} />
   <div class="shrink-0 px-4 pb-4">
     <div class="relative">
       <Search

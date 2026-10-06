@@ -56,8 +56,8 @@ test('extra modifiers pick a different shortcut', () => {
     );
   assert.equal(mac('n', 'KeyN'), 'newConversation');
   assert.equal(mac('N', 'KeyN', true), 'newOtherAgent');
-  assert.equal(mac('b', 'KeyB'), 'switchBranch');
-  assert.equal(mac('B', 'KeyB', true), 'newBranch');
+  assert.equal(mac('b', 'KeyB'), 'newWorkspace');
+  assert.equal(mac('T', 'KeyT', true), 'reopenPane');
   assert.equal(mac('p', 'KeyP'), 'switchProject');
   assert.equal(mac('P', 'KeyP', true), 'pullRequest');
   assert.equal(mac('w', 'KeyW'), undefined);
@@ -133,18 +133,18 @@ test('no two shortcuts share a chord', () => {
 });
 
 test('keycaps are symbols on macOS and words elsewhere', () => {
-  assert.deepEqual(chordKeys(SHORTCUTS.newBranch.chords[0], true), [
+  assert.deepEqual(chordKeys(SHORTCUTS.reopenPane.chords[0], true), [
     '⌘',
     '⇧',
-    'B',
+    'T',
   ]);
-  assert.deepEqual(chordKeys(SHORTCUTS.newBranch.chords[0], false), [
+  assert.deepEqual(chordKeys(SHORTCUTS.reopenPane.chords[0], false), [
     'Ctrl',
     'Shift',
-    'B',
+    'T',
   ]);
-  assert.equal(shortcutText('newBranch', true), '⌘⇧B');
-  assert.equal(shortcutText('newBranch', false), 'Ctrl+Shift+B');
+  assert.equal(shortcutText('reopenPane', true), '⌘⇧T');
+  assert.equal(shortcutText('reopenPane', false), 'Ctrl+Shift+T');
   assert.deepEqual(shortcutKeys('stop', true), [['Esc']]);
   assert.deepEqual(shortcutKeys('goToPane', true), [['⌘', '1–9']]);
 });

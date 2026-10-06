@@ -98,86 +98,67 @@ test('a missing project on screen falls back to the first', () => {
   assert.equal(state.lastProjectId, projectId);
 });
 
-test('branches are created, listed, and switched with uncommitted work', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'bonfire-branches-'));
+test('a worktree is made on a new branch, and its uncommitted work saved and put back', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'bonfire-worktrees-'));
   const run = (cwd: string, ...args: string[]) =>
     execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
   try {
-    const remote = join(root, 'remote.git');
     const repository = join(root, 'repo');
-    execFileSync('git', ['init', '-q', '--bare', '-b', 'main', remote]);
+    const worktree = join(root, 'worktrees', 'fuji');
     execFileSync('git', ['init', '-q', '-b', 'main', repository]);
     run(repository, 'config', 'user.email', 'test@example.com');
     run(repository, 'config', 'user.name', 'Test');
-    assert.deepEqual(await git.head(repository), {
-      isGit: true,
-      branch: 'main',
-    });
     await writeFile(join(repository, 'readme.md'), 'hi\n');
+    await writeFile(join(repository, 'gone.md'), 'bye\n');
+    await writeFile(join(repository, '.gitignore'), 'ignored.txt\n');
     run(repository, 'add', '.');
     run(repository, 'commit', '-q', '-m', 'init');
-    run(repository, 'remote', 'add', 'origin', remote);
-    run(repository, 'push', '-q', '-u', 'origin', 'main');
 
-    // Uncommitted work comes along to a new branch, which doesn't track its base.
-    await writeFile(join(repository, 'readme.md'), 'changed\n');
-    await git.createBranch(repository, 'feature/a', 'origin/main');
-    assert.equal(await git.currentBranch(repository), 'feature/a');
-    assert.equal(
-      await readFile(join(repository, 'readme.md'), 'utf8'),
-      'changed\n',
-    );
-    assert.throws(() => run(repository, 'rev-parse', '@{upstream}'));
-    run(repository, 'commit', '-q', '-am', 'Change readme');
+    // A new branch from the base, which it doesn't track.
+    await git.addWorktree(repository, worktree, 'me/fuji', 'main');
+    assert.equal(await git.currentBranch(worktree), 'me/fuji');
+    assert.throws(() => run(worktree, 'rev-parse', '@{upstream}'));
+    assert(await git.hasRef(repository, 'refs/heads/me/fuji'));
     await assert.rejects(
-      () => git.createBranch(repository, 'bad name', 'main'),
-      /isn’t a valid branch name/,
-    );
-    await assert.rejects(
-      () => git.createBranch(repository, 'feature/a', 'main'),
+      () => git.addWorktree(repository, join(root, 'other'), 'me/fuji', 'main'),
       /already exists/,
     );
 
-    // Changes that would be overwritten stop the switch, in git's words.
-    await writeFile(join(repository, 'readme.md'), 'conflicting\n');
-    await assert.rejects(
-      () => git.switchBranch(repository, 'main'),
-      (cause: Error) =>
-        cause.message ===
-        'Switching would overwrite uncommitted changes to readme.md. Commit or stash them first.',
-    );
-    assert.equal(await git.currentBranch(repository), 'feature/a');
-    run(repository, 'checkout', '-q', '--', 'readme.md');
-    await git.switchBranch(repository, 'main');
-    assert.equal(await git.currentBranch(repository), 'main');
+    // Edits, a new file, a deletion and a staged change are saved; ignored files aren't.
+    await writeFile(join(worktree, 'readme.md'), 'changed\n');
+    await writeFile(join(worktree, 'new.md'), 'new\n');
+    await writeFile(join(worktree, 'ignored.txt'), 'local\n');
+    run(worktree, 'rm', '-q', 'gone.md');
+    const ref = 'refs/bonfire-archive/test';
+    await git.saveWorkingTree(worktree, ref, 'Archive');
+    assert.equal(run(worktree, 'diff', '--cached', '--name-only'), 'gone.md');
+    await git.removeWorktree(repository, worktree);
+    await assert.rejects(() => readFile(join(worktree, 'readme.md')));
+    assert.equal(run(repository, 'show', `${ref}:new.md`), 'new');
+    assert.throws(() => run(repository, 'show', `${ref}:ignored.txt`));
 
-    const branches = await git.localBranches(repository);
-    assert.deepEqual(branches.map(({ name }) => name).sort(), [
-      'feature/a',
-      'main',
-    ]);
-    const feature = branches.find(({ name }) => name === 'feature/a')!;
-    assert.equal(feature.subject, 'Change readme');
-    assert(feature.committedAt > Date.now() - 60_000);
-
-    // Pulling only fast-forwards.
-    const clone = join(root, 'clone');
-    execFileSync('git', ['clone', '-q', remote, clone]);
-    run(clone, 'config', 'user.email', 'test@example.com');
-    run(clone, 'config', 'user.name', 'Test');
-    await writeFile(join(clone, 'new.md'), 'new\n');
-    run(clone, 'add', '.');
-    run(clone, 'commit', '-q', '-m', 'Merged elsewhere');
-    run(clone, 'push', '-q');
-    await git.pull(repository);
+    // Checked out again, the work comes back uncommitted and unstaged.
+    await git.addWorktree(repository, worktree, 'me/fuji');
+    await git.restoreWorkingTree(worktree, ref);
     assert.equal(
-      run(repository, 'log', '-1', '--format=%s'),
-      'Merged elsewhere',
+      await readFile(join(worktree, 'readme.md'), 'utf8'),
+      'changed\n',
+    );
+    assert.equal(await readFile(join(worktree, 'new.md'), 'utf8'), 'new\n');
+    await assert.rejects(() => readFile(join(worktree, 'gone.md')));
+    assert.equal(run(worktree, 'diff', '--cached', '--name-only'), '');
+    assert.deepEqual(
+      run(worktree, 'status', '--porcelain')
+        .split('\n')
+        .map((line) => line.trim()),
+      ['D gone.md', 'M readme.md', '?? new.md'],
     );
 
-    run(repository, 'checkout', '-q', '--detach');
-    assert.deepEqual(await git.head(repository), { isGit: true });
-    assert.deepEqual(await git.head(root), { isGit: false });
+    await git.removeWorktree(repository, worktree);
+    await git.deleteBranch(repository, 'me/fuji');
+    await git.deleteRef(repository, ref);
+    assert.equal(await git.hasRef(repository, 'refs/heads/me/fuji'), false);
+    assert.equal(await git.hasRef(repository, ref), false);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

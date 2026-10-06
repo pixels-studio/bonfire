@@ -8,11 +8,11 @@
   import type { Change } from '$shared/contracts';
 
   let {
-    projectId,
+    workspaceId,
     paths,
     onviewChanges,
   }: {
-    projectId: string;
+    workspaceId: string;
     paths: string[];
     onviewChanges: (path?: string) => void;
   } = $props();
@@ -27,7 +27,7 @@
   async function load() {
     const token = ++generation;
     try {
-      const next = await window.bonfire.git.changesAmong(projectId, paths);
+      const next = await window.bonfire.git.changesAmong(workspaceId, paths);
       if (token === generation) changes = next;
     } catch (cause) {
       if (token === generation)

@@ -27,6 +27,27 @@ function project(lastOpenedAt = 0): Project {
   };
 }
 
+/** Opens the project with a worktree on screen, which is where panes are added. */
+function openWithWorktree(
+  store: Store,
+  item: ReturnType<Store['projects']['add']>,
+) {
+  store.workspaces.add({
+    id: uuid(),
+    projectId: item.id,
+    name: 'ember',
+    branch: 'ember',
+    path: '/tmp/ember',
+    main: false,
+    status: 'in_progress',
+    createdAt: 1,
+  });
+  const worktree = store.state.workspaces.find(
+    ({ projectId, main }) => projectId === item.id && !main,
+  )!;
+  store.workspaces.open(worktree);
+}
+
 function pane(projectId: string): Pane {
   return {
     id: uuid(),
@@ -178,6 +199,7 @@ test('every change schedules a save', async (t) => {
 test('a project takes terminal panes up to the WebGL limit, and other panes past it', () => {
   const store = newStore();
   const item = store.projects.add(project());
+  openWithWorktree(store, item);
   store.projects.open(item);
   const panes = paneService({
     store,
@@ -198,6 +220,7 @@ test('a project takes terminal panes up to the WebGL limit, and other panes past
 test('an agent pane can open after the view panes while ordinary agents open first', () => {
   const store = newStore();
   const item = store.projects.add(project());
+  openWithWorktree(store, item);
   store.projects.open(item);
   const panes = paneService({
     store,
@@ -215,4 +238,80 @@ test('an agent pane can open after the view panes while ordinary agents open fir
     view.id,
     action.id,
   ]);
+});
+
+function fakePaneService(store: Store) {
+  return paneService({
+    store,
+    agents: { requireEnabled() {}, discard() {} } as unknown as Agents,
+    terminals: { closePane() {} } as unknown as Terminals,
+    scripts: () => ({ forgetPane() {} }) as unknown as Scripts,
+    emit() {},
+  });
+}
+
+test('a closed pane reopens where a new one of its kind would, and a view pane only once', () => {
+  const store = newStore();
+  const item = store.projects.add(project());
+  openWithWorktree(store, item);
+  store.projects.open(item);
+  const panes = fakePaneService(store);
+  const files = panes.add('files');
+  const closed = panes.add();
+  const other = panes.add();
+  panes.archive(closed);
+  panes.archive(files);
+  assert.equal(typeof closed.closedAt, 'number');
+
+  assert.equal(panes.restore(closed), closed);
+  assert.equal(closed.archived, false);
+  assert.equal('closedAt' in closed, false);
+  assert.deepEqual(store.state.layout.paneIds, [closed.id, other.id]);
+
+  assert.equal(panes.restore(files), files);
+  assert.deepEqual(store.state.layout.paneIds, [closed.id, other.id, files.id]);
+
+  // Another files pane was opened since this one closed, so it stays closed.
+  panes.archive(files);
+  const reopened = panes.add('files');
+  assert.equal(panes.restore(files), reopened);
+  assert.equal(files.archived, true);
+});
+
+test('a run script pane is not reopened', () => {
+  const store = newStore();
+  const item = store.projects.add(project());
+  store.projects.open(item);
+  const panes = fakePaneService(store);
+  const script = store.panes.add(
+    { ...pane(item.id), type: 'terminal', scriptId: uuid() },
+    'end',
+  );
+  panes.archive(script);
+  assert.throws(() => panes.restore(script), /Run the script again/);
+});
+
+test('a reopened pane gets back the conversation left on disk, its cut-off turn settled', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'bonfire-state-'));
+  const store = new Store(directory);
+  const item = store.projects.add(project());
+  const closed = store.panes.add(pane(item.id), 'front');
+  store.panes.putMessage(closed, {
+    id: 'm',
+    role: 'assistant',
+    kind: 'text',
+    text: 'Half a reply',
+    status: 'streaming',
+  });
+  store.panes.archive(closed);
+  store.flush();
+  await store.settled();
+
+  const reopened = new Store(directory);
+  const saved = reopened.pane(closed.id);
+  assert.deepEqual(saved.messages, []);
+  reopened.panes.restore(saved, 'front');
+  assert.equal(saved.messages.length, 1);
+  assert.equal(saved.messages[0].status, 'complete');
+  assert.deepEqual(reopened.state.layout.paneIds, [closed.id]);
 });

@@ -13,11 +13,11 @@
   import type { TerminalEvent } from '$shared/contracts';
 
   let {
-    projectId,
+    workspaceId,
     paneId,
     scriptId,
   }: {
-    projectId: string;
+    workspaceId: string;
     paneId: string;
     /** Shows the run script's terminal instead of starting a shell. */
     scriptId?: string;
@@ -142,7 +142,7 @@
     error = '';
     try {
       const id = await window.bonfire.terminal.create({
-        projectId,
+        workspaceId,
         paneId,
         type: 'shell',
       });

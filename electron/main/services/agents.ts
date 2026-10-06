@@ -42,6 +42,8 @@ type AgentOptions = {
   openUrl: (url: string) => Promise<void>;
   /** Sends an event to the window and whatever else follows turns. */
   emit: (event: AssistantEvent) => void;
+  /** A workspace changed, such as being named after its first conversation. */
+  workspacesChanged?: () => void;
   log: (message: string) => void;
   /** The bundled agent host. */
   modulePath: string;
@@ -60,6 +62,7 @@ export function agentService({
   chooseImage,
   openUrl,
   emit,
+  workspacesChanged,
   log,
   modulePath,
   connect = (setup) =>
@@ -155,11 +158,23 @@ export function agentService({
 
   /** Notes the branch the conversation is about to work on, to spot its pull request merging. */
   async function recordBranch(pane: PaneView) {
-    if (!pane.projectId) return;
-    const name = await git.currentBranch(repository.folder(pane.projectId));
+    if (!pane.workspaceId) return;
+    const name = await git.currentBranch(repository.folder(pane.workspaceId));
     if (!name) store.panes.update(pane, { workBranch: undefined });
     else if (pane.workBranch?.name !== name)
       store.panes.update(pane, { workBranch: { name, since: Date.now() } });
+  }
+
+  /**
+   * A workspace is called after its first conversation: the pane's title, while the
+   * workspace has the title `replacing` (none, at first). One the user renamed keeps its name.
+   */
+  function nameWorkspace(pane: PaneView, title: string, replacing?: string) {
+    if (!pane.workspaceId) return;
+    const workspace = store.workspace(pane.workspaceId);
+    if (workspace.main || workspace.title !== replacing) return;
+    store.workspaces.update(workspace, { title });
+    workspacesChanged?.();
   }
 
   /** Replaces the placeholder title taken from the first message with a generated one. */
@@ -175,6 +190,7 @@ export function agentService({
       if (!title || pane.archived || pane.title !== placeholder) return;
       store.panes.update(pane, { title });
       emit({ paneId: pane.id, type: 'title', title });
+      nameWorkspace(pane, title, placeholder);
     } catch (cause) {
       // The placeholder is a fine title, so a failure is only worth a log line.
       console.warn(`Could not name a conversation: ${errorMessage(cause)}`);
@@ -189,11 +205,11 @@ export function agentService({
     const naming = !pane.messages.length && isDefaultTitle(pane.title);
     await recordBranch(pane);
     const turn = client.send(input);
-    if (naming)
-      void nameConversation(
-        pane,
-        withoutMarkers(promptText(input.text, input.skills)),
-      );
+    if (naming) {
+      const text = withoutMarkers(promptText(input.text, input.skills));
+      nameWorkspace(pane, titleFrom(text));
+      void nameConversation(pane, text);
+    }
     return turn;
   }
 

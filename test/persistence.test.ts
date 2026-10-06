@@ -15,6 +15,7 @@ import { test } from 'node:test';
 import {
   Store,
   settleLayout,
+  settleWorkspaces,
   stateForWindow,
 } from '../electron/main/persistence';
 import type { State } from '../shared/contracts';
@@ -308,9 +309,10 @@ test('an older version run afterwards neither loses nor hides conversations', ()
   );
 });
 
-test('a project keeps only its first files and code diff panes, where they sit', () => {
-  const view = (id: string, projectId: string, type: string) => ({
-    ...pane(id, projectId, []),
+test('a workspace keeps only its first files and code diff panes, where they sit', () => {
+  const view = (id: string, workspaceId: string, type: string) => ({
+    ...pane(id, 'project', []),
+    workspaceId,
     type,
   });
   const state = {
@@ -347,13 +349,22 @@ test('a project keeps only its first files and code diff panes, where they sit',
   assert.ok(state.panes.find(({ id }) => id === 'files-again')!.archived);
 });
 
-test('the window gets conversations only for the open panes of the project on screen', () => {
-  const shown = pane('shown', 'a', [message('kept')]);
+test('the window gets conversations only for the open panes of the workspace on screen', () => {
+  const inWorkspace = (id: string, workspaceId: string, archived = false) => ({
+    ...pane(id, 'a', [message(id)], archived),
+    workspaceId,
+  });
+  const shown = inWorkspace('shown', 'feature');
   const state = {
+    projects: [{ id: 'a', lastWorkspaceId: 'feature' }],
+    workspaces: [
+      { id: 'main', projectId: 'a', main: true },
+      { id: 'feature', projectId: 'a', main: false },
+    ],
     panes: [
       shown,
-      pane('closed', 'a', [message('archived')], true),
-      pane('elsewhere', 'b', [message('other project')]),
+      inWorkspace('closed', 'feature', true),
+      inWorkspace('elsewhere', 'main'),
     ],
     lastProjectId: 'a',
   } as unknown as State;
@@ -451,4 +462,30 @@ test('saves reuse finished messages, yet write replaced and streaming ones as th
     JSON.parse(read()).map(({ text }: { text: string }) => text),
     ['first', 'replaced', 'growing'],
   );
+});
+
+test('panes from before workspaces, or of one that is gone, work in the project folder', () => {
+  const state = {
+    projects: [
+      { id: 'a', path: '/a', lastWorkspaceId: 'gone' },
+      { id: 'b', path: '/b' },
+    ],
+    workspaces: [{ id: 'b-main', projectId: 'b', main: true }],
+    panes: [
+      { id: 'old', projectId: 'a' },
+      { id: 'lost', projectId: 'b', workspaceId: 'gone' },
+      { id: 'kept', projectId: 'b', workspaceId: 'b-main' },
+    ],
+  } as unknown as State;
+  assert.equal(settleWorkspaces(state), true);
+  const aMain = state.workspaces.find(
+    (item) => item.projectId === 'a' && item.main,
+  )!;
+  assert.equal(aMain.path, '/a');
+  assert.deepEqual(
+    state.panes.map(({ workspaceId }) => workspaceId),
+    [aMain.id, 'b-main', 'b-main'],
+  );
+  assert.equal(state.projects[0].lastWorkspaceId, undefined);
+  assert.equal(settleWorkspaces(state), false, 'nothing is left to settle');
 });

@@ -11,7 +11,10 @@ function showError(cause: unknown) {
   toast(errorMessage(cause), { variant: 'error', duration: 0 });
 }
 
-/** The run scripts of the project on screen, and their processes, kept current while watched. */
+/**
+ * The run scripts of the project on screen, and their processes in the workspace on screen,
+ * kept current while watched.
+ */
 class ScriptsStore {
   /** `undefined` until loaded. */
   list = $state<RunScript[]>();
@@ -25,6 +28,7 @@ class ScriptsStore {
     this.list?.find(({ id }) => id === this.selectedId) ?? this.list?.[0],
   );
   private projectId?: string;
+  private workspaceId?: string;
   private generation = 0;
 
   /** Told of the pane a script runs in, to bring it on screen. */
@@ -34,28 +38,29 @@ class ScriptsStore {
   /** Told when panes changed, such as a deleted script's pane closing. */
   onPanesChanged?: () => void | Promise<void>;
 
-  /** Follows a project, or none; returns what stops it. */
-  watch(projectId: string | undefined) {
-    this.projectId = projectId;
+  /** Follows a workspace of a project, or none; returns what stops it. */
+  watch(workspace: { id: string; projectId: string } | undefined) {
+    this.projectId = workspace?.projectId;
+    this.workspaceId = workspace?.id;
     this.list = undefined;
     this.selectedId = undefined;
     this.runs = {};
     this.pending = {};
-    if (!projectId) return;
+    if (!workspace) return;
     void this.reload();
     return window.bonfire.scripts.onRun((run) => {
-      if (run.projectId === this.projectId) this.runs[run.paneId] = run;
+      if (run.workspaceId === this.workspaceId) this.runs[run.paneId] = run;
     });
   }
 
   async reload() {
-    const projectId = this.projectId;
-    if (!projectId) return;
+    const { projectId, workspaceId } = this;
+    if (!projectId || !workspaceId) return;
     const token = ++this.generation;
     try {
       const [{ scripts, selectedId }, runs] = await Promise.all([
         window.bonfire.scripts.list(projectId),
-        window.bonfire.scripts.runs(projectId),
+        window.bonfire.scripts.runs(workspaceId),
       ]);
       if (token !== this.generation) return;
       this.list = scripts;
@@ -87,12 +92,12 @@ class ScriptsStore {
   }
 
   async run(scriptId: string) {
-    const projectId = this.projectId;
-    if (!projectId || this.pending[scriptId]) return;
+    const workspaceId = this.workspaceId;
+    if (!workspaceId || this.pending[scriptId]) return;
     this.pending[scriptId] = true;
     this.selectedId = scriptId;
     try {
-      const paneId = await window.bonfire.scripts.run(projectId, scriptId);
+      const paneId = await window.bonfire.scripts.run(workspaceId, scriptId);
       await this.onPane?.(paneId);
     } catch (cause) {
       showError(cause);
@@ -101,7 +106,7 @@ class ScriptsStore {
     }
   }
 
-  /** Scripts of the project that are running now. */
+  /** Scripts of the project running in the workspace now. */
   readonly running = $derived(
     (this.list ?? []).filter((script) =>
       Object.values(this.runs).some(
@@ -117,17 +122,17 @@ class ScriptsStore {
     void this.run(this.selected.id);
   }
 
-  /** Stops every running script of the project at once. */
+  /** Stops every running script of the workspace at once. */
   async stopAll() {
     await Promise.all(this.running.map(({ id }) => this.stop(id)));
   }
 
   async stop(scriptId: string) {
-    const projectId = this.projectId;
-    if (!projectId || this.pending[scriptId]) return;
+    const workspaceId = this.workspaceId;
+    if (!workspaceId || this.pending[scriptId]) return;
     this.pending[scriptId] = true;
     try {
-      await window.bonfire.scripts.stop(projectId, scriptId);
+      await window.bonfire.scripts.stop(workspaceId, scriptId);
     } catch (cause) {
       showError(cause);
     } finally {

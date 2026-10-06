@@ -71,6 +71,18 @@ export interface Machine {
   readonly path: typeof posix;
 }
 
+/**
+ * Runs a command through the user's shell, so their PATH and version managers apply. Over
+ * SSH, the remote login shell wraps it already.
+ */
+export function scriptProgram(machine: Machine, command: string): Program {
+  if (machine.remote) return { file: 'sh', args: ['-c', command] };
+  if (isWindows())
+    return { file: defaultShell(), args: ['-NoLogo', '-Command', command] };
+  // Interactive as well as login, as tools like nvm are often set up only in the rc file.
+  return { file: defaultShell(), args: ['-ilc', command] };
+}
+
 /** A folder on some machine; a bare path is on this computer. */
 export type Place = string | { machine: Machine; path: string };
 

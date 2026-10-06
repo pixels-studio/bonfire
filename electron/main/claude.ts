@@ -44,7 +44,7 @@ import { Channel } from './channel';
 import { claudeLimits } from './limits';
 import type { Machine, PipedProcess } from './machines';
 import { clipOutput, partialToolInput, toolInput } from './tool-text';
-import type { PaneView, ProjectView } from './state';
+import type { PaneView, WorkFolder } from './state';
 
 const execFileAsync = promisify(execFile);
 
@@ -112,10 +112,10 @@ export class ClaudeAssistant extends ChatAssistant {
   }
 
   protected async run(turn: Turn) {
-    const { pane, project, machine, input, attachments, controller } = turn;
+    const { pane, folder, machine, input, attachments, controller } = turn;
     const { claudeOutputStyle, simplifiedEnglish } = this.store.preferences;
     const options: Options = {
-      cwd: project.path,
+      cwd: folder.path,
       resume: pane.threadId || undefined,
       ...modelOptions(input.model),
       thinking: THINKING[input.reasoningEffort],
@@ -188,11 +188,8 @@ export class ClaudeAssistant extends ChatAssistant {
     );
   }
 
-  /** The CLI's skills and prompt commands: the user's, the project's, plugins', and its own. */
-  protected listSkills(
-    project: ProjectView,
-    machine: Machine,
-  ): Promise<Skill[]> {
+  /** The CLI's skills and prompt commands: the user's, the folder's, plugins', and its own. */
+  protected listSkills(folder: WorkFolder, machine: Machine): Promise<Skill[]> {
     return this.withIdleSession(
       async (run) =>
         (await run.supportedCommands())
@@ -207,7 +204,7 @@ export class ClaudeAssistant extends ChatAssistant {
             argumentHint: argumentHint || undefined,
           })),
       {
-        cwd: project.path,
+        cwd: folder.path,
         settingSources: ['user', 'project', 'local'],
         spawnClaudeCodeProcess: remoteSpawner(machine),
       },

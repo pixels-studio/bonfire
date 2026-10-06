@@ -65,7 +65,11 @@ function setUp(endsOnInterrupt = true) {
 }
 
 const shell: TerminalCommand = { file: 'zsh', args: [], cwd: '/tmp', env: {} };
-const owner = { projectId: 'project', paneId: 'pane', type: 'shell' as const };
+const owner = {
+  workspaceId: 'workspace',
+  paneId: 'pane',
+  type: 'shell' as const,
+};
 
 test("a pane's running shell is reused, and one that exited is replaced and forgotten", () => {
   const { host, spawned } = setUp();
@@ -134,7 +138,7 @@ test('closing a pane or project ends and forgets their terminals', () => {
   assert.equal(spawned[1].killed, true);
   assert.throws(() => host.snapshot(closed), /Terminal not found/);
   assert.equal(host.snapshot(kept).exitCode, undefined);
-  host.closeProject('project');
+  host.closeWorkspace('workspace');
   assert.equal(spawned[0].killed, true);
   assert.throws(() => host.snapshot(kept), /Terminal not found/);
 });

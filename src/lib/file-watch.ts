@@ -6,27 +6,27 @@ const REMOTE_POLL_MS = 5000;
 
 type ChangeKind = FileChangeEvent['kind'];
 
-/** Main watches each project once, for every view of it, and stops with the last. */
+/** Main watches each workspace once, for every view of it, and stops with the last. */
 const watching = new Map<string, { views: number; live: Promise<boolean> }>();
 
 /**
- * Calls `onchange` when main reports one of `kinds` changing in the project. `live` settles
+ * Calls `onchange` when main reports one of `kinds` changing in the workspace. `live` settles
  * on whether main reports changes at all; remote folders it can't, so those need checking
  * back instead. Returns what stops watching.
  */
-export function watchProject(
-  projectId: string,
+export function watchWorkspace(
+  workspaceId: string,
   kinds: ChangeKind[],
   onchange: (kind: ChangeKind) => void,
 ) {
-  const watch = watching.get(projectId) ?? {
+  const watch = watching.get(workspaceId) ?? {
     views: 0,
-    live: window.bonfire.filesystem.watch(projectId),
+    live: window.bonfire.filesystem.watch(workspaceId),
   };
-  watching.set(projectId, watch);
+  watching.set(workspaceId, watch);
   watch.views++;
   const unsubscribe = window.bonfire.filesystem.onChange((event) => {
-    if (event.projectId === projectId && kinds.includes(event.kind))
+    if (event.workspaceId === workspaceId && kinds.includes(event.kind))
       onchange(event.kind);
   });
   let stopped = false;
@@ -37,18 +37,18 @@ export function watchProject(
       stopped = true;
       unsubscribe();
       if (--watch.views) return;
-      watching.delete(projectId);
-      void window.bonfire.filesystem.unwatch(projectId);
+      watching.delete(workspaceId);
+      void window.bonfire.filesystem.unwatch(workspaceId);
     },
   };
 }
 
 /**
- * Keeps a view of the project's files current with `load`: when they change, and every few
+ * Keeps a view of the workspace's files current with `load`: when they change, and every few
  * seconds in a remote folder unless `poll` is off. Returns what stops it.
  */
 export function watchFiles(
-  projectId: string,
+  workspaceId: string,
   load: () => unknown,
   {
     poll = true,
@@ -56,7 +56,7 @@ export function watchFiles(
   }: { poll?: boolean; onerror?: (cause: unknown) => void } = {},
 ) {
   const refresher = new Refresher(load);
-  const watch = watchProject(projectId, ['files'], () =>
+  const watch = watchWorkspace(workspaceId, ['files'], () =>
     refresher.invalidate(),
   );
   watch.live.then(

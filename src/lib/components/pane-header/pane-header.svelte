@@ -36,7 +36,6 @@
     size,
     onresize,
     onclose,
-    resizable = true,
   }: {
     title: string;
     /** Shown before the title. */
@@ -59,11 +58,10 @@
     menuItems?: Snippet;
     /** Lets the title be renamed by double-clicking it; fixed titles have none. */
     onrename?: (title: string) => void;
-    size: PaneSize;
-    onresize: (size: PaneSize) => void;
+    /** The pane's size, which its menu switches; panels that don't resize have none. */
+    size?: PaneSize;
+    onresize?: (size: PaneSize) => void;
     onclose: () => void;
-    /** Hides the size menu for panels with no useful size to switch to. */
-    resizable?: boolean;
   } = $props();
 
   const label = $derived(menuLabel ?? `${title} options`);
@@ -208,7 +206,7 @@
   </div>
   <div class="flex shrink-0 items-center gap-2">
     {@render actions?.()}
-    {#if resizable}
+    {#if size && onresize}
       <PaneMenu {label} {size} {onresize} items={menuItems} />
     {/if}
     <Button

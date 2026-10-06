@@ -133,16 +133,14 @@ test('git runs on an ssh machine', () =>
     ]);
     const place = { machine, path: folder };
     assert.equal(await git.currentBranch(place), 'main');
-    await git.createBranch(place, 'feature/x', 'main');
-    assert.deepEqual(await git.head(place), {
+    const worktree = `${folder}-feature`;
+    await git.addWorktree(place, worktree, 'feature/x', 'main');
+    assert.deepEqual(await git.head({ machine, path: worktree }), {
       isGit: true,
       branch: 'feature/x',
     });
-    await git.switchBranch(place, 'main');
-    assert.deepEqual(
-      (await git.localBranches(place)).map(({ name }) => name).sort(),
-      ['feature/x', 'main'],
-    );
+    await git.removeWorktree(place, worktree);
+    assert(await git.hasRef(place, 'refs/heads/feature/x'));
     assert.deepEqual(await git.head({ machine, path: tmpdir() }), {
       isGit: false,
     });

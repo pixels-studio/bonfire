@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import type { Pane } from '../shared/contracts';
+import type { Pane, Workspace } from '../shared/contracts';
 import { DEFAULT_PREFERENCES } from '../shared/domain';
 import { MergeWatcher } from '../electron/main/merge-watcher';
 import type { Store } from '../electron/main/persistence';
@@ -9,6 +9,7 @@ function pane(id: string, branch: string, since: number): Pane {
   return {
     id,
     projectId: 'project',
+    workspaceId: 'main',
     type: 'claude',
     title: id,
     messages: [],
@@ -19,6 +20,38 @@ function pane(id: string, branch: string, since: number): Pane {
     archived: false,
     workBranch: { name: branch, since },
   };
+}
+
+function workspace(
+  id: string,
+  branch: string | undefined,
+  createdAt = 0,
+  status: Workspace['status'] = 'in_progress',
+): Workspace {
+  return {
+    id,
+    projectId: 'project',
+    name: id,
+    branch,
+    path: '/nonexistent-repository',
+    main: !branch,
+    status,
+    createdAt,
+  };
+}
+
+/** A store with the given panes and workspaces; a main workspace is always there. */
+function storeWith(
+  panes: Pane[],
+  workspaces: Workspace[] = [],
+  archiveOnMerge = true,
+) {
+  const all = [workspace('main', undefined), ...workspaces];
+  return {
+    state: { panes, workspaces: all },
+    preferences: { ...DEFAULT_PREFERENCES, archiveOnMerge },
+    workspace: (id: string) => all.find((item) => item.id === id)!,
+  } as unknown as Store;
 }
 
 function watcher({
@@ -33,11 +66,7 @@ function watcher({
   archiveOnMerge?: boolean;
 }) {
   const archived: string[] = [];
-  const store = {
-    state: { panes },
-    preferences: { ...DEFAULT_PREFERENCES, archiveOnMerge },
-    project: () => ({ path: '/nonexistent-repository' }),
-  } as unknown as Store;
+  const store = storeWith(panes, [], archiveOnMerge);
   const merges = new MergeWatcher({
     store,
     github: { lastMerge: async (_, branch) => mergedAt[branch] },
@@ -84,11 +113,7 @@ test('checks wait while the app is out of view, and catch up once it is back', a
   t.mock.timers.enable({ apis: ['setInterval'] });
   let inView = false;
   const archived: string[] = [];
-  const store = {
-    state: { panes: [pane('merged', 'feature/a', 100)] },
-    preferences: { ...DEFAULT_PREFERENCES, archiveOnMerge: true },
-    project: () => ({ path: '/nonexistent-repository' }),
-  } as unknown as Store;
+  const store = storeWith([pane('merged', 'feature/a', 100)]);
   let lookups = 0;
   const merges = new MergeWatcher({
     store,
@@ -113,4 +138,29 @@ test('checks wait while the app is out of view, and catch up once it is back', a
   await merges.catchUp();
   assert.equal(lookups, 1, 'nothing was missed since');
   merges.close();
+});
+
+test('a workspace is done once its branch merges after it was made, auto-close or not', async () => {
+  const done: string[] = [];
+  const merges = new MergeWatcher({
+    store: storeWith(
+      [],
+      [
+        workspace('merged', 'me/fuji', 100),
+        workspace('older-merge', 'me/uluru', 500),
+        workspace('open', 'me/zion', 100),
+        workspace('already-done', 'me/bryce', 100, 'done'),
+      ],
+      false,
+    ),
+    github: {
+      lastMerge: async (_, branch) =>
+        ({ 'me/fuji': 200, 'me/uluru': 200, 'me/bryce': 200 })[branch],
+    },
+    isBusy: () => false,
+    archive: () => assert.fail('nothing is archived with auto-close off'),
+    done: (ids) => done.push(...ids),
+  });
+  await merges.check();
+  assert.deepEqual(done, ['merged']);
 });

@@ -71,6 +71,7 @@ api.app.onFullscreenChange = subscribe(events.fullscreen);
 api.app.onFocusPane = subscribe(events.focusPane);
 api.app.onNotificationsBlocked = subscribe(events.notificationsBlocked);
 api.panes.onClosed = subscribe(events.panesClosed);
+api.workspaces.onChange = subscribe(events.workspacesChanged);
 api.github.onSignInEnd = subscribe(events.githubSignInEnd);
 api.scripts.onRun = subscribe(events.scriptRun);
 api.dictation.onEvent = subscribe(events.dictationEvent);

@@ -8,7 +8,9 @@ import type {
   SshConnection,
   State,
   ToolPaneType,
+  Workspace,
 } from './contracts';
+import { landmarkLabel } from './landmarks';
 
 export const DEFAULT_TITLE = 'New Conversation';
 const TITLE_MAX_LENGTH = 42;
@@ -72,6 +74,14 @@ export function isAssistantPane<Item extends Pick<Pane, 'type'>>(
   pane: Item,
 ): pane is Item & { type: AssistantProvider } {
   return pane.type in PROVIDER_LABELS;
+}
+
+/**
+ * Whether a closed pane can be reopened. A run script's pane only showed one run's output,
+ * which went with it; running the script again opens a new one.
+ */
+export function isReopenable(pane: Pick<Pane, 'archived' | 'scriptId'>) {
+  return pane.archived && !pane.scriptId;
 }
 
 /** Older panes were titled after their provider before the first message. */
@@ -215,6 +225,7 @@ export function emptyState(): State {
   return {
     version: 1,
     projects: [],
+    workspaces: [],
     panes: [],
     connections: [],
     layout: { paneIds: [] },
@@ -371,11 +382,11 @@ export function stripAnsi(text: string) {
   return text.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '');
 }
 
-/** The most panes, of any type, a project can have open at once. */
+/** The most panes, of any type, a workspace can have open at once. */
 export const MAX_PANES = 18;
 
 /**
- * The most terminal panes, run scripts' included, a project can have open at once: as many
+ * The most terminal panes, run scripts' included, a workspace can have open at once: as many
  * as the WebGL pool has contexts, so each can draw with WebGL while busy. Agent panes' CLI
  * terminals share the pool too; any terminal past it draws with the DOM renderer.
  */
@@ -438,4 +449,43 @@ export function folderName(path: string) {
       .split(/[\\/]/)
       .pop() ?? ''
   );
+}
+
+/** What a workspace is called in lists: its title, else the landmark it is named after. */
+export function workspaceLabel(workspace: Pick<Workspace, 'title' | 'name'>) {
+  return workspace.title || landmarkLabel(workspace.name);
+}
+
+type Workspaces<Item> = { readonly workspaces: readonly Item[] };
+
+/** The project's main workspace: its own folder. */
+export function mainWorkspaceOf<
+  Item extends Pick<Workspace, 'projectId' | 'main'>,
+>(state: Workspaces<Item>, projectId: string) {
+  return state.workspaces.find(
+    (workspace) => workspace.projectId === projectId && workspace.main,
+  );
+}
+
+/**
+ * The workspace the project shows: the one last on screen. The project folder's main
+ * workspace is never shown, so a project with no worktree shows none.
+ */
+export function currentWorkspaceOf<
+  Item extends Pick<Workspace, 'id' | 'projectId' | 'main'>,
+>(state: Workspaces<Item>, project: Pick<Project, 'id' | 'lastWorkspaceId'>) {
+  return state.workspaces.find(
+    ({ id, projectId, main }) =>
+      id === project.lastWorkspaceId && projectId === project.id && !main,
+  );
+}
+
+/** A folder or branch name made from free text: lowercase words joined by hyphens. */
+export function slug(text: string) {
+  return text
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
 }

@@ -7,7 +7,7 @@
   import { scripts } from '$lib/stores/scripts.svelte';
 
   let {
-    projectId,
+    workspaceId,
     paneId,
     scriptId,
     title,
@@ -17,7 +17,7 @@
     onclose,
     onrename,
   }: PaneProps & {
-    projectId: string;
+    workspaceId: string;
     paneId: string;
     /** Set for a pane that shows a run script's output rather than a shell. */
     scriptId?: string;
@@ -75,7 +75,7 @@
   <div class="relative min-h-0 flex-1">
     <!-- xterm is only loaded once a terminal is opened. -->
     {#await import('./terminal-session.svelte') then { default: TerminalSession }}
-      <TerminalSession {projectId} {paneId} {scriptId} />
+      <TerminalSession {workspaceId} {paneId} {scriptId} />
     {/await}
   </div>
 </Card.Root>

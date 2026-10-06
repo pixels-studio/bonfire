@@ -18,9 +18,11 @@ import {
   type State,
 } from '../../shared/contracts';
 import {
+  currentWorkspaceOf,
   emptyState,
   errorMessage,
   isViewPaneType,
+  mainWorkspaceOf,
   resolvePreferences,
 } from '../../shared/domain';
 import {
@@ -28,11 +30,14 @@ import {
   PaneChanges,
   ProjectChanges,
   SettingChanges,
+  WorkspaceChanges,
+  mainWorkspace,
   sendable,
   writable,
   type PaneView,
   type ProjectView,
   type StateView,
+  type WorkspaceView,
 } from './state';
 
 /**
@@ -81,6 +86,7 @@ export class Store {
   private data: State;
   readonly panes: PaneChanges;
   readonly projects: ProjectChanges;
+  readonly workspaces: WorkspaceChanges;
   readonly connections: ConnectionChanges;
   readonly settings: SettingChanges;
   private readonly file: string;
@@ -97,9 +103,9 @@ export class Store {
   /** How many messages each pane's file held when written, to catch a change nobody reported. */
   private readonly written = new Map<string, number>();
   /**
-   * Archived panes whose conversation stays on disk, unread. Nothing shows or reopens an
-   * archived pane, and archived conversations are most of the history, so reading them
-   * would only slow every start and hold memory for good. Their files are never rewritten.
+   * Archived panes whose conversation stays on disk, unread until the pane is reopened.
+   * Archived conversations are most of the history and few are ever reopened, so reading
+   * them would only slow every start and hold memory for good. Their files aren't rewritten.
    */
   private readonly unloaded = new Set<string>();
   /**
@@ -139,8 +145,14 @@ export class Store {
     this.data = raw ? stateSchema.parse(raw) : emptyState();
     const state = () => this.data;
     const save = (pane?: PaneView) => this.save(pane);
-    this.panes = new PaneChanges(state, save);
+    this.panes = new PaneChanges(state, save, (pane) => this.load(pane));
     this.projects = new ProjectChanges(state, this.panes, save);
+    this.workspaces = new WorkspaceChanges(
+      state,
+      this.panes,
+      this.projects,
+      save,
+    );
     this.connections = new ConnectionChanges(state, save);
     this.settings = new SettingChanges(state, save);
     for (const pane of this.data.panes)
@@ -148,6 +160,7 @@ export class Store {
       else this.written.set(pane.id, pane.messages.length);
     for (const pane of settleInterrupted(this.data)) this.dirty.add(pane);
     settleProjects(this.data);
+    if (settleWorkspaces(this.data)) this.save();
     settleLayout(this.data);
     this.pruneConversations();
     if (this.dirty.size) this.save();
@@ -327,6 +340,29 @@ export class Store {
     return find(this.data.panes, id, 'Pane');
   }
 
+  workspace(id: string): WorkspaceView {
+    return find(this.data.workspaces, id, 'Workspace');
+  }
+
+  /** The workspace on screen: the open project's current one. */
+  currentWorkspace(): WorkspaceView | undefined {
+    const project = this.data.projects.find(
+      ({ id }) => id === this.data.lastProjectId,
+    );
+    return project && currentWorkspaceOf(this.data, project);
+  }
+
+  /**
+   * Reads a closed pane's conversation in from disk, for reopening it; one already read is
+   * left as it is. A turn cut off as the pane closed is settled, as on start.
+   */
+  private load(pane: Pane) {
+    if (!this.unloaded.delete(pane.id)) return;
+    pane.messages = this.readConversation(pane.id);
+    this.written.set(pane.id, pane.messages.length);
+    if (settleMessages(pane)) this.dirty.add(pane);
+  }
+
   /** Removes conversation files no pane lists, such as those left by a crash mid-save. */
   private pruneConversations() {
     const live = new Set(this.data.panes.map(({ id }) => id));
@@ -406,16 +442,18 @@ function sleep(milliseconds: number) {
 
 /**
  * The state as the window gets it, which it asks for again after every change to the panes.
- * Only the open panes of the project on screen carry their conversations, so they show at
- * once; archived ones are never shown, and another project's arrive when it is opened, which
- * asks again. Conversations are most of the data, and each request copies them across.
+ * Only the open panes of the workspace on screen carry their conversations, so they show at
+ * once; closed ones are reopened through main, and another workspace's arrive when it is
+ * opened, which asks again. Conversations are most of the data, and each request copies them.
  */
 export function stateForWindow(view: StateView): State {
   const state = sendable<State>(view);
+  const project = state.projects.find(({ id }) => id === state.lastProjectId);
+  const shown = project && currentWorkspaceOf(state, project)?.id;
   return {
     ...state,
     panes: state.panes.map((pane) =>
-      pane.archived || pane.projectId !== state.lastProjectId
+      pane.archived || pane.workspaceId !== shown
         ? { ...pane, messages: [] }
         : pane,
     ),
@@ -424,13 +462,17 @@ export function stateForWindow(view: StateView): State {
 
 /** Turns that were cut off by a crash or quit leave messages that would look busy forever. */
 function settleInterrupted(state: State) {
-  const settled = new Set<Pane>();
-  for (const pane of state.panes)
-    for (const message of pane.messages)
-      if (message.status === 'streaming') {
-        message.status = message.kind === 'tool' ? 'failed' : 'complete';
-        settled.add(pane);
-      }
+  return new Set(state.panes.filter(settleMessages));
+}
+
+/** Settles the pane's messages left streaming; returns whether there were any. */
+function settleMessages(pane: Pane) {
+  let settled = false;
+  for (const message of pane.messages)
+    if (message.status === 'streaming') {
+      message.status = message.kind === 'tool' ? 'failed' : 'complete';
+      settled = true;
+    }
   return settled;
 }
 
@@ -512,15 +554,49 @@ export function settleProjects(state: State) {
 }
 
 /**
+ * Every project has its main workspace, and every pane of a project a workspace: panes from
+ * before workspaces work in the project folder. A project returns to a workspace that is
+ * still there. Returns whether anything changed.
+ */
+export function settleWorkspaces(state: State) {
+  let changed = false;
+  const known = new Set(state.workspaces.map(({ id }) => id));
+  for (const project of state.projects) {
+    let main = mainWorkspaceOf(state, project.id);
+    if (!main) {
+      main = mainWorkspace(project);
+      state.workspaces.push(main);
+      changed = true;
+    }
+    for (const pane of state.panes)
+      if (
+        pane.projectId === project.id &&
+        (!pane.workspaceId || !known.has(pane.workspaceId))
+      ) {
+        pane.workspaceId = main.id;
+        changed = true;
+      }
+    if (
+      project.lastWorkspaceId &&
+      currentWorkspaceOf(state, project)?.id !== project.lastWorkspaceId
+    ) {
+      delete project.lastWorkspaceId;
+      changed = true;
+    }
+  }
+  return changed;
+}
+
+/**
  * The layout lists only panes that are open; older versions left closed ones in it. They
- * also allowed several of a view pane, of which a project now keeps the first.
+ * also allowed several of a view pane, of which a workspace now keeps the first.
  */
 export function settleLayout(state: State) {
   const seen = new Set<string>();
   for (const id of state.layout.paneIds) {
     const pane = state.panes.find((item) => item.id === id);
     if (!pane || pane.archived || !isViewPaneType(pane.type)) continue;
-    const key = `${pane.projectId}:${pane.type}`;
+    const key = `${pane.workspaceId}:${pane.type}`;
     if (seen.has(key)) pane.archived = true;
     seen.add(key);
   }

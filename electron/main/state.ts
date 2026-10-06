@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type {
   AssistantProvider,
   ConversationMessage,
@@ -7,6 +8,7 @@ import type {
   ReasoningEffort,
   SshConnection,
   State,
+  Workspace,
 } from '../../shared/contracts';
 import { reorderLayout } from '../../shared/domain';
 
@@ -26,6 +28,7 @@ export type ReadonlyDeep<T> = T extends (...args: never[]) => unknown
 export type StateView = ReadonlyDeep<State>;
 export type PaneView = ReadonlyDeep<Pane>;
 export type ProjectView = ReadonlyDeep<Project>;
+export type WorkspaceView = ReadonlyDeep<Workspace>;
 export type MessageView = ReadonlyDeep<ConversationMessage>;
 
 /** The Store's own object behind a view it handed out; only the Store changes it. */
@@ -43,12 +46,63 @@ export function sendable<T>(view: ReadonlyDeep<T>) {
 
 /** Pane fields that change after the pane is made; `undefined` clears a field. */
 export type PanePatch = Partial<
-  Omit<Pane, 'id' | 'projectId' | 'type' | 'messages' | 'archived'>
+  Omit<Pane, 'id' | 'projectId' | 'type' | 'messages' | 'archived' | 'closedAt'>
 >;
 
 export type ProjectPatch = Partial<
-  Pick<Project, 'name' | 'lastOpenedAt' | 'scripts' | 'runScriptId'>
+  Pick<
+    Project,
+    | 'name'
+    | 'lastOpenedAt'
+    | 'scripts'
+    | 'runScriptId'
+    | 'setupScript'
+    | 'archiveScript'
+  >
 >;
+
+/** Workspace fields that change after it is made; `undefined` clears a field. */
+export type WorkspacePatch = Partial<
+  Pick<Workspace, 'title' | 'status' | 'archivedPaneIds'>
+>;
+
+/** Where a workspace's work happens: its folder, on its project's machine. */
+export type WorkFolder = {
+  /** The workspace's id. */
+  id: string;
+  path: string;
+  /** The SSH connection the project lives on; unset for folders on this computer. */
+  connectionId?: string;
+};
+
+/** The folder a pane works in: its workspace's, on its project's machine. */
+export function folderOf(
+  store: {
+    workspace(id: string): WorkspaceView;
+    project(id: string): ProjectView;
+  },
+  pane: Pick<Pane, 'workspaceId'>,
+): WorkFolder {
+  if (!pane.workspaceId) throw Error('Select a project first.');
+  const workspace = store.workspace(pane.workspaceId);
+  const { connectionId } = store.project(workspace.projectId);
+  return { id: workspace.id, path: workspace.path, connectionId };
+}
+
+/** A project's main workspace: the project folder itself. */
+export function mainWorkspace(
+  project: Pick<Project, 'id' | 'path'>,
+): Workspace {
+  return {
+    id: randomUUID(),
+    projectId: project.id,
+    name: 'main',
+    path: project.path,
+    main: true,
+    status: 'in_progress',
+    createdAt: Date.now(),
+  };
+}
 
 /** Schedules a save; a pane whose messages changed has its conversation written too. */
 type Save = (pane?: PaneView) => void;
@@ -68,6 +122,8 @@ export class PaneChanges {
   constructor(
     private readonly state: () => State,
     private readonly save: Save,
+    /** Reads a closed pane's conversation back in, if it was left on disk. */
+    private readonly load: (pane: Pane) => void = () => {},
   ) {}
 
   /** Adds an open pane at the front of the layout, or at its end. */
@@ -87,9 +143,24 @@ export class PaneChanges {
 
   /** Closes the pane for good; its conversation stays on disk. */
   archive(pane: PaneView) {
-    writable<Pane>(pane).archived = true;
+    const closing = writable<Pane>(pane);
+    closing.archived = true;
+    closing.closedAt = Date.now();
     const { layout } = this.state();
     layout.paneIds = layout.paneIds.filter((id) => id !== pane.id);
+    this.save();
+  }
+
+  /** Opens a closed pane again, at the front of the layout or its end, with its conversation. */
+  restore(pane: PaneView, at: 'front' | 'end') {
+    const reopening = writable<Pane>(pane);
+    this.load(reopening);
+    reopening.archived = false;
+    delete reopening.closedAt;
+    const { layout } = this.state();
+    if (!layout.paneIds.includes(pane.id))
+      if (at === 'front') layout.paneIds.unshift(pane.id);
+      else layout.paneIds.push(pane.id);
     this.save();
   }
 
@@ -155,7 +226,7 @@ export function appendToMessage(
   return message;
 }
 
-/** Projects: adding, opening, changing, and removing them with their panes. */
+/** Projects: adding, opening, changing, and removing them with their workspaces and panes. */
 export class ProjectChanges {
   constructor(
     private readonly state: () => State,
@@ -163,8 +234,11 @@ export class ProjectChanges {
     private readonly save: Save,
   ) {}
 
+  /** Adds the project with its main workspace. */
   add(project: Project): ProjectView {
-    this.state().projects.push(project);
+    const state = this.state();
+    state.projects.push(project);
+    state.workspaces.push(mainWorkspace(project));
     this.save();
     return project;
   }
@@ -191,7 +265,7 @@ export class ProjectChanges {
     this.save();
   }
 
-  /** Removes the project and every pane in it, archived or not. */
+  /** Removes the project with its workspaces and every pane in it, archived or not. */
   remove(project: ProjectView) {
     const state = this.state();
     this.panes.remove(
@@ -199,8 +273,53 @@ export class ProjectChanges {
         .filter((pane) => pane.projectId === project.id)
         .map(({ id }) => id),
     );
+    state.workspaces = state.workspaces.filter(
+      (workspace) => workspace.projectId !== project.id,
+    );
     state.projects = state.projects.filter((item) => item !== project);
     if (state.lastProjectId === project.id) this.openLatest();
+    this.save();
+  }
+}
+
+/** Workspaces: adding, opening, changing, and removing them with their panes. */
+export class WorkspaceChanges {
+  constructor(
+    private readonly state: () => State,
+    private readonly panes: PaneChanges,
+    private readonly projects: ProjectChanges,
+    private readonly save: Save,
+  ) {}
+
+  add(workspace: Workspace): WorkspaceView {
+    this.state().workspaces.push(workspace);
+    this.save();
+    return workspace;
+  }
+
+  update(workspace: WorkspaceView, patch: WorkspacePatch) {
+    assign(writable<Workspace>(workspace), patch);
+    this.save();
+  }
+
+  /** Puts the workspace and its project on screen. */
+  open(workspace: WorkspaceView) {
+    const state = this.state();
+    const project = state.projects.find(({ id }) => id === workspace.projectId);
+    if (!project) return;
+    project.lastWorkspaceId = workspace.id;
+    this.projects.open(project);
+  }
+
+  /** Removes the workspace and every pane in it, archived or not. */
+  remove(workspace: WorkspaceView) {
+    const state = this.state();
+    this.panes.remove(
+      state.panes
+        .filter((pane) => pane.workspaceId === workspace.id)
+        .map(({ id }) => id),
+    );
+    state.workspaces = state.workspaces.filter((item) => item !== workspace);
     this.save();
   }
 }

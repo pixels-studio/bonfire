@@ -48,7 +48,7 @@ const main = new Rpc(parentEndpoint(attachWindow), {
   write: (id, data) => ptys.write(id, data),
   resize: (id, cols, rows) => ptys.resize(id, cols, rows),
   closePane: (paneId) => ptys.closePane(paneId),
-  closeProject: (projectId) => ptys.closeProject(projectId),
+  closeWorkspace: (workspaceId) => ptys.closeWorkspace(workspaceId),
   close: () => ptys.close(),
 });
 forwardConsole(main);

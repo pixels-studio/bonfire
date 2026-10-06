@@ -17,7 +17,7 @@
   import type { GitStatus } from '$shared/contracts';
 
   let {
-    projectId,
+    workspaceId,
     title,
     dragHandle,
     size,
@@ -26,7 +26,7 @@
     onrename,
     selectedDiff,
   }: PaneProps & {
-    projectId: string;
+    workspaceId: string;
     title: string;
     selectedDiff?: { path: string; request: number };
   } = $props();
@@ -44,7 +44,7 @@
   async function refresh() {
     const token = ++generation;
     try {
-      const next = await window.bonfire.git.status(projectId);
+      const next = await window.bonfire.git.status(workspaceId);
       if (token !== generation) return;
       status = next;
       error = '';
@@ -57,7 +57,7 @@
   async function loadDiff(path: string) {
     let text: string;
     try {
-      text = await window.bonfire.git.diff(projectId, path);
+      text = await window.bonfire.git.diff(workspaceId, path);
     } catch (cause) {
       text = errorMessage(cause);
     }
@@ -79,7 +79,7 @@
     const { path } = reverting;
     working = true;
     try {
-      await window.bonfire.git.discard(projectId, path);
+      await window.bonfire.git.discard(workspaceId, path);
       if (!path || path === selectedPath) selectedPath = '';
       confirmOpen = false;
       await refresh();
@@ -123,7 +123,7 @@
 
   onMount(() => {
     void refresh();
-    const stop = watchFiles(projectId, refresh, {
+    const stop = watchFiles(workspaceId, refresh, {
       onerror: (cause) => (error = errorMessage(cause)),
     });
     return () => {

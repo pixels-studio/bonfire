@@ -42,7 +42,7 @@ import { Cached } from './cached';
 import { localMachine, type Machine } from './machines';
 import type { Store } from './persistence';
 import { MAX_TOOL_OUTPUT } from './tool-text';
-import { sendable, type PaneView, type ProjectView } from './state';
+import { folderOf, sendable, type PaneView, type WorkFolder } from './state';
 
 /** Images shown from one tool result; later ones are dropped rather than crowding the reply. */
 const MAX_TOOL_IMAGES = 4;
@@ -58,8 +58,8 @@ export type AssistantHost = {
   openUrl: (url: string) => Promise<void>;
   /** Shared between providers, so a pane keeps its attachments when its provider changes. */
   attachments?: PendingAttachments;
-  /** The machine a project's folder is on, where its agent runs; this computer by default. */
-  machineOf?: (project: ProjectView) => Machine;
+  /** The machine a workspace's folder is on, where its agent runs; this computer by default. */
+  machineOf?: (folder: WorkFolder) => Machine;
 };
 
 export type { PendingAttachment };
@@ -70,7 +70,7 @@ export type { PendingAttachment };
  */
 export type AgentStore = Pick<
   Store,
-  'preferences' | 'project' | 'pane' | 'save'
+  'preferences' | 'project' | 'workspace' | 'pane' | 'save'
 > & {
   readonly panes: Pick<Store['panes'], 'update' | 'putMessage' | 'append'>;
   readonly settings: Pick<Store['settings'], 'rememberTurn'>;
@@ -91,8 +91,9 @@ export type Steer = (prompt: Prompt) => Promise<void>;
 
 export type Turn = {
   pane: PaneView;
-  project: ProjectView;
-  /** Where the project's folder is, and so where the provider's CLI runs. */
+  /** The workspace's folder, where the provider's CLI runs. */
+  folder: WorkFolder;
+  /** The machine the folder is on. */
   machine: Machine;
   input: AssistantSendInput;
   attachments: PendingAttachment[];
@@ -139,7 +140,7 @@ const INTERRUPT_GRACE_MS = 5_000;
 const LOGIN_TIMEOUT_MS = 3 * 60_000;
 /** How long generating a short text, such as a title, may take. */
 const GENERATE_TIMEOUT_MS = 60_000;
-/** How long a project's skill list is reused; skills change only when files on disk do. */
+/** How long a folder's skill list is reused; skills change only when files on disk do. */
 const SKILLS_TTL_MS = 60_000;
 /** Matches a provider's way of saying its model is overloaded or rate-limited, across vendors. */
 const CAPACITY_PATTERN =
@@ -227,7 +228,7 @@ export abstract class ChatAssistant {
     () => this.readAccount(),
     60_000,
   );
-  /** Skill lists by project id. */
+  /** Skill lists by workspace id. */
   private readonly skillLists = new Map<string, Cached<Skill[]>>();
   /** A sign-in in progress: aborting its controller cancels it, even while it waits for a code. */
   private login?: { controller: AbortController; timeout: NodeJS.Timeout };
@@ -243,9 +244,9 @@ export abstract class ChatAssistant {
 
   protected abstract run(turn: Turn): Promise<void>;
   protected abstract listModels(): Promise<ModelOption[]>;
-  /** Skills the provider can run in the project's folder, on the machine it is on. */
+  /** Skills the provider can run in the workspace's folder, on the machine it is on. */
   protected abstract listSkills(
-    project: ProjectView,
+    folder: WorkFolder,
     machine: Machine,
   ): Promise<Skill[]>;
   protected abstract readLimits(): Promise<ProviderLimits>;
@@ -414,23 +415,23 @@ export abstract class ChatAssistant {
     return this.modelList.get();
   }
 
-  /** Skills the pane's provider can run in its project. Cached briefly; a failed refresh serves the stale list. */
+  /** Skills the pane's provider can run in its workspace. Cached briefly; a failed refresh serves the stale list. */
   skills(paneId: string): Promise<Skill[]> {
     const pane = this.paneFor(paneId);
-    if (!pane.projectId) return Promise.resolve([]);
-    const project = this.store.project(pane.projectId);
-    let list = this.skillLists.get(project.id);
+    if (!pane.workspaceId) return Promise.resolve([]);
+    const folder = folderOf(this.store, pane);
+    let list = this.skillLists.get(folder.id);
     if (!list) {
       list = new Cached(
         () =>
           this.listSkills(
-            project,
-            this.host.machineOf?.(project) ?? localMachine,
+            folder,
+            this.host.machineOf?.(folder) ?? localMachine,
           ),
         SKILLS_TTL_MS,
         { serveStale: true },
       );
-      this.skillLists.set(project.id, list);
+      this.skillLists.set(folder.id, list);
     }
     return list.get();
   }
@@ -540,8 +541,7 @@ export abstract class ChatAssistant {
     input: AssistantSendInput,
     skills: Skill[],
   ) {
-    if (!pane.projectId) throw Error('Select a project first');
-    const project = this.store.project(pane.projectId);
+    const folder = folderOf(this.store, pane);
     const attachments = this.attachmentsFor(pane, input.attachmentIds);
     const shown = withoutMarkers(promptText(input.text, skills));
 
@@ -561,8 +561,8 @@ export abstract class ChatAssistant {
 
     const turn: ActiveTurn = {
       pane,
-      project,
-      machine: this.host.machineOf?.(project) ?? localMachine,
+      folder,
+      machine: this.host.machineOf?.(folder) ?? localMachine,
       input,
       attachments,
       skills,

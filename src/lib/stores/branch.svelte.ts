@@ -1,31 +1,31 @@
 import type { GitHead } from '$shared/contracts';
-import { watchProject } from '../file-watch';
+import { watchWorkspace } from '../file-watch';
 import { Refresher } from '../refresher';
 
 /** How often to check a remote folder, whose branch switches nothing reports. */
 const REMOTE_POLL_MS = 10_000;
 
 /**
- * The branch the project on screen has checked out, kept current while it is watched.
+ * The branch the workspace on screen has checked out, kept current while it is watched.
  * Git decides it, not the app: agents and terminals switch branches too.
  */
 class BranchStore {
   /** `undefined` until looked up. */
   head = $state<GitHead>();
-  private projectId?: string;
+  private workspaceId?: string;
   private generation = 0;
   private refresher?: Refresher;
 
-  /** Follows a project, or none; returns what stops it. */
-  watch(projectId: string | undefined) {
-    this.projectId = projectId;
+  /** Follows a workspace, or none; returns what stops it. */
+  watch(workspaceId: string | undefined) {
+    this.workspaceId = workspaceId;
     this.head = undefined;
-    if (!projectId) return;
+    if (!workspaceId) return;
     const refresher = new Refresher(() => this.lookUp());
     this.refresher = refresher;
     void refresher.refresh();
     // On this computer Git's HEAD is watched, so a switch is heard of as it happens.
-    const watch = watchProject(projectId, ['head'], () =>
+    const watch = watchWorkspace(workspaceId, ['head'], () =>
       refresher.invalidate(),
     );
     void watch.live.then(
@@ -48,11 +48,11 @@ class BranchStore {
   }
 
   private async lookUp() {
-    const projectId = this.projectId;
-    if (!projectId) return;
+    const workspaceId = this.workspaceId;
+    if (!workspaceId) return;
     const token = ++this.generation;
     try {
-      const next = await window.bonfire.git.head(projectId);
+      const next = await window.bonfire.git.head(workspaceId);
       // An unchanged head keeps its object, so nothing that follows the branch reloads.
       if (
         token === this.generation &&
@@ -64,36 +64,6 @@ class BranchStore {
       if (token === this.generation) this.head ??= { isGit: false };
       throw cause;
     }
-  }
-
-  /** Switches the project on screen to another branch. */
-  async switchTo(name: string) {
-    const projectId = this.projectId;
-    if (!projectId) return;
-    try {
-      await window.bonfire.git.checkout(projectId, name);
-    } finally {
-      await this.reload();
-    }
-  }
-
-  /** Creates a branch from `base` and switches to it. */
-  async create(name: string, base: string) {
-    const projectId = this.projectId;
-    if (!projectId) return;
-    try {
-      await window.bonfire.git.createBranch(projectId, name, base);
-    } finally {
-      await this.reload();
-    }
-  }
-
-  /** Switches to `name` and brings it up to date, such as `main` after a merge. */
-  async switchAndPull(name: string) {
-    const projectId = this.projectId;
-    if (!projectId) return;
-    await this.switchTo(name);
-    await window.bonfire.git.pull(projectId);
   }
 }
 

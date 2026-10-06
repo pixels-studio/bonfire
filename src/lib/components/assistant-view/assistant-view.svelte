@@ -419,7 +419,7 @@
             <TurnView
               messages={turn}
               paneId={pane.id}
-              projectId={pane.projectId}
+              workspaceId={pane.workspaceId}
               {onviewChanges}
               expanded={!!watched[turn[0].id]}
             />
@@ -435,7 +435,7 @@
                 <TurnView
                   messages={lastTurn}
                   paneId={pane.id}
-                  projectId={pane.projectId}
+                  workspaceId={pane.workspaceId}
                   {onviewChanges}
                   expanded={!!watched[lastTurn[0].id]}
                   inProgress={running || !snapshotLoaded}

@@ -2,22 +2,21 @@
   import { onMount, tick, untrack } from 'svelte';
   import { Button } from '$lib/components/ui/button';
   import * as Card from '$lib/components/ui/card';
-  import ActivityPane from '$lib/components/activity/activity-pane.svelte';
   import AppHeader from '$lib/components/app-header/app-header.svelte';
   import AppRail, {
-    type AppPanel,
+    type RailPanel,
   } from '$lib/components/app-rail/app-rail.svelte';
-  import Logo from '$lib/components/logo/logo.svelte';
-  import BranchPicker from '$lib/components/workspace/branch-picker.svelte';
   import CreateProjectDialog from '$lib/components/workspace/create-project-dialog.svelte';
   import Icon from '$lib/components/icon/icon.svelte';
   import InsightsPane from '$lib/components/insights/insights-pane.svelte';
+  import LauncherPane from '$lib/components/launcher/launcher-pane.svelte';
+  import Overlay from '$lib/components/overlay/overlay.svelte';
+  import ProjectSettings from '$lib/components/project-settings/project-settings.svelte';
   import SettingsPane from '$lib/components/settings/settings-pane.svelte';
   import PaneView from '$lib/components/pane-view/pane-view.svelte';
   import PullRequestView from '$lib/components/pull-request/pull-request-view.svelte';
-  import NewBranchDialog from '$lib/components/workspace/new-branch-dialog.svelte';
-  import ProjectPicker from '$lib/components/workspace/project-picker.svelte';
   import ShortcutsPane from '$lib/components/shortcuts/shortcuts-pane.svelte';
+  import WorkspaceList from '$lib/components/workspace-list/workspace-list.svelte';
   import Onboarding from '$lib/components/onboarding/onboarding.svelte';
   import Bloom from '$lib/components/onboarding/bloom.svelte';
   import { PANE_SIZES, defaultPaneSize, type PaneSize } from '$lib/panes';
@@ -29,6 +28,7 @@
     ATTENTION_RANK,
     PaneStatuses,
     paneBadge,
+    type PaneStatus,
     type ProjectAttention,
   } from '$lib/pane-status.svelte';
   import { playCompletionSound } from '$lib/sounds';
@@ -44,7 +44,6 @@
   import type {
     AssistantEvent,
     AssistantProvider,
-    Project,
     ProviderAccount,
     Pane,
     PaneType,
@@ -54,16 +53,22 @@
   import {
     MAX_PANES,
     MAX_TERMINAL_PANES,
+    currentWorkspaceOf,
     emptyState,
     errorMessage,
     isAssistantPane,
+    isReopenable,
     isViewPaneType,
     reorderLayout,
     startingProvider,
+    workspaceLabel,
     type ViewPaneType,
   } from '$shared/domain';
 
-  let workspace = $state<State>(emptyState());
+  /** What opens over the workspace: a rail panel, or the project's settings. */
+  type OverlayPanel = RailPanel | 'project';
+
+  let appState = $state<State>(emptyState());
   let loaded = $state(false);
   let loading = $state(true);
   let busy = $state(false);
@@ -78,31 +83,27 @@
   );
   const motion = new StripMotion(() => paneStrip);
   let pullRequestOpen = $state(false);
-  /** The open panels, newest first; Activity is placed at the strip's end. */
-  let panels = $state<AppPanel[]>([]);
+  let overlay = $state<OverlayPanel>();
   /**
-   * The strip's order after panes or panels are arranged by hand. Unlisted items
-   * then go in front, except view panes, which go at the end.
+   * The strip's order after panes are arranged by hand, or one is put at the end. Unlisted
+   * panes then go in front, except view panes, which go at the end.
    */
   let stripOrder = $state<string[]>([]);
-  let creatingBranch = $state(false);
   /**
    * Set while panes are added or closed by hand, so only those grow in or shrink
-   * away; panes that come and go on load or a project switch do so at once.
+   * away; panes that come and go on load or a workspace switch do so at once.
    */
   let paneMotion = $state(false);
-  /** Whether the pointer is over the empty state's flame, which lights it. */
-  let stirred = $state(false);
   let creatingProject = $state(false);
+  let creatingWorkspace = $state(false);
   let projectMenuOpen = $state(false);
-  let branchMenuOpen = $state(false);
   /** The tab the insights panel is on, which the usage shortcut switches. */
   let insightsTab = $state('tokens');
   /** The pane last clicked, focused or navigated to, which the pane shortcuts act on. */
   let currentPaneId = $state<string>();
   /** The latest file card navigation into the code diff pane. */
   let selectedDiff = $state<{
-    projectId: string;
+    workspaceId: string;
     path: string;
     request: number;
   }>();
@@ -117,20 +118,32 @@
   let accountErrors = $state<Partial<Record<AssistantProvider, string>>>({});
 
   const project = $derived(
-    workspace.projects.find(({ id }) => id === workspace.lastProjectId),
+    appState.projects.find(({ id }) => id === appState.lastProjectId),
+  );
+  const projectWorkspaces = $derived(
+    appState.workspaces.filter(({ projectId }) => projectId === project?.id),
+  );
+  /** The workspace on screen. */
+  const current = $derived(
+    project ? currentWorkspaceOf(appState, project) : undefined,
   );
   /**
-   * Every refresh replaces the project object, so anything that should restart only when
-   * another project opens follows this instead.
+   * Every refresh replaces the state's objects, so anything that should restart only when
+   * another workspace opens follows its id instead.
    */
-  const projectId = $derived(project?.id);
-  /** The open panes of the project on screen, agents and tools alike, in layout order. */
+  const workspaceId = $derived(current?.id);
+  /** An archived workspace has no folder to work in until it is unarchived. */
+  const archived = $derived(current?.status === 'archived');
+  /** A workspace that can be worked in: its folder is there. */
+  const activeId = $derived(archived ? undefined : workspaceId);
+
+  /** The open panes of the workspace on screen, agents and tools alike, in layout order. */
   const panes = $derived(
-    workspace.layout.paneIds
-      .map((id) => workspace.panes.find((pane) => pane.id === id))
+    appState.layout.paneIds
+      .map((id) => appState.panes.find((pane) => pane.id === id))
       .filter(
         (pane): pane is Pane =>
-          !!pane && !pane.archived && pane.projectId === project?.id,
+          !!pane && !pane.archived && pane.workspaceId === activeId,
       ),
   );
   /** The open view panes, which the header's toggles show as pressed. */
@@ -138,12 +151,10 @@
   const openViews = $derived(
     views.map(({ type }) => type).filter(isViewPaneType),
   );
-  const PANELS: string[] = ['activity', 'insights', 'settings', 'shortcuts'];
   const PULL_REQUEST_ID = 'pull-request';
-  const isPanel = (id: string): id is AppPanel => PANELS.includes(id);
-  /** Every open panel and pane, in the order the strip shows them. */
+  /** Every open pane, in the order the strip shows them. */
   const stripIds = $derived.by(() => {
-    const visible = [...panels, ...panes.map(({ id }) => id)];
+    const visible = panes.map(({ id }) => id);
     if (!stripOrder.length) return visible;
     const shown = new Set(visible);
     const listed = new Set(stripOrder);
@@ -155,30 +166,29 @@
       ...unlisted.filter(isView),
     ];
   });
-  const assistantPanes = $derived(panes.filter(isAssistantPane));
+  /** How many closed panes the history lists. */
+  const HISTORY_LIMIT = 30;
+  /** The workspace's closed panes, most recently closed first; those from before closing was timed last. */
+  const closedPanes = $derived(
+    appState.panes
+      .filter((pane) => pane.workspaceId === activeId && isReopenable(pane))
+      .sort((a, b) => (b.closedAt ?? 0) - (a.closedAt ?? 0))
+      .slice(0, HISTORY_LIMIT),
+  );
   /** The pane the pane shortcuts act on: the current one, else the first in sight. */
   const activePane = $derived(
     panes.find(({ id }) => id === currentPaneId) ??
       panes.find(({ id }) => inView[id]) ??
       panes[0],
   );
-  /** Whether an agent is mid-turn, which keeps the branch where it is. */
-  const agentsWorking = $derived(
-    assistantPanes.some(({ id }) =>
-      ['working', 'input'].includes(statuses.get(id)),
-    ),
-  );
-  const isRepository = $derived(!!branch.head?.isGit);
 
   /** The pull request pane, shown after the panes. */
-  const showPullRequest = $derived(!!project && pullRequestOpen);
-  /** Everything in the strip: the panels, the panes (or the empty state), and the pull request. */
-  const stripCount = $derived(
-    panels.length + Math.max(panes.length, 1) + (showPullRequest ? 1 : 0),
-  );
+  const showPullRequest = $derived(!!activeId && pullRequestOpen);
+  /** What shares the strip with the launcher: the panes and the pull request. */
+  const stripCount = $derived(panes.length + (showPullRequest ? 1 : 0));
 
-  const canAddPane = $derived(!!project && panes.length < MAX_PANES);
-  /** Terminals stop at the number that can draw with WebGL; the menu then leaves them out. */
+  const canAddPane = $derived(!!activeId && panes.length < MAX_PANES);
+  /** Terminals stop at the number that can draw with WebGL; the launcher then leaves them out. */
   const canAddTerminal = $derived(
     canAddPane &&
       panes.filter((pane) => pane.type === 'terminal').length <
@@ -192,7 +202,7 @@
   }
 
   async function refresh() {
-    workspace = await window.bonfire.state.get();
+    appState = await window.bonfire.state.get();
   }
 
   async function runAction(task: () => Promise<unknown>) {
@@ -224,6 +234,21 @@
     return changePanes(() => window.bonfire.panes.archive(paneId));
   }
 
+  /** Reopens a closed pane where a new one of its kind would open, and goes to it. */
+  async function restorePane(paneId: string) {
+    const closed = appState.panes.find(({ id }) => id === paneId);
+    if (busy || !closed) return;
+    const view = isViewPaneType(closed.type);
+    await changePanes(() => window.bonfire.panes.restore(paneId));
+    // A view pane of a kind already open isn't reopened; the open one is gone to instead.
+    const shown = panes.find(
+      (pane) => pane.id === paneId || (view && pane.type === closed.type),
+    );
+    if (!shown) return;
+    if (!view) paneStrip?.scrollTo({ left: 0, behavior: scrollBehavior() });
+    void focusPane(shown.id);
+  }
+
   function addProject() {
     creatingProject = true;
   }
@@ -232,25 +257,43 @@
     void runAction(() => window.bonfire.projects.remove(projectId));
   }
 
+  /** Looking at panes is seeing what their agents finished. */
+  function markSeen(matches: (pane: Pane) => boolean) {
+    for (const pane of appState.panes)
+      if (matches(pane)) statuses.markSeen(pane.id);
+  }
+
   function openProject(projectId: string) {
     if (projectId === project?.id) return;
-    // Opening a project is looking at it, so its finished turns no longer need a reminder.
-    for (const pane of workspace.panes)
-      if (pane.projectId === projectId) statuses.markSeen(pane.id);
+    const next = appState.projects.find(({ id }) => id === projectId);
+    const shown = next && currentWorkspaceOf(appState, next)?.id;
+    markSeen((pane) => pane.workspaceId === shown);
     void runAction(() => window.bonfire.projects.open(projectId));
   }
 
-  function switchBranch(name: string) {
-    void branch.switchTo(name).catch(showError);
+  function openWorkspace(id: string) {
+    overlay = undefined;
+    if (id === workspaceId) return;
+    markSeen((pane) => pane.workspaceId === id);
+    return runAction(() => window.bonfire.workspaces.open(id));
   }
 
-  function newBranch() {
-    if (!project || !isRepository) return;
-    if (agentsWorking) {
-      toast('An agent is working. Switch branches once it finishes.');
-      return;
+  /** Makes a workspace and starts a conversation in it, as that is what one is for. */
+  async function createWorkspace() {
+    if (!project || creatingWorkspace) return;
+    creatingWorkspace = true;
+    overlay = undefined;
+    try {
+      await window.bonfire.workspaces.create(project.id);
+      await refresh();
+      await addPane();
+    } catch (cause) {
+      showError(cause);
+      // A setup script that failed to start leaves the workspace made all the same.
+      await refresh().catch(() => {});
+    } finally {
+      creatingWorkspace = false;
     }
-    creatingBranch = true;
   }
 
   /**
@@ -263,6 +306,7 @@
       addProject();
       return;
     }
+    if (!activeId) return;
     const view = !!type && isViewPaneType(type);
     const open = view && panes.find((pane) => pane.type === type);
     if (open) {
@@ -270,12 +314,12 @@
       return;
     }
     if (!canAddPane) {
-      toast(`A project can have up to ${MAX_PANES} panes open.`);
+      toast(`A workspace can have up to ${MAX_PANES} panes open.`);
       return;
     }
     if (type === 'terminal' && !canAddTerminal) {
       toast(
-        `A project can have up to ${MAX_TERMINAL_PANES} terminal panes open.`,
+        `A workspace can have up to ${MAX_TERMINAL_PANES} terminal panes open.`,
       );
       return;
     }
@@ -295,9 +339,9 @@
 
   /** Opens the diff pane and asks it to show a file, or the list for a summary click. */
   function viewChanges(path?: string) {
-    if (projectId)
+    if (activeId)
       selectedDiff = {
-        projectId,
+        workspaceId: activeId,
         path: path ?? '',
         request: ++diffRequest,
       };
@@ -320,7 +364,6 @@
   const stripLayout = $derived(
     JSON.stringify([
       stripIds.map((id) => [id, sizeOverrides[id] ?? autoSize]),
-      !panes.length,
       showPullRequest && (pullRequestSize ?? autoSize),
     ]),
   );
@@ -332,16 +375,14 @@
 
   $effect(() => {
     void stripLayout;
-    untrack(() =>
-      motion.play((id) => paneMotion || isPanel(id) || id === PULL_REQUEST_ID),
-    );
+    untrack(() => motion.play((id) => paneMotion || id === PULL_REQUEST_ID));
   });
 
-  /** Brings an opened panel or view into sight at its end of the strip. */
-  async function revealEdge(edge: 'start' | 'end') {
+  /** Brings the end of the strip into sight, where an opened view or pull request goes. */
+  async function revealEnd() {
     await tick();
     paneStrip?.scrollTo({
-      left: edge === 'start' ? 0 : paneStrip.scrollWidth,
+      left: paneStrip.scrollWidth,
       behavior: scrollBehavior(),
     });
   }
@@ -354,7 +395,7 @@
   const HIGHLIGHT_CLASS =
     'relative after:pointer-events-none after:absolute after:z-20 after:inset-x-1 after:inset-y-0 after:rounded-lg after:opacity-0 after:ring-2 after:ring-brand after:transition-opacity after:duration-500 after:ease-out after:ring-inset motion-reduce:after:transition-none';
   const HIGHLIGHTED_CLASS = 'after:opacity-100 after:duration-150';
-  /** The pane or panel just scrolled to, outlined briefly so it's found at a glance. */
+  /** The pane just scrolled to, outlined briefly so it's found at a glance. */
   let highlightedId = $state<string>();
   let highlightTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -371,8 +412,10 @@
    * Scrolls only the strip. `scrollIntoView` would also scroll the page
    * itself, pushing the header off-screen.
    */
-  async function scrollToSection(selector: string, id: string) {
-    // A section still growing in is narrower than it will be, so the strip can't
+  async function scrollToPane(paneId: string) {
+    currentPaneId = paneId;
+    statuses.markSeen(paneId);
+    // A pane still growing in is narrower than it will be, so the strip can't
     // scroll to it yet; measure once the layout has settled.
     await Promise.allSettled(
       (
@@ -382,9 +425,11 @@
         .values()
         .flatMap((node) => node.getAnimations().map((a) => a.finished)),
     );
-    const section = paneStrip?.querySelector<HTMLElement>(selector);
+    const section = paneStrip?.querySelector<HTMLElement>(
+      `[data-pane-id="${CSS.escape(paneId)}"]`,
+    );
     if (!paneStrip || !section) return;
-    highlight(id);
+    highlight(paneId);
     const offset =
       section.getBoundingClientRect().left -
       paneStrip.getBoundingClientRect().left;
@@ -392,12 +437,6 @@
       left: paneStrip.scrollLeft + offset,
       behavior: scrollBehavior(),
     });
-  }
-
-  function scrollToPane(paneId: string) {
-    currentPaneId = paneId;
-    statuses.markSeen(paneId);
-    return scrollToSection(`[data-pane-id="${CSS.escape(paneId)}"]`, paneId);
   }
 
   /** Scrolls to a pane and puts the cursor in it, in its message box, search or terminal. */
@@ -408,6 +447,17 @@
         `[data-pane-id="${CSS.escape(paneId)}"] :is(textarea, input[type="search"], [contenteditable="true"])`,
       )
       ?.focus({ preventScroll: true });
+  }
+
+  /** Goes to a pane wherever it is, opening its workspace first, such as from a notification. */
+  async function goToPane(paneId: string) {
+    const pane = appState.panes.find(({ id }) => id === paneId);
+    if (pane?.workspaceId && pane.workspaceId !== workspaceId) {
+      await openWorkspace(pane.workspaceId);
+      await tick();
+    }
+    overlay = undefined;
+    void scrollToPane(paneId);
   }
 
   /** Remembers the pane that was clicked or focused. */
@@ -429,32 +479,17 @@
     );
   }
 
-  /** Panel names can't clash with pane ids, which are UUIDs. */
-  function scrollToPanel(panel: AppPanel) {
-    return scrollToSection(`[data-panel="${panel}"]`, panel);
-  }
-
-  /** Closes a panel, or opens Activity at the end and global panels at the front. */
-  function togglePanel(panel: AppPanel) {
-    if (panel === 'activity' && !project) return;
-    if (panels.includes(panel)) {
-      panels = panels.filter((open) => open !== panel);
-      return;
-    }
-    if (panel === 'activity')
-      stripOrder = [...stripIds.filter((id) => id !== panel), panel];
-    panels = [panel, ...panels];
-    if (panel === 'activity') void tick().then(() => scrollToPanel(panel));
-    else void revealEdge('start');
+  function toggleOverlay(panel: OverlayPanel) {
+    overlay = overlay === panel ? undefined : panel;
   }
 
   /** Applies a new visible pane order locally, then saves it. */
   function reorder(ids: string[]) {
-    workspace.layout.paneIds = reorderLayout(workspace.layout.paneIds, ids);
+    appState.layout.paneIds = reorderLayout(appState.layout.paneIds, ids);
     void runAction(() => window.bonfire.panes.reorder(ids));
   }
 
-  /** Moves a pane or panel along the strip, one place at a time, and keeps it in sight. */
+  /** Moves a pane along the strip, one place at a time, and keeps it in sight. */
   function moveItem(id: string, step: number) {
     const ids = [...stripIds];
     const index = ids.indexOf(id);
@@ -463,12 +498,10 @@
     ids.splice(index, 1);
     ids.splice(target, 0, id);
     reorderStrip(ids);
-    void tick().then(() =>
-      isPanel(id) ? scrollToPanel(id) : scrollToPane(id),
-    );
+    void tick().then(() => scrollToPane(id));
   }
 
-  /** The grip of a pane or panel: drags it, or moves it with the arrow keys. */
+  /** The grip of a pane: drags it, or moves it with the arrow keys. */
   function gripOf(id: string): HTMLButtonAttributes {
     return {
       onpointerdown: (event) => drag.start(event, id, stripIds),
@@ -481,73 +514,110 @@
     };
   }
 
-  function panelProps(panel: AppPanel) {
-    return {
-      dragHandle: gripOf(panel),
-      size: paneSize(panel),
-      onclose: () => togglePanel(panel),
-      onresize: (size: PaneSize) => (sizeOverrides[panel] = size),
-    };
-  }
-
-  /** Applies a new strip order, panels and panes alike; the panes' part is saved. */
+  /** Applies a new strip order, which is saved. */
   function reorderStrip(ids: string[]) {
     stripOrder = ids;
-    const paneIds = ids.filter((id) => !isPanel(id));
-    if (paneIds.length > 1) reorder(paneIds);
+    if (ids.length > 1) reorder(ids);
+  }
+
+  /** Puts a pane last in the strip, as panes opened by the header's actions go. */
+  function placeLast(paneId: string) {
+    stripOrder = [...stripIds.filter((id) => id !== paneId), paneId];
   }
 
   // Pane status needs events for every agent, including ones scrolled out of view and
-  // ones in other projects, whose state the project picker flags.
+  // ones in other workspaces, which the workspace list and project picker flag.
   $effect(() => {
     if (!loaded) return;
-    for (const pane of workspace.panes)
+    for (const pane of appState.panes)
       if (!pane.archived && isAssistantPane(pane)) void statuses.load(pane.id);
+  });
+
+  /** How much each status asks of the user; a workspace shows its agents' most pressing. */
+  const ACTIVITY_RANK: Record<PaneStatus, number> = {
+    idle: 0,
+    done: 1,
+    working: 2,
+    error: 3,
+    input: 4,
+  };
+
+  /** What each of the project's workspaces' agents are doing, most pressing first. */
+  const workspaceActivity = $derived.by(() => {
+    const activity: Record<string, PaneStatus> = {};
+    for (const pane of appState.panes) {
+      if (pane.archived || !isAssistantPane(pane) || !pane.workspaceId)
+        continue;
+      if (pane.projectId !== project?.id) continue;
+      const status = statuses.get(pane.id);
+      const known = activity[pane.workspaceId] ?? 'idle';
+      if (ACTIVITY_RANK[status] > ACTIVITY_RANK[known])
+        activity[pane.workspaceId] = status;
+    }
+    return activity;
   });
 
   /** What needs the user in each project other than the open one: the most urgent state wins. */
   const projectAttention = $derived.by(() => {
     const attention: Record<string, ProjectAttention> = {};
-    for (const pane of workspace.panes) {
+    for (const pane of appState.panes) {
       if (pane.archived || !isAssistantPane(pane)) continue;
       const owner = pane.projectId;
-      if (!owner || owner === projectId) continue;
+      if (!owner || owner === project?.id) continue;
       const status = paneBadge(statuses.get(pane.id));
       if (!status) continue;
-      const current = attention[owner];
-      if (!current || ATTENTION_RANK[status] > ATTENTION_RANK[current])
+      const known = attention[owner];
+      if (!known || ATTENTION_RANK[status] > ATTENTION_RANK[known])
         attention[owner] = status;
     }
     return attention;
   });
 
+  /** Whether any agent anywhere is working, which stirs the logo. */
+  const anyWorking = $derived(
+    appState.panes.some(
+      (pane) =>
+        !pane.archived &&
+        isAssistantPane(pane) &&
+        statuses.get(pane.id) === 'working',
+    ),
+  );
+
+  // A workspace's strip arrangement and pull request are its own.
   $effect(() => {
-    if (!project) pullRequestOpen = false;
+    void workspaceId;
+    untrack(() => {
+      pullRequestOpen = false;
+      stripOrder = [];
+    });
   });
 
   // The pull request opens at the end of the strip, which is brought into sight.
   $effect(() => {
-    if (showPullRequest) untrack(() => void revealEdge('end'));
+    if (showPullRequest) untrack(() => void revealEnd());
   });
 
   $effect(() => {
     if (!loaded) return;
-    const id = projectId;
+    const id = activeId;
     return untrack(() => branch.watch(id));
   });
 
   // The header's pull request button follows the branch on screen.
   $effect(() => {
     if (!loaded) return;
-    const id = branch.head?.branch ? projectId : undefined;
+    const id = branch.head?.branch ? activeId : undefined;
     void branch.head;
     return untrack(() => pullRequest.watch(id));
   });
 
   $effect(() => {
     if (!loaded) return;
-    const id = projectId;
-    return untrack(() => scripts.watch(id));
+    const id = activeId;
+    const projectId = project?.id;
+    return untrack(() =>
+      scripts.watch(id && projectId ? { id, projectId } : undefined),
+    );
   });
 
   // A script runs in its own terminal pane at the end of the strip, brought on screen.
@@ -555,10 +625,9 @@
     scripts.onPane = async (paneId) => {
       const opened = !panes.some((pane) => pane.id === paneId);
       await refresh();
-      if (opened)
-        stripOrder = [...stripIds.filter((id) => id !== paneId), paneId];
+      if (opened) placeLast(paneId);
       await tick();
-      scrollToPane(paneId);
+      void scrollToPane(paneId);
     };
     scripts.onPanesChanged = refresh;
     return () => {
@@ -571,11 +640,15 @@
   $effect(() => {
     pullRequest.onAgentPane = async (paneId) => {
       await refresh();
-      stripOrder = [...stripIds.filter((id) => id !== paneId), paneId];
+      placeLast(paneId);
       await tick();
       void focusPane(paneId);
     };
-    return () => (pullRequest.onAgentPane = undefined);
+    pullRequest.onMerged = refresh;
+    return () => {
+      pullRequest.onAgentPane = undefined;
+      pullRequest.onMerged = undefined;
+    };
   });
 
   // A fork opens its summary in a new pane, which is brought on screen.
@@ -613,15 +686,15 @@
   function cyclePaneSize() {
     if (!activePane) return;
     const sizes = PANE_SIZES.map(({ value }) => value);
-    const current = sizeOverrides[activePane.id] ?? defaultPaneSize(stripCount);
+    const size = paneSize(activePane.id);
     sizeOverrides[activePane.id] =
-      sizes[(sizes.indexOf(current) + 1) % sizes.length];
+      sizes[(sizes.indexOf(size) + 1) % sizes.length];
     const { id } = activePane;
     void tick().then(() => scrollToPane(id));
   }
 
   function togglePullRequest() {
-    if (!project || pullRequest.current === undefined) return;
+    if (!activeId || pullRequest.current === undefined) return;
     if (pullRequest.pushable) {
       void pullRequest.run('push');
       return;
@@ -638,14 +711,12 @@
 
   /** Opens insights on `tab`, or switches to it; pressed again on that tab, closes it. */
   function showInsights(tab: 'tokens' | 'usage') {
-    const open = panels.includes('insights');
-    if (open && insightsTab === tab) {
-      togglePanel('insights');
+    if (overlay === 'insights' && insightsTab === tab) {
+      overlay = undefined;
       return;
     }
     insightsTab = tab;
-    if (open) scrollToPanel('insights');
-    else togglePanel('insights');
+    overlay = 'insights';
   }
 
   function runShortcut(id: ShortcutId, event: KeyboardEvent) {
@@ -653,8 +724,7 @@
     switch (id) {
       case 'shortcuts':
       case 'settings':
-      case 'activity':
-        togglePanel(id);
+        toggleOverlay(id);
         break;
       case 'insights':
         showInsights('tokens');
@@ -665,11 +735,8 @@
       case 'switchProject':
         projectMenuOpen = true;
         break;
-      case 'switchBranch':
-        if (project && isRepository) branchMenuOpen = true;
-        break;
-      case 'newBranch':
-        newBranch();
+      case 'newWorkspace':
+        void createWorkspace();
         break;
       case 'pullRequest':
         togglePullRequest();
@@ -691,6 +758,9 @@
         break;
       case 'newBrowser':
         toggleView('browser');
+        break;
+      case 'reopenPane':
+        if (closedPanes[0]) void restorePane(closedPanes[0].id);
         break;
       case 'closePane': {
         const target = activePane;
@@ -735,11 +805,10 @@
     runShortcut(id, event);
   }
 
-  // Tracks which panes and panels are in view so the rail can mark them.
+  // Tracks which panes are in view, so the pane shortcuts act on one in sight.
   $effect(() => {
-    // Re-observes as panes and panels come and go.
+    // Re-observes as panes come and go.
     void panes.length;
-    void panels.length;
     if (!paneStrip) return;
     const observer = new IntersectionObserver(
       (entries) => {
@@ -750,9 +819,7 @@
       },
       { root: paneStrip, threshold: 0.5 },
     );
-    for (const section of paneStrip.querySelectorAll(
-      '[data-pane-id], [data-panel]',
-    ))
+    for (const section of paneStrip.querySelectorAll('[data-pane-id]'))
       observer.observe(section);
     return () => observer.disconnect();
   });
@@ -794,7 +861,7 @@
   }
 
   async function handlePanesClosed({ paneIds }: PanesClosedEvent) {
-    const titles = workspace.panes
+    const titles = appState.panes
       .filter(({ id }) => paneIds.includes(id))
       .map(({ title }) => `“${title}”`);
     await refresh();
@@ -817,8 +884,9 @@
       window.bonfire.app.onFullscreenChange((value) => (fullscreen = value)),
       assistantEvents.onAll(handleAssistantEvent),
       // A clicked notification brings its pane into view.
-      window.bonfire.app.onFocusPane(scrollToPane),
+      window.bonfire.app.onFocusPane((paneId) => void goToPane(paneId)),
       window.bonfire.panes.onClosed((event) => void handlePanesClosed(event)),
+      window.bonfire.workspaces.onChange(() => void refresh().catch(showError)),
       window.bonfire.app.onNotificationsBlocked((appName) =>
         toast(notificationsBlockedMessage(appName), {
           variant: 'error',
@@ -852,7 +920,7 @@
    * could be checked at all, whether one is signed in is unknown, so it isn't asked for.
    */
   function needsOnboarding() {
-    if (!workspace.projects.length) return true;
+    if (!appState.projects.length) return true;
     const checked = PROVIDERS.filter((provider) => accounts[provider]);
     return (
       checked.length > 0 &&
@@ -860,7 +928,7 @@
     );
   }
 
-  /** Leaves setup for the workspace, where the starting panes open on their own. */
+  /** Leaves setup for the workspace. */
   async function finishOnboarding() {
     const ready = (async () => {
       try {
@@ -878,55 +946,10 @@
     await bloom?.reveal();
   }
 
-  /** The agent that starts a project: Claude when connected, else whichever provider is. */
-  function startingAgents(): AssistantProvider[] {
-    const ready = PROVIDERS.filter(
-      (provider) =>
-        accounts[provider]?.signedIn &&
-        workspace.preferences?.providers?.[provider] !== false,
-    );
-    if (!ready.length) return [];
-    return [ready.includes('claude') ? 'claude' : ready[0]];
-  }
-
-  /** Whether starting panes are being opened; a failed attempt isn't retried until the project changes. */
-  let seeding = false;
-  let seedFailedFor: string | undefined;
-  /** Projects that have had their starting panes, so closing them all leaves the empty state. */
-  const seeded = new Set<string>();
-
-  async function openStartingPanes() {
-    const agents = startingAgents();
-    if (!agents.length || seeding || seedFailedFor === projectId) return;
-    seeding = true;
-    try {
-      // New panes go to the front, so the last one added ends up first.
-      for (const agent of agents.toReversed()) {
-        await runAction(() => window.bonfire.panes.add(agent));
-      }
-      await tick();
-      seedFailedFor = panes.length ? undefined : projectId;
-      paneStrip?.scrollTo({ left: 0, behavior: scrollBehavior() });
-    } finally {
-      seeding = false;
-    }
-  }
-
-  $effect(() => {
-    if (!loaded || onboarding || !projectId || busy) return;
-    if (panes.length) {
-      seeded.add(projectId);
-      return;
-    }
-    if (seeded.has(projectId)) return;
-    seeded.add(projectId);
-    void openStartingPanes();
-  });
-
   // The open project's machine runs its own agent CLIs, so they're checked as projects change.
   $effect(() => {
     if (!loaded) return;
-    void projectId;
+    void project?.id;
     void preferences.current.providers.claude;
     void preferences.current.providers.codex;
     void cliVersions.refresh();
@@ -948,6 +971,17 @@
       loading = false;
     }
   });
+
+  /** What the header calls the workspace on screen, and the branch it works on. */
+  const heading = $derived.by(() => {
+    if (!project || !current) return {};
+    return { title: workspaceLabel(current), detail: current.branch };
+  });
+
+  const launcherSubtitle = $derived.by(() => {
+    if (!current) return '';
+    return `Agents and terminals work on ${current.branch}, apart from your other workspaces.`;
+  });
 </script>
 
 <svelte:head><title>Bonfire</title></svelte:head>
@@ -957,42 +991,78 @@
   onfocus={() => loaded && void cliVersions.refresh()}
 />
 
-{#snippet placeholder()}
-  {#if !workspace.projects.length}
-    <Card.Root
-      class="grid h-full place-content-center justify-items-center text-center text-muted-foreground"
-    >
-      <Icon name="project" class="size-7" />
-      <h1 class="mt-6 font-medium text-foreground">Add a project</h1>
-      <p class="mb-6">
-        Choose a repository on this computer, or on another over SSH, for Claude
-        and Codex to work in.
-      </p>
-      <Button disabled={!loaded || busy} onclick={addProject}>
-        Add project
-      </Button>
-    </Card.Root>
-  {:else}
-    <Card.Root
-      class="grid h-full place-content-center justify-items-center text-center text-muted-foreground"
-    >
-      <!-- svelte-ignore a11y_no_static_element_interactions -->
-      <div
-        onpointerenter={() => (stirred = true)}
-        onpointerleave={() => (stirred = false)}
+{#snippet launcher()}
+  <section
+    data-strip-id="launcher"
+    class={cn(SECTION_CLASS, stripCount ? 'basis-1/3 min-w-90' : 'basis-full')}
+  >
+    {#if !project}
+      <Card.Root
+        class="grid h-full place-content-center justify-items-center text-center text-muted-foreground"
       >
-        <Logo active={stirred} idle={!stirred} warm class="size-10" />
-      </div>
-      <h1 class="mt-6 font-medium text-foreground">Start a conversation</h1>
-      <p class="max-w-90 text-pretty">
-        {#if branch.head?.branch}
-          Conversations work on {branch.head.branch}.
-        {:else}
-          Conversations work in {project?.name}.
-        {/if}
-      </p>
-    </Card.Root>
-  {/if}
+        <Icon name="project" class="size-7" />
+        <h1 class="mt-6 font-medium text-foreground">Add a project</h1>
+        <p class="mb-6">
+          Choose a repository on this computer, or on another over SSH, for
+          Claude and Codex to work in.
+        </p>
+        <Button disabled={!loaded || busy} onclick={addProject}>
+          Add project
+        </Button>
+      </Card.Root>
+    {:else if !current}
+      <Card.Root
+        class="grid h-full place-content-center justify-items-center px-6 text-center text-muted-foreground"
+      >
+        <h1 class="font-medium text-foreground">No workspace yet</h1>
+        <p class="mt-1 mb-6 max-w-80 text-sm text-pretty">
+          Each workspace is its own branch and folder, so agents work apart from
+          each other.
+        </p>
+        <Button
+          disabled={busy || creatingWorkspace}
+          loading={creatingWorkspace}
+          onclick={() => void createWorkspace()}
+        >
+          New workspace
+        </Button>
+      </Card.Root>
+    {:else if archived && current}
+      <Card.Root
+        class="grid h-full place-content-center justify-items-center px-6 text-center text-muted-foreground"
+      >
+        <h1 class="font-medium text-foreground">
+          {workspaceLabel(current)} is archived
+        </h1>
+        <p class="mt-1 mb-6 max-w-80 text-sm text-pretty">
+          Its folder is gone, but its branch {current.branch} and its uncommitted
+          work are kept.
+        </p>
+        <Button
+          disabled={busy}
+          onclick={() =>
+            void runAction(() =>
+              window.bonfire.workspaces.unarchive(current.id),
+            )}
+        >
+          Unarchive
+        </Button>
+      </Card.Root>
+    {:else}
+      <LauncherPane
+        title="Start something new"
+        subtitle={launcherSubtitle}
+        providers={preferences.enabledProviders}
+        startingProvider={startingProvider(
+          preferences.current,
+          appState.settings.lastProvider,
+        )}
+        {canAddTerminal}
+        disabled={!canAddPane || busy}
+        onadd={(type) => void addPane(type)}
+      />
+    {/if}
+  </section>
 {/snippet}
 
 <Bloom bind:this={bloom}>
@@ -1013,122 +1083,101 @@
     <Onboarding
       bind:accounts
       bind:accountErrors
-      hasProjects={workspace.projects.length > 0}
+      hasProjects={appState.projects.length > 0}
       onfinish={() => void finishOnboarding()}
     />
   {:else}
     <div class="flex h-screen">
       <AppRail
-        {panels}
-        ontogglePanel={togglePanel}
-        {trafficLightInset}
+        open={overlay === 'project' ? undefined : overlay}
+        ontoggle={toggleOverlay}
         onhelp={() => window.bonfire.navigation.help()}
-        onaddPane={addPane}
-        startingProvider={startingProvider(
-          preferences.current,
-          workspace.settings.lastProvider,
-        )}
-        panes={panes.map(({ id, title }) => ({
-          id,
-          title,
-          status: scripts.runOfPane(id)?.running ? 'working' : statuses.get(id),
-        }))}
-        {canAddPane}
-        {canAddTerminal}
-        onselectPane={scrollToPane}
-        onselectPanel={scrollToPanel}
+        working={anyWorking}
+        {trafficLightInset}
       />
-      <div class="flex min-w-0 flex-1 flex-col">
-        <AppHeader
-          {trafficLightInset}
-          bind:pullRequestOpen
-          disabled={!project}
-          activityOpen={panels.includes('activity')}
-          ontoggleActivity={() => togglePanel('activity')}
-          {openViews}
-          ontoggleView={toggleView}
-          paneCount={panes.length + panels.length}
-          onclosePanes={() =>
-            void changePanes(async () => {
-              panels = [];
-              for (const { id } of panes)
-                await window.bonfire.panes.archive(id);
-            })}
-        >
-          {#snippet location()}
-            <ProjectPicker
-              projects={workspace.projects}
-              active={project}
-              attention={projectAttention}
-              bind:open={projectMenuOpen}
-              onselect={openProject}
-              onadd={addProject}
-              onremove={removeProject}
+      <div class="relative flex min-w-0 flex-1">
+        <div class="flex min-w-0 flex-1" inert={!!overlay}>
+          <WorkspaceList
+            projects={appState.projects}
+            {project}
+            attention={projectAttention}
+            bind:projectMenuOpen
+            workspaces={projectWorkspaces}
+            currentId={workspaceId}
+            activity={workspaceActivity}
+            creating={creatingWorkspace}
+            settingsOpen={overlay === 'project'}
+            {trafficLightInset}
+            onselectProject={openProject}
+            onaddProject={addProject}
+            onremoveProject={removeProject}
+            onsettings={() => toggleOverlay('project')}
+            oncreate={() => void createWorkspace()}
+            onopen={(id) => void openWorkspace(id)}
+            onrename={(id, title) =>
+              void runAction(() => window.bonfire.workspaces.rename(id, title))}
+            onarchive={(id) =>
+              void runAction(() => window.bonfire.workspaces.archive(id))}
+            onunarchive={(id) =>
+              void runAction(() => window.bonfire.workspaces.unarchive(id))}
+            ondelete={(id) =>
+              void runAction(() => window.bonfire.workspaces.remove(id))}
+          />
+          <div class="flex min-w-0 flex-1 flex-col">
+            <AppHeader
+              bind:pullRequestOpen
+              disabled={!activeId}
+              title={heading.title}
+              detail={heading.detail}
+              {openViews}
+              ontoggleView={toggleView}
+              {closedPanes}
+              onrestorePane={(id) => void restorePane(id)}
+              paneCount={panes.length}
+              onclosePanes={() =>
+                void changePanes(async () => {
+                  for (const { id } of panes)
+                    await window.bonfire.panes.archive(id);
+                })}
             />
-            {#if project}
-              <BranchPicker
-                projectId={project.id}
-                head={branch.head}
-                locked={agentsWorking}
-                bind:open={branchMenuOpen}
-                onswitch={switchBranch}
-                onnew={newBranch}
-              />
-            {/if}
-          {/snippet}
-        </AppHeader>
 
-        <div class="flex min-h-0 flex-1">
-          <main class="flex min-h-0 min-w-0 flex-1 pr-2 pb-2">
-            <div class="min-w-0 flex-1">
-              <div
-                bind:this={paneStrip}
-                onfocusin={trackPane}
-                onpointerdowncapture={trackPane}
-                class={cn(
-                  '-mx-1 flex h-full snap-x snap-mandatory overflow-x-auto overflow-y-hidden overscroll-x-contain scrollbar-none',
-                  drag.active && 'select-none',
-                  (drag.active || motion.active) && 'snap-none',
-                )}
-              >
-                {#each stripIds as id (id)}
-                  {@const pane = isPanel(id)
-                    ? undefined
-                    : panes.find((pane) => pane.id === id)}
-                  {#if !panes.length && id === 'activity'}
+            <main class="flex min-h-0 min-w-0 flex-1 pr-2 pb-2">
+              <div class="min-w-0 flex-1">
+                <div
+                  bind:this={paneStrip}
+                  onfocusin={trackPane}
+                  onpointerdowncapture={trackPane}
+                  class={cn(
+                    '-mx-1 flex h-full snap-x snap-mandatory overflow-x-auto overflow-y-hidden overscroll-x-contain scrollbar-none',
+                    drag.active && 'select-none',
+                    (drag.active || motion.active) && 'snap-none',
+                  )}
+                >
+                  {#each stripIds as id (id)}
+                    {@const pane = panes.find((pane) => pane.id === id)!}
+                    <!-- The section sits right in the `#each`: an `out:` only plays when its own block goes. -->
                     <section
-                      data-strip-id="placeholder"
-                      class={cn(SECTION_CLASS, autoSizeClass)}
+                      data-pane-id={pane.id}
+                      data-strip-id={id}
+                      class={cn(
+                        SECTION_CLASS,
+                        sizeOverrides[id]
+                          ? sizeClass(sizeOverrides[id])
+                          : autoSizeClass,
+                        HIGHLIGHT_CLASS,
+                        highlightedId === id && HIGHLIGHTED_CLASS,
+                        drag.isDragging(id) && '*:shadow-2xl *:shadow-black/50',
+                      )}
+                      style={drag.style(id)}
                       out:leave={{ animate: paneMotion }}
                     >
-                      {@render placeholder()}
-                    </section>
-                  {/if}
-                  <!-- One section for panels and panes alike: an `out:` only plays when its own
-                     block goes, so the section has to sit right in the `#each`. -->
-                  <section
-                    data-panel={pane ? undefined : id}
-                    data-pane-id={pane?.id}
-                    data-strip-id={id}
-                    class={cn(
-                      SECTION_CLASS,
-                      sizeOverrides[id]
-                        ? sizeClass(sizeOverrides[id])
-                        : autoSizeClass,
-                      HIGHLIGHT_CLASS,
-                      highlightedId === id && HIGHLIGHTED_CLASS,
-                      drag.isDragging(id) && '*:shadow-2xl *:shadow-black/50',
-                    )}
-                    style={drag.style(id)}
-                    out:leave={{ animate: !pane || paneMotion }}
-                  >
-                    {#if pane}
                       <PaneView
                         {pane}
-                        projectId={project!.id}
+                        workspaceId={pane.workspaceId!}
                         badge={paneBadge(statuses.get(pane.id))}
                         onviewChanges={viewChanges}
-                        selectedDiff={selectedDiff?.projectId === project!.id
+                        selectedDiff={selectedDiff?.workspaceId ===
+                        pane.workspaceId
                           ? selectedDiff
                           : undefined}
                         dragHandle={gripOf(pane.id)}
@@ -1149,60 +1198,69 @@
                             .catch(showError);
                         }}
                       />
-                    {:else if id === 'settings'}
-                      <SettingsPane {...panelProps(id)} />
-                    {:else if id === 'shortcuts'}
-                      <ShortcutsPane {...panelProps(id)} />
-                    {:else if id === 'activity'}
-                      <ActivityPane {projectId} {...panelProps(id)} />
-                    {:else if id === 'insights'}
-                      <InsightsPane
-                        bind:tab={insightsTab}
-                        {...panelProps(id)}
+                    </section>
+                  {/each}
+                  {#if activeId && showPullRequest}
+                    <section
+                      data-strip-id={PULL_REQUEST_ID}
+                      class={cn(
+                        SECTION_CLASS,
+                        pullRequestSize
+                          ? sizeClass(pullRequestSize)
+                          : autoSizeClass,
+                      )}
+                      out:leave
+                    >
+                      <PullRequestView
+                        workspaceId={activeId}
+                        size={pullRequestSize ?? autoSize}
+                        onresize={(size) => (pullRequestSize = size)}
+                        onclose={() => (pullRequestOpen = false)}
                       />
-                    {/if}
-                  </section>
-                {/each}
-                {#if !panes.length && !panels.includes('activity')}
-                  <section
-                    data-strip-id="placeholder"
-                    class={cn(SECTION_CLASS, autoSizeClass)}
-                    out:leave={{ animate: paneMotion }}
-                  >
-                    {@render placeholder()}
-                  </section>
-                {/if}
-                {#if project && showPullRequest}
-                  <section
-                    data-strip-id={PULL_REQUEST_ID}
-                    class={cn(
-                      SECTION_CLASS,
-                      pullRequestSize
-                        ? sizeClass(pullRequestSize)
-                        : autoSizeClass,
-                    )}
-                    out:leave
-                  >
-                    <PullRequestView
-                      projectId={project.id}
-                      size={pullRequestSize ?? autoSize}
-                      onresize={(size) => (pullRequestSize = size)}
-                      onclose={() => (pullRequestOpen = false)}
-                    />
-                  </section>
-                {/if}
+                    </section>
+                  {/if}
+                  {@render launcher()}
+                </div>
               </div>
-            </div>
-          </main>
+            </main>
+          </div>
         </div>
+
+        {#if overlay === 'settings'}
+          <Overlay label="Settings" onclose={() => (overlay = undefined)}>
+            <SettingsPane onclose={() => (overlay = undefined)} />
+          </Overlay>
+        {:else if overlay === 'shortcuts'}
+          <Overlay
+            label="Keyboard shortcuts"
+            onclose={() => (overlay = undefined)}
+          >
+            <ShortcutsPane onclose={() => (overlay = undefined)} />
+          </Overlay>
+        {:else if overlay === 'insights'}
+          <Overlay label="Insights" onclose={() => (overlay = undefined)}>
+            <InsightsPane
+              bind:tab={insightsTab}
+              onclose={() => (overlay = undefined)}
+            />
+          </Overlay>
+        {:else if overlay === 'project' && project}
+          <Overlay
+            label={`${project.name} settings`}
+            onclose={() => (overlay = undefined)}
+          >
+            <ProjectSettings
+              {project}
+              onsaved={() => void refresh().catch(showError)}
+              onclose={() => (overlay = undefined)}
+            />
+          </Overlay>
+        {/if}
       </div>
     </div>
   {/if}
 </Bloom>
 
-{#if project}
-  <NewBranchDialog bind:open={creatingBranch} projectId={project.id} />
-{/if}
 <CreateProjectDialog
   bind:open={creatingProject}
   oncreated={() => void refresh().catch(showError)}

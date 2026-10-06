@@ -7,6 +7,7 @@ import {
   type Pane,
   type Project,
   type Preferences,
+  type Workspace,
 } from '../../../shared/contracts';
 import { errorMessage, resolvePreferences } from '../../../shared/domain';
 import type { AssistantHost } from '../assistant';
@@ -31,6 +32,7 @@ import { paneService } from './panes';
 import { projectService } from './projects';
 import { pullRequestService } from './pull-requests';
 import { repositoryService } from './repository';
+import { workspaceService } from './workspaces';
 
 export type ServiceOptions = Pick<AssistantHost, 'chooseImage' | 'openUrl'> & {
   dataDirectory: string;
@@ -75,15 +77,12 @@ export function services(options: ServiceOptions) {
   const toWindow = (event: AssistantEvent) =>
     options.send(events.assistantEvent, event);
 
-  const repository = repositoryService({
-    store,
-    machines,
-    busy: (project) =>
-      panes.openPanesOf(project).some((pane) => agents.isRunning(pane.id)),
-  });
+  const workspacesChanged = () => options.send(events.workspacesChanged, null);
+
+  const repository = repositoryService({ store, machines });
   const terminals = new Terminals({
     store,
-    machine: (projectId) => repository.machineOf(store.project(projectId)),
+    folder: (workspaceId) => repository.folder(workspaceId),
     modulePath: options.hosts.terminals,
     exited: (event) => scripts.handle(event),
     toWindow: (event) => options.send(events.terminalData, event),
@@ -113,6 +112,7 @@ export function services(options: ServiceOptions) {
     chooseImage: options.chooseImage,
     openUrl: options.openUrl,
     emit: emitAssistantEvent,
+    workspacesChanged,
     log: options.log ?? console.info,
     modulePath: options.hosts.agents,
   });
@@ -128,7 +128,7 @@ export function services(options: ServiceOptions) {
     terminals,
     machine: repository.machineOf,
     // Like the header's other actions, a run opens its pane at the end of the strip.
-    addPane: (project) => panes.add('terminal', project, false, 'end'),
+    addPane: (workspace) => panes.add('terminal', workspace, false, 'end'),
     archivePane: panes.archive,
     emit: (run) => options.send(events.scriptRun, run),
   });
@@ -138,6 +138,20 @@ export function services(options: ServiceOptions) {
     files,
     terminals,
     panes,
+  });
+  const workspaces = workspaceService({
+    store,
+    repository,
+    panes,
+    terminals,
+    scripts,
+    files,
+    isRunning: agents.isRunning,
+    login: async () => {
+      const status = await github.status();
+      return 'login' in status ? status.login : undefined;
+    },
+    changed: workspacesChanged,
   });
   const connections = connectionService({ store, machines });
   const pullRequests = pullRequestService({
@@ -160,6 +174,7 @@ export function services(options: ServiceOptions) {
       for (const id of closed) panes.archive(store.pane(id));
       options.send(events.panesClosed, { paneIds: closed, reason: 'merged' });
     },
+    done: workspaces.markDone,
   });
   mergeWatcher.start();
 
@@ -216,22 +231,19 @@ export function services(options: ServiceOptions) {
       },
       cancelConnect: async () => github.cancelSignIn(),
       repositories: async () => github.repositories(),
-      pullRequest: async (projectId) => github.pullRequest(folder(projectId)),
-      pullRequestDraft: async (projectId) => pullRequests.draft(projectId),
-      createPullRequest: async (projectId, input) =>
-        pullRequests.create(projectId, input),
-      runAction: async (projectId, action) =>
-        pullRequests.runAction(projectId, action),
-      mergePullRequest: async (projectId) =>
-        github.mergePullRequest(folder(projectId)),
-      openPullRequest: async (projectId) =>
-        pullRequests.open(projectId, options.openUrl),
-      activity: async (projectId) => github.activity(folder(projectId)),
-      openActivity: async (url) => {
-        if (new URL(url).origin !== 'https://github.com')
-          throw Error('Only GitHub links can be opened.');
-        await options.openUrl(url);
+      pullRequest: async (workspaceId) =>
+        github.pullRequest(folder(workspaceId)),
+      pullRequestDraft: async (workspaceId) => pullRequests.draft(workspaceId),
+      createPullRequest: async (workspaceId, input) =>
+        pullRequests.create(workspaceId, input),
+      runAction: async (workspaceId, action) =>
+        pullRequests.runAction(workspaceId, action),
+      mergePullRequest: async (workspaceId) => {
+        await github.mergePullRequest(folder(workspaceId));
+        workspaces.markDone([workspaceId]);
       },
+      openPullRequest: async (workspaceId) =>
+        pullRequests.open(workspaceId, options.openUrl),
     },
     projects: {
       chooseFolder: async () => (await options.chooseDirectory()) ?? null,
@@ -240,7 +252,19 @@ export function services(options: ServiceOptions) {
       cloneFolder: async () => projects.cloneFolder(),
       open: async (id) => projects.open(id),
       remove: async (id) => projects.remove(id),
-      favicon: async (id) => favicon(folder(id)),
+      favicon: async (id) => favicon(repository.projectFolder(id)),
+      update: async (id, input) =>
+        sendable<Project>(projects.update(id, input)),
+      config: async (id) => projects.config(id),
+    },
+    workspaces: {
+      create: async (projectId) =>
+        sendable<Workspace>(await workspaces.create(projectId)),
+      open: async (id) => workspaces.open(id),
+      rename: async (id, title) => workspaces.rename(id, title),
+      archive: async (id) => workspaces.archive(id),
+      unarchive: async (id) => workspaces.unarchive(id),
+      remove: async (id) => workspaces.remove(id),
     },
     connections: {
       list: async () => connections.list(),
@@ -262,6 +286,7 @@ export function services(options: ServiceOptions) {
         return { pane: sendable<Pane>(pane), attachment };
       },
       archive: async (id) => panes.archive(store.pane(id)),
+      restore: async (id) => sendable<Pane>(panes.restore(store.pane(id))),
       reorder: async (ids) => panes.reorder(ids),
       rename: async (id, title) => panes.rename(id, title),
       navigate: async (id, url) => panes.navigate(id, url),
@@ -310,41 +335,37 @@ export function services(options: ServiceOptions) {
       save: async (projectId, input) => scripts.save(projectId, input),
       remove: async (projectId, scriptId) =>
         scripts.remove(projectId, scriptId),
-      run: async (projectId, scriptId) => scripts.run(projectId, scriptId),
-      stop: async (projectId, scriptId) => scripts.stop(projectId, scriptId),
-      runs: async (projectId) => scripts.activeRuns(projectId),
+      run: async (workspaceId, scriptId) => scripts.run(workspaceId, scriptId),
+      stop: async (workspaceId, scriptId) =>
+        scripts.stop(workspaceId, scriptId),
+      runs: async (workspaceId) => scripts.activeRuns(workspaceId),
     },
     terminal: {
       create: async (input) => terminals.create(input),
       snapshot: async (id) => terminals.snapshot(id),
     },
     git: {
-      status: (projectId) => repository.status(projectId),
-      head: async (projectId) => git.head(folder(projectId)),
-      localBranches: async (projectId) => git.localBranches(folder(projectId)),
-      branches: async (projectId) => git.branches(folder(projectId)),
-      diff: async (projectId, path) => repository.diff(projectId, path),
-      discard: async (projectId, path) => repository.discard(projectId, path),
-      changesAmong: async (projectId, paths) =>
-        repository.changesAmong(projectId, paths),
-      checkout: async (projectId, branch) =>
-        repository.checkout(projectId, branch),
-      createBranch: async (projectId, name, base) =>
-        repository.createBranch(projectId, name, base),
-      pull: async (projectId) => repository.pull(projectId),
+      status: (workspaceId) => repository.status(workspaceId),
+      head: async (workspaceId) => git.head(folder(workspaceId)),
+      diff: async (workspaceId, path) => repository.diff(workspaceId, path),
+      discard: async (workspaceId, path) =>
+        repository.discard(workspaceId, path),
+      changesAmong: async (workspaceId, paths) =>
+        repository.changesAmong(workspaceId, paths),
     },
     filesystem: {
-      list: async (projectId, path) => files.list(folder(projectId), path),
-      readFile: async (projectId, path) => files.read(folder(projectId), path),
-      search: async (projectId, query) =>
-        files.search(folder(projectId), query),
-      watch: async (projectId) =>
-        files.watch(projectId, folder(projectId), (event) =>
+      list: async (workspaceId, path) => files.list(folder(workspaceId), path),
+      readFile: async (workspaceId, path) =>
+        files.read(folder(workspaceId), path),
+      search: async (workspaceId, query) =>
+        files.search(folder(workspaceId), query),
+      watch: async (workspaceId) =>
+        files.watch(workspaceId, folder(workspaceId), (event) =>
           options.send(events.fileChange, event),
         ),
-      unwatch: async (projectId) => {
-        store.project(projectId);
-        await files.unwatch(projectId);
+      unwatch: async (workspaceId) => {
+        store.workspace(workspaceId);
+        await files.unwatch(workspaceId);
       },
     },
   };

@@ -5,9 +5,8 @@ import type {
   PullRequestInput,
 } from '$shared/contracts';
 import { errorMessage } from '$shared/domain';
-import { watchProject } from '../file-watch';
+import { watchWorkspace } from '../file-watch';
 import { Refresher } from '../refresher';
-import { branch } from './branch.svelte';
 import { toast } from './toast.svelte';
 
 /**
@@ -52,7 +51,7 @@ class PullRequestStore {
   running = $state<ActionId>();
   /** The pane whose agent is carrying out `running`; the action lasts until its turn ends. */
   agentPaneId = $state<string>();
-  private projectId?: string;
+  private workspaceId?: string;
   private generation = 0;
   private pulls?: Refresher;
   private drafts?: Refresher;
@@ -61,19 +60,19 @@ class PullRequestStore {
   private finishedEarly = new Set<string>();
 
   /**
-   * Follows a project's checked-out branch, or none; returns what stops it. Watch again
+   * Follows a workspace's checked-out branch, or none; returns what stops it. Watch again
    * when the branch changes, since each branch has its own pull request.
    */
-  watch(projectId: string | undefined) {
-    this.projectId = projectId;
+  watch(workspaceId: string | undefined) {
+    this.workspaceId = workspaceId;
     this.current = undefined;
     this.draft = undefined;
     const session = ++this.generation;
-    if (!projectId) return;
+    if (!workspaceId) return;
     const current = () => session === this.generation;
     const pulls = new Refresher(
       async () => {
-        const pull = await this.lookUpPull(projectId, current);
+        const pull = await this.lookUpPull(workspaceId, current);
         pulls.setInterval(
           pull?.state !== 'open'
             ? undefined
@@ -84,7 +83,7 @@ class PullRequestStore {
       },
       { minGapMs: PULL_GAP_MS },
     );
-    const drafts = new Refresher(() => this.lookUpDraft(projectId, current), {
+    const drafts = new Refresher(() => this.lookUpDraft(workspaceId, current), {
       minGapMs: DRAFT_GAP_MS,
     });
     this.pulls = pulls;
@@ -93,10 +92,14 @@ class PullRequestStore {
     void drafts.refresh();
     // A push moves the remote branch, which can open or update the pull request; the
     // branch's own work changes with its files, its commits, and its pushes.
-    const watch = watchProject(projectId, ['files', 'refs', 'head'], (kind) => {
-      drafts.invalidate(kind === 'files' ? DRAFT_FILES_GAP_MS : undefined);
-      if (kind === 'refs') pulls.invalidate();
-    });
+    const watch = watchWorkspace(
+      workspaceId,
+      ['files', 'refs', 'head'],
+      (kind) => {
+        drafts.invalidate(kind === 'files' ? DRAFT_FILES_GAP_MS : undefined);
+        if (kind === 'refs') pulls.invalidate();
+      },
+    );
     void watch.live.then(
       (live) => {
         if (!live) drafts.setInterval(REMOTE_DRAFT_POLL_MS);
@@ -116,9 +119,9 @@ class PullRequestStore {
     await Promise.all([this.pulls?.refresh(), this.drafts?.refresh()]);
   }
 
-  private async lookUpPull(projectId: string, current: () => boolean) {
+  private async lookUpPull(workspaceId: string, current: () => boolean) {
     try {
-      const pull = await window.bonfire.github.pullRequest(projectId);
+      const pull = await window.bonfire.github.pullRequest(workspaceId);
       if (current()) this.current = pull;
       return pull;
     } catch (cause) {
@@ -130,21 +133,21 @@ class PullRequestStore {
   }
 
   /** Looked up even with an open pull request, to know whether it has work left to push. */
-  private async lookUpDraft(projectId: string, current: () => boolean) {
+  private async lookUpDraft(workspaceId: string, current: () => boolean) {
     const draft = await window.bonfire.github
-      .pullRequestDraft(projectId)
+      .pullRequestDraft(workspaceId)
       .catch(() => undefined);
     if (current()) this.draft = draft;
   }
 
   async create(input: PullRequestInput) {
-    const projectId = this.projectId;
-    if (!projectId) return;
+    const workspaceId = this.workspaceId;
+    if (!workspaceId) return;
     const pull = await window.bonfire.github.createPullRequest(
-      projectId,
+      workspaceId,
       input,
     );
-    if (projectId === this.projectId) this.current = pull;
+    if (workspaceId === this.workspaceId) this.current = pull;
   }
 
   /** Told of the pane an agent was given the pull request in, to bring it on screen. */
@@ -152,8 +155,8 @@ class PullRequestStore {
 
   /** Opens a pane with the last-used agent and has it carry out `action`. */
   async run(action: ActionId) {
-    const projectId = this.projectId;
-    if (!projectId || this.running) return;
+    const workspaceId = this.workspaceId;
+    if (!workspaceId || this.running) return;
     this.running = action;
     this.finishedEarly.clear();
     // Whatever happens to the agent, the action does not stay busy forever.
@@ -164,7 +167,7 @@ class PullRequestStore {
       this.settle();
     }, ACTION_TIMEOUT_MS);
     try {
-      const paneId = await window.bonfire.github.runAction(projectId, action);
+      const paneId = await window.bonfire.github.runAction(workspaceId, action);
       if (this.finishedEarly.has(paneId)) return this.settle();
       this.agentPaneId = paneId;
       await this.onAgentPane?.(paneId);
@@ -187,28 +190,15 @@ class PullRequestStore {
     void this.reload();
   }
 
+  /** Squash-merges the open pull request; main marks the workspace done. */
   async merge() {
-    const projectId = this.projectId;
-    const base = this.current?.base;
-    if (!projectId || this.merging) return;
+    const workspaceId = this.workspaceId;
+    if (!workspaceId || this.merging) return;
     this.merging = true;
     try {
-      await window.bonfire.github.mergePullRequest(projectId);
-      toast('Merged the pull request.', {
-        duration: 10_000,
-        action: base
-          ? {
-              label: `Switch to ${base}`,
-              run: () =>
-                void branch.switchAndPull(base).catch((cause) =>
-                  toast(errorMessage(cause), {
-                    variant: 'error',
-                    duration: 0,
-                  }),
-                ),
-            }
-          : undefined,
-      });
+      await window.bonfire.github.mergePullRequest(workspaceId);
+      toast('Merged the pull request.');
+      await this.onMerged?.();
     } catch (cause) {
       toast(errorMessage(cause), { variant: 'error', duration: 0 });
     } finally {
@@ -216,6 +206,9 @@ class PullRequestStore {
       await this.reload();
     }
   }
+
+  /** Told once a merge from the app went through, as it changes the workspace's status. */
+  onMerged?: () => void | Promise<void>;
 }
 
 export const pullRequest = new PullRequestStore();

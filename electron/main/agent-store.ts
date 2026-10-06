@@ -6,6 +6,7 @@ import type {
   ReasoningEffort,
   SshConnection,
   State,
+  Workspace,
 } from '../../shared/contracts';
 import { resolvePreferences } from '../../shared/domain';
 import type { AgentStore } from './assistant';
@@ -22,6 +23,7 @@ import {
 /** What the agent host is told of the state: everything but conversations and closed panes. */
 export type AgentState = {
   projects: Project[];
+  workspaces: Workspace[];
   connections: SshConnection[];
   preferences: Partial<Preferences>;
   /** Open panes, without their messages. */
@@ -45,6 +47,7 @@ export function agentState(view: StateView): AgentState {
   const state = sendable<State>(view);
   return {
     projects: [...state.projects],
+    workspaces: [...state.workspaces],
     connections: [...state.connections],
     preferences: state.preferences,
     panes: state.panes
@@ -65,6 +68,7 @@ export function agentState(view: StateView): AgentState {
  */
 export class AgentMirror implements AgentStore {
   private projects = new Map<string, Project>();
+  private workspaces = new Map<string, Workspace>();
   private readonly paneMap = new Map<string, Pane>();
   private stored: Partial<Preferences> = {};
   connections: SshConnection[] = [];
@@ -106,6 +110,9 @@ export class AgentMirror implements AgentStore {
   sync(state: AgentState, applied: number) {
     this.projects = new Map(
       state.projects.map((project) => [project.id, project]),
+    );
+    this.workspaces = new Map(
+      state.workspaces.map((workspace) => [workspace.id, workspace]),
     );
     // Unchanged connections keep their objects, by which the host's machines are cached.
     const known = new Map(this.connections.map((item) => [item.id, item]));
@@ -149,6 +156,12 @@ export class AgentMirror implements AgentStore {
     const project = this.projects.get(id);
     if (!project) throw Error('Project not found');
     return project;
+  }
+
+  workspace(id: string) {
+    const workspace = this.workspaces.get(id);
+    if (!workspace) throw Error('Workspace not found');
+    return workspace;
   }
 
   pane(id: string) {
