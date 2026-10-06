@@ -292,8 +292,8 @@
 <aside class="flex w-72 shrink-0 flex-col pb-2" aria-label="Workspaces">
   <div
     class={cn(
-      'flex h-13 shrink-0 items-center gap-1.5 pr-2 app-drag',
-      trafficLightInset && 'pl-20',
+      'flex h-13 shrink-0 items-center gap-1.5 pr-6 pl-6 app-drag',
+      trafficLightInset && 'pl-20!',
     )}
   >
     <div class="flex min-w-0 flex-1 app-no-drag">
@@ -334,7 +334,7 @@
   </div>
 
   {#if project}
-    <nav class="min-h-0 flex-1 overflow-y-auto pr-2 scrollbar-none">
+    <nav class="min-h-0 flex-1 overflow-y-auto px-6 scrollbar-none">
       {#each sections as section (section.status)}
         {#if section.items.length || section.status === 'in_progress'}
           {@const collapsible = section.status === 'archived'}
@@ -400,7 +400,7 @@
     </nav>
   {/if}
   <footer
-    class="flex shrink-0 items-center justify-between pt-2 pr-3 pl-3"
+    class="flex shrink-0 items-center justify-between px-6 pt-2"
     aria-label="App"
   >
     {#each PANEL_ITEMS as item (item.panel)}
