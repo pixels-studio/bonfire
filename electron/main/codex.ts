@@ -2,6 +2,7 @@ import { tmpdir } from 'node:os';
 import type {
   AssistantEvent,
   ModelOption,
+  NeedsDeviceAuth,
   Project,
   ProviderAccount,
   ProviderLimits,
@@ -11,6 +12,7 @@ import type {
 import {
   SIMPLIFIED_ENGLISH_INSTRUCTIONS,
   errorMessage,
+  stripAnsi,
   withSkillNames,
 } from '../../shared/domain';
 import {
@@ -38,7 +40,7 @@ import type {
   UserInputQuestion,
 } from './codex-protocol';
 import { codexLimits, type CodexRateLimits } from './limits';
-import { localMachine, type Machine } from './machines';
+import { localMachine, type Machine, type PipedProcess } from './machines';
 import { CodexRpc, codexCommand, type CodexCommand } from './codex-rpc';
 import type { ProjectView } from './state';
 
@@ -242,8 +244,21 @@ export class CodexAssistant extends ChatAssistant {
     };
   }
 
-  /** Starts a ChatGPT sign-in, opens it in the browser, and waits for the server to finish it. */
-  protected async signIn(signal: AbortSignal) {
+  /** A remote sign-in's CLI, kept running until its device code is entered elsewhere. */
+  private pendingDeviceLogin?: PipedProcess;
+
+  /**
+   * Starts a ChatGPT sign-in, opens it in the browser, and waits for the server to finish it.
+   * Codex's usual login runs a callback server on the machine's own `localhost`, which this
+   * computer's browser can't reach over SSH; a machine reached that way instead runs the
+   * CLI's device-code login, which shows a code to enter at a page in the browser and finishes
+   * once that's done, found out through `awaitDeviceSignIn`.
+   */
+  protected async signIn(
+    signal: AbortSignal,
+    machine: Machine,
+  ): Promise<void | NeedsDeviceAuth> {
+    if (machine.remote) return this.signInRemote(signal, machine);
     const rpc = await this.connection();
     const { loginId, authUrl } = await rpc.request<{
       loginId: string;
@@ -270,6 +285,77 @@ export class CodexAssistant extends ChatAssistant {
     } finally {
       this.logins.delete(loginId);
     }
+  }
+
+  /** Runs the CLI's own device-code login on `machine` and waits for it to print one. */
+  private signInRemote(
+    signal: AbortSignal,
+    machine: Machine,
+  ): Promise<NeedsDeviceAuth> {
+    return new Promise<NeedsDeviceAuth>((resolve, reject) => {
+      const child = machine.spawn('codex', ['login', '--device-auth'], {});
+      this.pendingDeviceLogin = child;
+      let output = '';
+      let settled = false;
+      const onAbort = () => child.kill();
+      signal.addEventListener('abort', onAbort, { once: true });
+      const finish = (act: () => void) => {
+        if (settled) return;
+        settled = true;
+        signal.removeEventListener('abort', onAbort);
+        act();
+      };
+      const read = (chunk: Buffer) => {
+        output += chunk.toString('utf8');
+        const clean = stripAnsi(output);
+        const url = /https:\/\/\S+/.exec(clean)?.[0];
+        const userCode = /\b[A-Z0-9]{4}-[A-Z0-9]{4,8}\b/.exec(clean)?.[0];
+        if (!url || !userCode) return;
+        finish(() => {
+          void this.host.openUrl(url);
+          resolve({ userCode, verificationUrl: url });
+        });
+      };
+      child.stdout.on('data', read);
+      child.stderr.on('data', read);
+      child.on('error', (cause) =>
+        finish(() => {
+          this.pendingDeviceLogin = undefined;
+          reject(cause);
+        }),
+      );
+      child.on('exit', (code) =>
+        finish(() => {
+          this.pendingDeviceLogin = undefined;
+          if (signal.aborted) reject(Error('Sign-in was cancelled.'));
+          else
+            reject(Error(output.trim() || `Sign-in exited with code ${code}`));
+        }),
+      );
+    });
+  }
+
+  /** Waits for the CLI from `signInRemote` to finish, once its code has been entered. */
+  protected async awaitDeviceSignIn(signal: AbortSignal): Promise<void> {
+    const child = this.pendingDeviceLogin;
+    if (!child) throw Error('No sign-in is waiting to finish.');
+    this.pendingDeviceLogin = undefined;
+    let output = '';
+    await new Promise<void>((resolve, reject) => {
+      const onAbort = () => child.kill();
+      signal.addEventListener('abort', onAbort, { once: true });
+      const read = (chunk: Buffer) => {
+        output += chunk.toString('utf8');
+      };
+      child.stdout.on('data', read);
+      child.stderr.on('data', read);
+      child.on('exit', (code) => {
+        signal.removeEventListener('abort', onAbort);
+        if (code === 0) resolve();
+        else if (signal.aborted) reject(Error('Sign-in was cancelled.'));
+        else reject(Error(output.trim() || `Sign-in exited with code ${code}`));
+      });
+    });
   }
 
   /** Runs the prompt on an ephemeral, read-only thread that isn't saved to the user's history. */

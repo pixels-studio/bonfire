@@ -331,6 +331,16 @@ export type ProviderAccount = {
   email?: string;
   plan?: string;
 };
+/**
+ * A sign-in on a machine reached over SSH can't finish itself the way a local one does: there
+ * is no browser there to catch the redirect. Claude's CLI waits instead for the code the
+ * browser shows, given back through `submitSignInCode`. Codex's instead shows a code of its
+ * own to enter at `verificationUrl`, and finishes on its own once that's done; `awaitSignIn`
+ * resolves when it does.
+ */
+export type NeedsSignInCode = { needsCode: true };
+export type NeedsDeviceAuth = { userCode: string; verificationUrl: string };
+export type SignInWaiting = NeedsSignInCode | NeedsDeviceAuth;
 /** The CLI of a provider that a machine runs, against the version the app expects. */
 export type CliVersion = {
   provider: AssistantProvider;
@@ -604,7 +614,12 @@ export const requests = {
   'preferences.get': z.tuple([]),
   'preferences.update': z.tuple([preferencesSchema.partial()]),
   'providers.account': z.tuple([assistantProvider]),
-  'providers.connect': z.tuple([assistantProvider]),
+  'providers.connect': z.tuple([
+    assistantProvider,
+    z.union([z.literal('local'), id]).optional(),
+  ]),
+  'providers.submitSignInCode': z.tuple([assistantProvider, z.string()]),
+  'providers.awaitSignIn': z.tuple([assistantProvider]),
   'providers.cancelConnect': z.tuple([assistantProvider]),
   'providers.outputStyles': z.tuple([]),
   'providers.cliVersions': z.tuple([]),
@@ -745,8 +760,22 @@ export type API = {
   };
   providers: {
     account(provider: AssistantProvider): Promise<ProviderAccount>;
-    /** Signs in through the browser, replacing the current account; resolves once done. */
-    connect(provider: AssistantProvider): Promise<ProviderAccount>;
+    /**
+     * Signs in through the browser, replacing the current account; resolves once done. Signs
+     * in on `machineId` (`local`, or an SSH connection's id) rather than this computer; a
+     * machine reached over SSH asks for the browser's code next, through `submitSignInCode`.
+     */
+    connect(
+      provider: AssistantProvider,
+      machineId?: string,
+    ): Promise<ProviderAccount | SignInWaiting>;
+    /** Finishes a sign-in that asked for the code the browser showed. */
+    submitSignInCode(
+      provider: AssistantProvider,
+      code: string,
+    ): Promise<ProviderAccount>;
+    /** Waits out a sign-in that showed its own code, until the user enters it and it's done. */
+    awaitSignIn(provider: AssistantProvider): Promise<ProviderAccount>;
     cancelConnect(provider: AssistantProvider): Promise<void>;
     /** Output styles Claude offers, built-in and the user's own. */
     outputStyles(): Promise<string[]>;

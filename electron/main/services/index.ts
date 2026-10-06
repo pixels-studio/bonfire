@@ -189,7 +189,10 @@ export function services(options: ServiceOptions) {
     },
     providers: {
       account: (provider) => call('account', provider),
-      connect: (provider) => call('connect', provider),
+      connect: (provider, machineId) => call('connect', provider, machineId),
+      submitSignInCode: (provider, code) =>
+        call('submitSignInCode', provider, code),
+      awaitSignIn: (provider) => call('awaitSignIn', provider),
       cancelConnect: async (provider) => call('cancelConnect', provider),
       outputStyles: () => call('outputStyles'),
       cliVersions: async () => agents.cliVersions(),

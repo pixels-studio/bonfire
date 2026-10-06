@@ -14,7 +14,7 @@ import { AgentMirror, type AgentChange, type AgentState } from './agent-store';
 import { PendingAttachments } from './attachments';
 import { ClaudeAssistant } from './claude';
 import { CodexAssistant } from './codex';
-import { Machines } from './machines';
+import { localMachine, Machines } from './machines';
 import { Rpc, type Endpoint } from './rpc';
 
 /** What the agent host asks of main: the dialogs and image tools only it has. */
@@ -104,7 +104,15 @@ export function startAgentWorker(
       assistantFor(paneId).unqueue(paneId, queuedId),
     discard: (paneId) => assistantFor(paneId).discard(paneId),
     account: (provider) => assistants[provider].account(),
-    connect: (provider) => assistants[provider].connect(),
+    connect: (provider, machineId) =>
+      assistants[provider].connect(
+        machines.get(
+          !machineId || machineId === localMachine.id ? undefined : machineId,
+        ),
+      ),
+    submitSignInCode: (provider, code) =>
+      assistants[provider].submitSignInCode(code),
+    awaitSignIn: (provider) => assistants[provider].awaitSignIn(),
     cancelConnect: (provider) => assistants[provider].cancelConnect(),
     outputStyles: () => assistants.claude.outputStyles?.() ?? [],
     limits: (provider) => assistants[provider].limits(),
@@ -142,7 +150,17 @@ type AgentMethodsOf<Assistant extends ChatAssistant> = {
   unqueue: Method<'unqueue'>;
   discard: Method<'discard'>;
   account(provider: AssistantProvider): ReturnType<Assistant['account']>;
-  connect(provider: AssistantProvider): ReturnType<Assistant['connect']>;
+  connect(
+    provider: AssistantProvider,
+    machineId?: string,
+  ): ReturnType<Assistant['connect']>;
+  submitSignInCode(
+    provider: AssistantProvider,
+    code: string,
+  ): ReturnType<Assistant['submitSignInCode']>;
+  awaitSignIn(
+    provider: AssistantProvider,
+  ): ReturnType<Assistant['awaitSignIn']>;
   cancelConnect(provider: AssistantProvider): void;
   outputStyles(): Promise<string[]> | string[];
   limits(provider: AssistantProvider): ReturnType<Assistant['limits']>;

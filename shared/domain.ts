@@ -334,6 +334,15 @@ export function errorMessage(cause: unknown) {
   );
 }
 
+/**
+ * A CLI's output with its colors and cursor moves cut out, to read URLs and codes out of it.
+ * A program run over SSH often keeps coloring its output even though nothing shows it, since
+ * there is no terminal there to say otherwise.
+ */
+export function stripAnsi(text: string) {
+  return text.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '');
+}
+
 /** The most panes, of any type, a project can have open at once. */
 export const MAX_PANES = 18;
 

@@ -14,6 +14,7 @@ import type {
   Project,
   ProviderAccount,
   ProviderLimits,
+  SignInWaiting,
   QueuedPrompt,
   Skill,
   Usage,
@@ -224,7 +225,8 @@ export abstract class ChatAssistant {
   );
   /** Skill lists by project id. */
   private readonly skillLists = new Map<string, Cached<Skill[]>>();
-  private login?: AbortController;
+  /** A sign-in in progress: aborting its controller cancels it, even while it waits for a code. */
+  private login?: { controller: AbortController; timeout: NodeJS.Timeout };
   private readonly attachments: PendingAttachments;
 
   constructor(
@@ -244,8 +246,32 @@ export abstract class ChatAssistant {
   ): Promise<Skill[]>;
   protected abstract readLimits(): Promise<ProviderLimits>;
   protected abstract readAccount(): Promise<ProviderAccount>;
-  /** Signs in through the browser; rejects if `signal` aborts first. */
-  protected abstract signIn(signal: AbortSignal): Promise<void>;
+  /**
+   * Signs in through the browser on `machine`; rejects if `signal` aborts first. A machine
+   * this can't finish itself, such as one reached over SSH, asks for the browser's code, or
+   * shows its own, next.
+   */
+  protected abstract signIn(
+    signal: AbortSignal,
+    machine: Machine,
+  ): Promise<void | SignInWaiting>;
+  /**
+   * Finishes a sign-in that asked for the code the browser showed. Only providers whose
+   * `signIn` can ask for one need to override this.
+   */
+  protected provideSignInCode(
+    _code: string,
+    _signal: AbortSignal,
+  ): Promise<void> {
+    throw Error('This provider does not need a sign-in code.');
+  }
+  /**
+   * Waits out a sign-in that showed its own code to enter elsewhere. Only providers whose
+   * `signIn` can show one need to override this.
+   */
+  protected awaitDeviceSignIn(_signal: AbortSignal): Promise<void> {
+    throw Error('This provider has no sign-in to wait for.');
+  }
   /** One-off completion without tools or conversation history. */
   protected abstract complete(
     prompt: string,
@@ -414,37 +440,82 @@ export abstract class ChatAssistant {
     return this.signedInAccount.get();
   }
 
-  /** Signs in through the browser, replacing any earlier attempt, and returns the new account. */
-  async connect(): Promise<ProviderAccount> {
-    this.login?.abort();
-    const login = new AbortController();
-    this.login = login;
+  /**
+   * Signs in through the browser on `machine` (this computer by default), replacing any
+   * earlier attempt. Resolves with the new account, or says a code from the browser is
+   * needed next if `machine` can't catch the browser's redirect itself.
+   */
+  async connect(
+    machine: Machine = localMachine,
+  ): Promise<ProviderAccount | SignInWaiting> {
+    this.login?.controller.abort();
+    const controller = new AbortController();
     let timedOut = false;
     const timeout = setTimeout(() => {
       timedOut = true;
-      login.abort();
+      controller.abort();
     }, LOGIN_TIMEOUT_MS);
+    const login = { controller, timeout };
+    this.login = login;
+    let result: void | SignInWaiting;
     try {
-      await this.signIn(login.signal);
+      result = await this.signIn(controller.signal, machine);
     } catch (cause) {
+      clearTimeout(timeout);
+      if (this.login === login) this.login = undefined;
       if (timedOut)
         throw Error(
           `${PROVIDER_LABELS[this.provider]} sign-in timed out. Try again.`,
         );
       throw cause;
-    } finally {
-      clearTimeout(timeout);
-      if (this.login === login) this.login = undefined;
     }
-    // Everything cached belonged to the previous account.
+    if (result) return result;
+    return this.finishConnect(login);
+  }
+
+  /** Clears what's cached from the previous account and reads the one just signed into. */
+  private finishConnect(login: {
+    controller: AbortController;
+    timeout: NodeJS.Timeout;
+  }): Promise<ProviderAccount> {
+    clearTimeout(login.timeout);
+    if (this.login === login) this.login = undefined;
     this.signedInAccount.clear();
     this.planLimits.clear();
     this.modelList.clear();
     return this.account();
   }
 
+  /** Finishes a sign-in `connect` said needed a code, with the one the browser showed. */
+  async submitSignInCode(code: string): Promise<ProviderAccount> {
+    const login = this.login;
+    if (!login) throw Error('No sign-in is waiting for a code.');
+    try {
+      await this.provideSignInCode(code, login.controller.signal);
+    } catch (cause) {
+      clearTimeout(login.timeout);
+      if (this.login === login) this.login = undefined;
+      throw cause;
+    }
+    return this.finishConnect(login);
+  }
+
+  /** Waits out a sign-in `connect` said was showing its own code, until it's entered. */
+  async awaitSignIn(): Promise<ProviderAccount> {
+    const login = this.login;
+    if (!login) throw Error('No sign-in is in progress.');
+    try {
+      await this.awaitDeviceSignIn(login.controller.signal);
+    } catch (cause) {
+      clearTimeout(login.timeout);
+      if (this.login === login) this.login = undefined;
+      throw cause;
+    }
+    return this.finishConnect(login);
+  }
+
   cancelConnect() {
-    this.login?.abort();
+    this.login?.controller.abort();
   }
 
   /** Generates a short text, such as a title, with the given model. */
@@ -454,7 +525,7 @@ export abstract class ChatAssistant {
   }
 
   close() {
-    this.login?.abort();
+    this.login?.controller.abort();
     for (const turn of this.turns.values()) turn.controller.abort();
     for (const id of [...this.requests.keys()]) this.resolveRequest(id);
     this.flush();
