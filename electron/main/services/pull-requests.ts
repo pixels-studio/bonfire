@@ -119,7 +119,7 @@ export function pullRequestService({
     } else if (action === 'createPr' && current.blocked) {
       throw Error(current.blocked);
     }
-    const pane = panes.add();
+    const pane = panes.add(undefined, store.project(projectId), false, 'end');
     // The turn runs on its own; its progress reaches the pane through events.
     void agents
       .send({

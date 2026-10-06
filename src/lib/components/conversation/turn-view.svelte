@@ -13,6 +13,7 @@
     paneId,
     projectId,
     expanded,
+    inProgress = false,
   }: {
     /** A prompt (with its attachments) followed by the assistant's replies. */
     messages: ConversationMessage[];
@@ -22,6 +23,8 @@
     projectId?: string;
     /** Keeps the turn as it streamed, rather than folding its work away. */
     expanded: boolean;
+    /** The active turn can pause between messages without being finished. */
+    inProgress?: boolean;
   } = $props();
 
   const promptLength = $derived.by(() => {
@@ -67,7 +70,9 @@
   );
   const editedFilePaths = $derived(editedPaths(replies));
   const turnComplete = $derived(
-    replies.length > 0 && !replies.some((item) => item.status === 'streaming'),
+    !inProgress &&
+      replies.length > 0 &&
+      !replies.some((item) => item.status === 'streaming'),
   );
 </script>
 

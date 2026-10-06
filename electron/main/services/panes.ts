@@ -63,9 +63,9 @@ export function paneService({
   }
 
   /**
-   * Adds a pane to the project on screen, at the front; agents start with the last-used
-   * provider and model. A view pane goes at the end instead, and only once: an open one is
-   * returned as it is.
+   * Adds a pane to the project on screen, at the front unless placed at the end; agents
+   * start with the last-used provider and model. A view pane always goes at the end, and
+   * only once: an open one is returned as it is.
    */
   function add(
     type?: PaneType,
@@ -73,6 +73,7 @@ export function paneService({
       ? store.project(store.state.lastProjectId)
       : undefined,
     other = false,
+    at: 'front' | 'end' = 'front',
   ) {
     if (!project) throw Error('Add a project first.');
     const view = type && isViewPaneType(type);
@@ -111,7 +112,7 @@ export function paneService({
         approvals: store.preferences.approvals,
         archived: false,
       },
-      view ? 'end' : 'front',
+      view ? 'end' : at,
     );
   }
 

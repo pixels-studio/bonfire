@@ -194,3 +194,25 @@ test('a project takes terminal panes up to the WebGL limit, and other panes past
   panes.archive(store.state.panes[0]);
   assert.equal(panes.add('terminal').type, 'terminal');
 });
+
+test('an agent pane can open after the view panes while ordinary agents open first', () => {
+  const store = newStore();
+  const item = store.projects.add(project());
+  store.projects.open(item);
+  const panes = paneService({
+    store,
+    agents: { requireEnabled() {}, discard() {} } as unknown as Agents,
+    terminals: { closePane() {} } as unknown as Terminals,
+    scripts: () => ({ forgetPane() {} }) as unknown as Scripts,
+    emit() {},
+  });
+
+  const view = panes.add('files');
+  const action = panes.add(undefined, item, false, 'end');
+  const conversation = panes.add();
+  assert.deepEqual(store.state.layout.paneIds, [
+    conversation.id,
+    view.id,
+    action.id,
+  ]);
+});

@@ -66,6 +66,7 @@
   );
   let usage = $state<Usage | undefined>(untrack(() => pane.usage));
   let running = $state(false);
+  let snapshotLoaded = $state(false);
   let requests = $state<AssistantRequest[]>([]);
   let queue = $state<QueuedPrompt[]>([]);
   /** Spoken to screen readers in place of the streaming text, which would be read out token by token. */
@@ -344,7 +345,8 @@
             feed?.scrollTo({ top: feed.scrollHeight, behavior: 'instant' }),
           );
       })
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => (snapshotLoaded = true));
     return stop;
   });
 
@@ -432,6 +434,7 @@
                   paneId={pane.id}
                   projectId={pane.projectId}
                   expanded={!!watched[lastTurn[0].id]}
+                  inProgress={running || !snapshotLoaded}
                 />
                 {#if running && !assistantStarted && !requests.length}
                   <p class="flex w-fit items-center gap-2 text-sm">

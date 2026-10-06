@@ -75,8 +75,8 @@
   /** The open panels, newest first, ahead of the panes. */
   let panels = $state<AppPanel[]>([]);
   /**
-   * The strip's order, panels and panes interleaved; what's new or unlisted goes in
-   * front, except view panes, which go at the end.
+   * The strip's order after panes or panels are arranged by hand. Unlisted items
+   * then go in front, except view panes, which go at the end.
    */
   let stripOrder = $state<string[]>([]);
   let creatingBranch = $state(false);
@@ -129,6 +129,7 @@
   /** Every open panel and pane, in the order the strip shows them. */
   const stripIds = $derived.by(() => {
     const visible = [...panels, ...panes.map(({ id }) => id)];
+    if (!stripOrder.length) return visible;
     const shown = new Set(visible);
     const listed = new Set(stripOrder);
     const unlisted = visible.filter((id) => !listed.has(id));
@@ -501,12 +502,12 @@
     };
   });
 
-  // A pull request is written by an agent in a new pane, which is brought on screen.
+  // A header action runs in an agent pane at the end of the strip.
   $effect(() => {
     pullRequest.onAgentPane = async (paneId) => {
       await refresh();
+      stripOrder = [...stripIds.filter((id) => id !== paneId), paneId];
       await tick();
-      paneStrip?.scrollTo({ left: 0, behavior: scrollBehavior() });
       void focusPane(paneId);
     };
     return () => (pullRequest.onAgentPane = undefined);
