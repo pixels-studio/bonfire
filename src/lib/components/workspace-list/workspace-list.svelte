@@ -296,10 +296,9 @@
       trafficLightInset && 'pl-20!',
     )}
   >
-    <!-- One rounded-md control: the project picker, with the project's settings as its suffix. -->
-    <div
-      class="flex min-w-0 flex-1 items-center rounded-md bg-secondary pr-1 transition-colors hover:bg-secondary/70 app-no-drag"
-    >
+    <!-- One rounded-md control. The picker's trigger spans all of it, so its menu does too; the
+         settings button sits over the trigger's right end. -->
+    <div class="relative min-w-0 flex-1 rounded-md bg-secondary app-no-drag">
       <ProjectPicker
         {projects}
         active={project}
@@ -308,7 +307,7 @@
         onselect={onselectProject}
         onadd={onaddProject}
         onremove={onremoveProject}
-        class="h-9 w-full max-w-none rounded-md bg-transparent hover:bg-transparent"
+        class={cn('h-9 w-full max-w-none rounded-md', project && 'pr-10')}
       />
       {#if project}
         <Tooltip.Root>
@@ -319,7 +318,7 @@
                 variant={settingsOpen ? 'default' : 'ghost'}
                 size="icon-sm"
                 class={cn(
-                  'size-7 shrink-0 rounded-md',
+                  'absolute top-1/2 right-1 size-7 -translate-y-1/2 rounded-md',
                   !settingsOpen &&
                     'text-muted-foreground hover:text-foreground',
                 )}

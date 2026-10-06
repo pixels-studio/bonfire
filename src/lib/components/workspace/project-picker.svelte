@@ -99,8 +99,8 @@
 <DropdownMenu.Root bind:open>
   <DropdownMenu.Trigger
     class={cn(
-      buttonVariants({ variant: 'secondary' }),
-      'h-7.5 max-w-56 min-w-0 gap-2 py-0 pr-2.5 pl-2',
+      buttonVariants({ variant: 'ghost' }),
+      'h-7.5 max-w-56 min-w-0 justify-start gap-2 py-0 pr-2.5 pl-2',
       className,
     )}
     title={`Switch project (${shortcutText('switchProject', isMac())})`}
@@ -113,7 +113,7 @@
       {@render attentionDot(triggerAttention)}
     {/if}
   </DropdownMenu.Trigger>
-  <DropdownMenu.Content align="start" {side} class="w-60">
+  <DropdownMenu.Content align="start" {side} class="min-w-60">
     {#each projects as project (project.id)}
       <DropdownMenu.Item class="gap-2" onclick={() => onselect(project.id)}>
         {@render favicon(project)}
