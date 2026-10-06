@@ -1,4 +1,3 @@
-import Globe from '@lucide/svelte/icons/globe';
 import ListTodo from '@lucide/svelte/icons/list-todo';
 import Search from '@lucide/svelte/icons/search';
 import Wrench from '@lucide/svelte/icons/wrench';
@@ -10,6 +9,7 @@ import ReadIcon from '$lib/components/icon/read-icon.svelte';
 import ToolSearchIcon from '$lib/components/icon/tool-search-icon.svelte';
 import WriteIcon from '$lib/components/icon/write-icon.svelte';
 import WebFetchIcon from '$lib/components/icon/web-fetch-icon.svelte';
+import WebSearchIcon from '$lib/components/icon/web-search-icon.svelte';
 import type { ConversationMessage } from '$shared/contracts';
 
 export type ToolCall = NonNullable<ConversationMessage['tool']>;
@@ -22,6 +22,7 @@ const ICONS: Record<
   | typeof WriteIcon
   | typeof BashIcon
   | typeof WebFetchIcon
+  | typeof WebSearchIcon
   | typeof ToolSearchIcon
   | typeof AgentIcon
   | typeof AskUserQuestionIcon
@@ -35,7 +36,7 @@ const ICONS: Record<
   Grep: Search,
   Glob: Search,
   WebFetch: WebFetchIcon,
-  WebSearch: Globe,
+  WebSearch: WebSearchIcon,
   ToolSearch: ToolSearchIcon,
   Task: AgentIcon,
   Agent: AgentIcon,
