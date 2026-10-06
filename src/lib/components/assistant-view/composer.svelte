@@ -841,6 +841,10 @@
     vertical-align: middle;
     line-height: 0;
   }
+  /* The wrapper's zero line-height would collapse the chip's truncated label. */
+  div :global(.composer-editor .composer-attachment > *) {
+    line-height: 1rem;
+  }
   div :global(.composer-editor .composer-attachment.ProseMirror-selectednode) {
     border-radius: 0.375rem;
     outline: 2px solid var(--color-brand);
