@@ -11,7 +11,9 @@ import {
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { app, type BrowserWindow } from 'electron';
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
+import { app, webContents, type BrowserWindow } from 'electron';
 import { git } from './git';
 import { Store } from './persistence';
 import type { services } from './services';
@@ -25,6 +27,60 @@ const EXPECTED_PANE_COUNT = 4;
 
 function sleep(milliseconds: number) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+/**
+ * A browser pane opens once per project, remembers its page, and shows it in a webview
+ * that has neither Node nor the app's API.
+ */
+async function verifyBrowserPane(
+  mainWindow: BrowserWindow,
+  backend: ReturnType<typeof services>,
+) {
+  const { api } = backend;
+  const server = createServer((_request, response) =>
+    response.end('<title>BONFIRE_BROWSER</title><p>BONFIRE_BROWSER_OK</p>'),
+  );
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/`;
+    const pane = await api.panes.add('browser');
+    assert.equal((await api.panes.add('browser')).id, pane.id);
+    await api.panes.navigate(pane.id, url);
+    backend.store.flush();
+    const restored = new Store(process.env.BONFIRE_USER_DATA!);
+    assert.equal(
+      restored.state.panes.find(({ id }) => id === pane.id)?.url,
+      url,
+    );
+
+    await reloadAndWait(mainWindow, 1500);
+    let guest: Electron.WebContents | undefined;
+    for (let tries = 0; tries < 50; tries++) {
+      guest = webContents
+        .getAllWebContents()
+        .find(
+          (contents) =>
+            contents.getType() === 'webview' && contents.getURL() === url,
+        );
+      if (guest && !guest.isLoading()) break;
+      await sleep(100);
+    }
+    assert(guest, 'the browser pane shows its page');
+    assert.match(
+      await guest.executeJavaScript('document.body.textContent'),
+      /BONFIRE_BROWSER_OK/,
+    );
+    assert.equal(
+      await guest.executeJavaScript(
+        'typeof window.require + typeof window.bonfire + typeof process',
+      ),
+      'undefinedundefinedundefined',
+    );
+    await api.panes.archive(pane.id);
+  } finally {
+    server.close();
+  }
 }
 
 async function reloadAndWait(
@@ -543,6 +599,7 @@ export async function smoke(
     project.id,
     secondChatShell!,
   );
+  await verifyBrowserPane(mainWindow, backend);
   console.log(
     'BONFIRE_SMOKE_OK: renderer, isolated IPC, concurrent PTYs, CLIs, Git diff, confined files, persistence',
   );

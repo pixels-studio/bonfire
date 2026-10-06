@@ -53,13 +53,14 @@ export const TOOL_PANE_TITLES: Record<ToolPaneType, string> = {
   files: 'Files',
   terminal: 'Terminal',
   diff: 'Changes',
+  browser: 'Browser',
 };
 
 /**
  * Tool panes that show the branch itself. A second one would only repeat the first, so
  * a project has at most one of each, at the end of the strip, and the header toggles it.
  */
-export const VIEW_PANE_TYPES = ['files', 'diff'] as const;
+export const VIEW_PANE_TYPES = ['files', 'diff', 'browser'] as const;
 export type ViewPaneType = (typeof VIEW_PANE_TYPES)[number];
 
 export function isViewPaneType(type: string): type is ViewPaneType {

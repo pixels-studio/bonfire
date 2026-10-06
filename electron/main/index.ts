@@ -10,6 +10,7 @@ import {
   powerSaveBlocker,
   protocol,
   net,
+  session,
   shell,
 } from 'electron';
 import { basename, join, resolve, relative, isAbsolute } from 'node:path';
@@ -263,8 +264,11 @@ async function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      // The browser pane shows pages in a <webview>, locked down below.
+      webviewTag: true,
     },
   });
+  guardBrowserPane(mainWindow);
   // Without a menu bar the header is the whole title bar, as in VS Code.
   if (process.platform === 'win32') mainWindow.removeMenu();
   watchHealth(mainWindow);
@@ -288,6 +292,57 @@ async function createWindow() {
     send(events.fullscreen, mainWindow.isFullScreen()),
   );
   await mainWindow.loadURL(DEV_URL || 'bonfire://app/');
+}
+
+/** The session browser panes share, kept apart from the app's own. */
+const BROWSER_PARTITION = 'persist:browser';
+/** What a page in the browser pane may ask for; everything else is refused. */
+const BROWSER_PERMISSIONS = new Set([
+  'clipboard-sanitized-write',
+  'fullscreen',
+  'pointerLock',
+]);
+
+const isWebUrl = (url: string) => /^https?:\/\//i.test(url);
+
+/**
+ * The browser pane's <webview> shows untrusted pages, so each one is attached with no
+ * preload, no Node, in a sandbox and its own session, and only to web URLs. Pages
+ * that open a window open it in the pane instead.
+ */
+function guardBrowserPane(window: BrowserWindow) {
+  const browserSession = session.fromPartition(BROWSER_PARTITION);
+  browserSession.setPermissionRequestHandler(
+    (_contents, permission, callback) =>
+      callback(BROWSER_PERMISSIONS.has(permission)),
+  );
+  browserSession.setPermissionCheckHandler((_contents, permission) =>
+    BROWSER_PERMISSIONS.has(permission),
+  );
+  window.webContents.on('will-attach-webview', (event, preferences, params) => {
+    delete preferences.preload;
+    preferences.nodeIntegration = false;
+    preferences.nodeIntegrationInSubFrames = false;
+    preferences.contextIsolation = true;
+    preferences.sandbox = true;
+    preferences.webSecurity = true;
+    preferences.allowRunningInsecureContent = false;
+    preferences.partition = BROWSER_PARTITION;
+    if (
+      params.partition !== BROWSER_PARTITION ||
+      (params.src && !isWebUrl(params.src))
+    )
+      event.preventDefault();
+  });
+  window.webContents.on('did-attach-webview', (_event, guest) => {
+    guest.setWindowOpenHandler(({ url }) => {
+      if (isWebUrl(url)) void guest.loadURL(url);
+      return { action: 'deny' };
+    });
+    guest.on('will-navigate', (event, url) => {
+      if (!isWebUrl(url)) event.preventDefault();
+    });
+  });
 }
 
 function serveBuild(root: string) {

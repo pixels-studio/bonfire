@@ -130,6 +130,12 @@ export const SHORTCUTS = define({
     scope: 'global',
     chords: [mod('d')],
   },
+  newBrowser: {
+    group: 'Panes',
+    label: 'Toggle browser',
+    scope: 'global',
+    chords: [mod('k')],
+  },
   closePane: {
     group: 'Panes',
     label: 'Close pane',

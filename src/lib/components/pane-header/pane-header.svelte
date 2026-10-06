@@ -24,6 +24,8 @@
   let {
     title,
     icon,
+    iconSrc,
+    heading,
     badge,
     status = 'idle',
     menuLabel,
@@ -39,6 +41,10 @@
     title: string;
     /** Shown before the title. */
     icon?: string;
+    /** An image shown in place of the icon, such as a page's favicon; the icon returns if it fails to load. */
+    iconSrc?: string;
+    /** Replaces the title with the pane's own content, such as a URL bar, spanning the header. */
+    heading?: Snippet;
     /** Marks the icon with a status dot in its corner: needs input, failed, or done but not yet reviewed. */
     badge?: PaneBadge;
     /** Replaces the icon with a colored dot while the pane is anything but idle. */
@@ -61,6 +67,9 @@
   } = $props();
 
   const label = $derived(menuLabel ?? `${title} options`);
+
+  /** The image that failed to load, so the icon shows until another one is given. */
+  let failedSrc = $state<string>();
 
   let editing = $state(false);
   let draft = $state('');
@@ -112,7 +121,7 @@
 <header
   class="flex min-h-13.5 shrink-0 items-center justify-between gap-3 py-3 pr-2 pl-4"
 >
-  <div class="flex min-w-0 items-center gap-1">
+  <div class={cn('flex min-w-0 items-center gap-1', heading && 'flex-1')}>
     {#if dragHandle}
       <button
         type="button"
@@ -124,7 +133,12 @@
         <Icon name="drag" class="size-5" />
       </button>
     {/if}
-    <h2 class="flex min-w-0 items-center gap-2 text-sm font-semibold">
+    <h2
+      class={cn(
+        'flex min-w-0 items-center gap-2 text-sm font-semibold',
+        heading && 'flex-1',
+      )}
+    >
       {#if status !== 'idle'}
         <span class="grid size-4 shrink-0 place-content-center">
           <span
@@ -133,6 +147,13 @@
             aria-label={STATUS_LABELS[status]}
           ></span>
         </span>
+      {:else if iconSrc && iconSrc !== failedSrc}
+        <img
+          src={iconSrc}
+          alt=""
+          class="size-4 shrink-0 rounded-xs object-contain"
+          onerror={() => (failedSrc = iconSrc)}
+        />
       {:else if icon}
         <span class="relative shrink-0">
           <Icon name={icon} class="text-muted-foreground" />
@@ -148,7 +169,9 @@
           {/if}
         </span>
       {/if}
-      {#if editing}
+      {#if heading}
+        {@render heading()}
+      {:else if editing}
         <input
           class="-mx-1 h-6 min-w-0 flex-1 rounded-md bg-secondary px-1 text-sm font-semibold outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
           aria-label="Pane title"

@@ -23,6 +23,7 @@ export const TOOL_PANES: { type: ToolPaneType; label: string; icon: string }[] =
     { type: 'files', label: 'Files', icon: 'folder' },
     { type: 'terminal', label: 'Terminal', icon: 'terminal' },
     { type: 'diff', label: 'Code diff', icon: 'code' },
+    { type: 'browser', label: 'Browser', icon: 'browser' },
   ];
 
 export function toolPaneIcon(type: ToolPaneType) {

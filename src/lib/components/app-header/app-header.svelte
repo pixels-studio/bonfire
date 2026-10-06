@@ -67,7 +67,11 @@
 
   const pullRequestHint = `(${shortcutText('pullRequest', isMac())})`;
 
-  const VIEW_SHORTCUTS = { files: 'newFiles', diff: 'newDiff' } as const;
+  const VIEW_SHORTCUTS = {
+    files: 'newFiles',
+    diff: 'newDiff',
+    browser: 'newBrowser',
+  } as const;
   const viewToggles = VIEW_PANE_TYPES.map((type) => ({
     ...TOOL_PANES.find((pane) => pane.type === type)!,
     type,

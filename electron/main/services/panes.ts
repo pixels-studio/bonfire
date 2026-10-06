@@ -160,12 +160,19 @@ export function paneService({
     if (isAssistantPane(pane)) emit({ paneId: id, type: 'title', title });
   }
 
+  function navigate(id: string, url: string) {
+    const pane = store.pane(id);
+    if (pane.type !== 'browser') throw Error('Only a browser pane opens pages.');
+    if (pane.url !== url) store.panes.update(pane, { url });
+  }
+
   return {
     openPanesOf,
     add,
     archive,
     fork,
     rename,
+    navigate,
     reorder: (ids: string[]) => store.panes.reorder(ids),
   };
 }

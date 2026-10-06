@@ -127,7 +127,8 @@ export function services(options: ServiceOptions) {
     store,
     terminals,
     machine: repository.machineOf,
-    addPane: (project) => panes.add('terminal', project),
+    // Like the header's other actions, a run opens its pane at the end of the strip.
+    addPane: (project) => panes.add('terminal', project, false, 'end'),
     archivePane: panes.archive,
     emit: (run) => options.send(events.scriptRun, run),
   });
@@ -263,6 +264,7 @@ export function services(options: ServiceOptions) {
       archive: async (id) => panes.archive(store.pane(id)),
       reorder: async (ids) => panes.reorder(ids),
       rename: async (id, title) => panes.rename(id, title),
+      navigate: async (id, url) => panes.navigate(id, url),
     },
     assistant: {
       send: agents.send,

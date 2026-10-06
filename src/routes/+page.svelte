@@ -488,10 +488,13 @@
     return untrack(() => scripts.watch(id));
   });
 
-  // A script runs in its own terminal pane, which is brought on screen.
+  // A script runs in its own terminal pane at the end of the strip, brought on screen.
   $effect(() => {
     scripts.onPane = async (paneId) => {
+      const opened = !panes.some((pane) => pane.id === paneId);
       await refresh();
+      if (opened)
+        stripOrder = [...stripIds.filter((id) => id !== paneId), paneId];
       await tick();
       scrollToPane(paneId);
     };
@@ -623,6 +626,9 @@
         break;
       case 'newDiff':
         toggleView('diff');
+        break;
+      case 'newBrowser':
+        toggleView('browser');
         break;
       case 'closePane': {
         const target = activePane;
@@ -1048,6 +1054,13 @@
                         void runAction(() =>
                           window.bonfire.panes.rename(pane.id, title),
                         );
+                      }}
+                      onnavigate={(url) => {
+                        if (pane.url === url) return;
+                        pane.url = url;
+                        window.bonfire.panes
+                          .navigate(pane.id, url)
+                          .catch(showError);
                       }}
                     />
                   {:else if id === 'settings'}

@@ -3,11 +3,19 @@ import { z } from 'zod';
 export const id = z.string().uuid();
 export const assistantProvider = z.enum(['claude', 'codex']);
 /** Panes that show the project itself rather than talk to an agent. */
-export const toolPaneType = z.enum(['files', 'terminal', 'diff']);
+export const toolPaneType = z.enum(['files', 'terminal', 'diff', 'browser']);
 export const paneType = z.enum([
   ...assistantProvider.options,
   ...toolPaneType.options,
 ]);
+/** A page a browser pane can show: web pages only, never files or app URLs. */
+export const browserUrl = z
+  .string()
+  .max(2048)
+  .refine(
+    (value) => /^https?:\/\//i.test(value),
+    'Only web pages can be opened.',
+  );
 export const reasoningEffort = z.enum([
   'minimal',
   'low',
@@ -143,6 +151,8 @@ export const paneSchema = z.object({
   workBranch: z.object({ name: z.string(), since: z.number() }).optional(),
   /** A terminal pane that shows a run script's output rather than a shell. */
   scriptId: id.optional(),
+  /** The page a browser pane last showed. */
+  url: z.string().optional(),
   archived: z.boolean().default(false),
 });
 
@@ -659,6 +669,7 @@ export const requests = {
   'panes.archive': z.tuple([id]),
   'panes.reorder': z.tuple([z.array(id).max(100)]),
   'panes.rename': z.tuple([id, z.string().trim().min(1).max(200)]),
+  'panes.navigate': z.tuple([id, browserUrl]),
   'assistant.send': z.tuple([assistantSendInput]),
   'assistant.pickAttachment': z.tuple([id]),
   'assistant.attachFile': z.tuple([id, filePath]),
@@ -874,6 +885,8 @@ export type API = {
     reorder(ids: string[]): Promise<void>;
     /** Gives the pane a title of the user's choosing. */
     rename(id: string, title: string): Promise<void>;
+    /** Remembers the page a browser pane is showing, so it reopens there. */
+    navigate(id: string, url: string): Promise<void>;
   };
   assistant: {
     send(input: AssistantSendInput): Promise<void>;
