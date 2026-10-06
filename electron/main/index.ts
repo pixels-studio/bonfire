@@ -249,7 +249,7 @@ async function createWindow() {
     // On macOS the native traffic lights sit over the header, and on Windows the native window
     // buttons do; elsewhere the regular frame is kept so the window keeps its native controls.
     ...(process.platform === 'darwin'
-      ? { titleBarStyle: 'hidden', trafficLightPosition: { x: 16, y: 20 } }
+      ? { titleBarStyle: 'hidden', trafficLightPosition: { x: 16, y: 29 } }
       : process.platform === 'win32'
         ? {
             titleBarStyle: 'hidden',

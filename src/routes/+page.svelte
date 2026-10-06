@@ -1141,7 +1141,7 @@
               <!-- The sidebar's controls stay reachable, clear of the window buttons. -->
               <div
                 class={cn(
-                  'flex h-13 shrink-0 items-center gap-1 px-4 app-drag',
+                  'flex h-13 shrink-0 items-center gap-1 px-4 pt-4.5 app-drag',
                   trafficLightInset && 'pl-20',
                 )}
               >
