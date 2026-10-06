@@ -5,6 +5,7 @@
   "main": "dist/main/index.cjs",
   "scripts": {
     "dev": "node scripts/dev.mjs",
+    "dev:demo": "node scripts/demo/seed.mjs && node scripts/demo/run.mjs",
     "dev:onboarding": "node scripts/dev.mjs --onboarding",
     "build": "vite build && node scripts/build-electron.mjs",
     "package": "node scripts/package-mac.mjs",

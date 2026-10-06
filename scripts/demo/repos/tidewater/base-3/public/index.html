@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Tidewater · Orders</title>
+    <style>
+      body { font: 15px/1.5 system-ui, sans-serif; margin: 0; background: #faf7f2; color: #2a2118; }
+      header { padding: 20px 32px; border-bottom: 1px solid #e6ddd0; display: flex; align-items: baseline; gap: 12px; }
+      h1 { font-size: 18px; margin: 0; }
+      header span { color: #8a7a66; }
+      main { padding: 24px 32px; }
+      table { border-collapse: collapse; width: 100%; background: #fff; border: 1px solid #e6ddd0; border-radius: 8px; }
+      th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid #f0e9de; }
+      th { font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; color: #8a7a66; }
+      .status { padding: 2px 8px; border-radius: 999px; background: #efe6d6; font-size: 12px; }
+      .status.shipped, .status.delivered { background: #dcebd9; }
+      .status.roasting { background: #f6e0c4; }
+    </style>
+  </head>
+  <body>
+    <header><h1>Tidewater</h1><span>Orders</span></header>
+    <main>
+      <table>
+        <thead><tr><th>Order</th><th>Customer</th><th>Placed</th><th>Status</th><th>Total</th></tr></thead>
+        <tbody id="orders"></tbody>
+      </table>
+    </main>
+    <script>
+      const money = (cents) => (cents / 100).toLocaleString('en-US', { style: 'currency', currency: 'USD' });
+      fetch('/api/orders')
+        .then((response) => response.json())
+        .then((orders) => {
+          document.getElementById('orders').innerHTML = orders
+            .map((o) => '<tr><td>' + o.id + '</td><td>' + o.customer + '</td><td>' + o.placedAt.slice(0, 10) +
+              '</td><td><span class="status ' + o.status + '">' + o.status + '</span></td><td>' + money(o.totalCents) + '</td></tr>')
+            .join('');
+        });
+    </script>
+  </body>
+</html>
