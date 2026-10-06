@@ -3,6 +3,7 @@
   import { onMount, tick, untrack } from 'svelte';
   import * as Card from '$lib/components/ui/card';
   import { Button } from '$lib/components/ui/button';
+  import EmptyState from '$lib/components/empty-state/empty-state.svelte';
   import Icon from '$lib/components/icon/icon.svelte';
   import RequestView from '../conversation/request-view.svelte';
   import TurnView from '../conversation/turn-view.svelte';
@@ -452,17 +453,15 @@
               </div>
             </div>
           {:else}
-            <div
-              class="grid flex-1 place-content-center justify-items-center gap-1 text-center text-muted-foreground"
+            <EmptyState
+              icon={provider}
+              title={`Start with ${providerLabel}`}
+              description="Ask it to explore, explain, or change this project."
             >
-              <Icon name={provider} class="size-6" />
-              <p class="max-w-65 text-sm text-pretty">
-                Ask {providerLabel} to explore, explain, or change this project.
-              </p>
               {#if error}<p class="text-sm text-destructive" role="alert">
                   {error}
                 </p>{/if}
-            </div>
+            </EmptyState>
           {/if}
         </div>
       </div>

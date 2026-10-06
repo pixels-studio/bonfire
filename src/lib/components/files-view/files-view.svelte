@@ -5,6 +5,7 @@
   import * as Card from '$lib/components/ui/card';
   import { Input } from '$lib/components/ui/input';
   import FileIcon from '$lib/components/file-tree/file-icon.svelte';
+  import EmptyState from '$lib/components/empty-state/empty-state.svelte';
   import FileTree from '$lib/components/file-tree/file-tree.svelte';
   import FileViewer from '$lib/components/file-tree/file-viewer.svelte';
   import PaneHeader from '$lib/components/pane-header/pane-header.svelte';
@@ -150,9 +151,12 @@
         </button>
       {:else}
         {#if results}
-          <p class="px-2 py-4 text-sm text-muted-foreground">
-            No files match “{query.trim()}”.
-          </p>
+          <EmptyState
+            icon={toolPaneIcon('files')}
+            title="No files found"
+            description={`Nothing matches “${query.trim()}”.`}
+            class="py-8"
+          />
         {/if}
       {/each}
     {:else}

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { Button } from '$lib/components/ui/button';
   import * as Card from '$lib/components/ui/card';
+  import EmptyState from '$lib/components/empty-state/empty-state.svelte';
   import Icon from '$lib/components/icon/icon.svelte';
   import PaneHeader from '$lib/components/pane-header/pane-header.svelte';
   import { toolPaneIcon, type PaneProps } from '$lib/panes';
@@ -182,12 +183,12 @@
         class="size-full overflow-hidden rounded-lg bg-white"
       ></webview>
     {:else}
-      <div
-        class="flex size-full flex-col items-center justify-center gap-2 text-center text-sm text-muted-foreground"
-      >
-        <Icon name="browser" class="size-8 opacity-40" />
-        <p>Enter a URL above to open a page.</p>
-      </div>
+      <EmptyState
+        class="h-full"
+        icon={toolPaneIcon('browser')}
+        title="No page open"
+        description="Enter a URL above to open a page."
+      />
     {/if}
     {#if error}
       <p

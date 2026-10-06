@@ -5,6 +5,7 @@
   import { Button } from '$lib/components/ui/button';
   import * as Dialog from '$lib/components/ui/dialog';
   import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
+  import EmptyState from '$lib/components/empty-state/empty-state.svelte';
   import Icon from '$lib/components/icon/icon.svelte';
   import { toast } from '$lib/stores/toast.svelte';
   import * as Card from '$lib/components/ui/card';
@@ -204,25 +205,20 @@
       {/if}
     {:else}
       {#if status}
-        <div
-          class="flex flex-1 flex-col items-center justify-center gap-3 text-muted-foreground"
-        >
-          {#if status.isGit}
-            <Icon name={toolPaneIcon('diff')} class="size-8 opacity-60" />
-          {:else}
-            <FolderX class="size-8 opacity-60" />
-          {/if}
-          {#if status.isGit}
-            <div class="flex flex-col items-center gap-1 text-center">
-              <p class="text-sm font-medium text-foreground">No changes yet</p>
-              <p class="text-sm text-pretty">
-                Edits you make will show up here as a diff.
-              </p>
-            </div>
-          {:else}
-            <p class="text-sm">This folder is not a Git repository.</p>
-          {/if}
-        </div>
+        {#if status.isGit}
+          <EmptyState
+            icon={toolPaneIcon('diff')}
+            title="No changes yet"
+            description="Edits you make will show up here as a diff."
+          />
+        {:else}
+          <EmptyState
+            title="Not a Git repository"
+            description="Initialize Git in this folder to see changes here."
+          >
+            {#snippet media()}<FolderX class="size-6 opacity-60" />{/snippet}
+          </EmptyState>
+        {/if}
       {/if}
     {/each}
   </section>
