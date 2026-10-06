@@ -296,7 +296,10 @@
       trafficLightInset && 'pl-20!',
     )}
   >
-    <div class="flex min-w-0 flex-1 app-no-drag">
+    <!-- One rounded-md control: the project picker, with the project's settings as its suffix. -->
+    <div
+      class="flex min-w-0 flex-1 items-center rounded-md bg-secondary pr-1 transition-colors hover:bg-secondary/70 app-no-drag"
+    >
       <ProjectPicker
         {projects}
         active={project}
@@ -305,32 +308,33 @@
         onselect={onselectProject}
         onadd={onaddProject}
         onremove={onremoveProject}
-        class="w-full max-w-none"
+        class="h-9 w-full max-w-none rounded-md bg-transparent hover:bg-transparent"
       />
+      {#if project}
+        <Tooltip.Root>
+          <Tooltip.Trigger>
+            {#snippet child({ props })}
+              <Button
+                {...props}
+                variant={settingsOpen ? 'default' : 'ghost'}
+                size="icon-sm"
+                class={cn(
+                  'size-7 shrink-0 rounded-md',
+                  !settingsOpen &&
+                    'text-muted-foreground hover:text-foreground',
+                )}
+                aria-label="Project options"
+                aria-pressed={settingsOpen}
+                onclick={onsettings}
+              >
+                <Icon name="dots" />
+              </Button>
+            {/snippet}
+          </Tooltip.Trigger>
+          <Tooltip.Content side="bottom">Project settings</Tooltip.Content>
+        </Tooltip.Root>
+      {/if}
     </div>
-    {#if project}
-      <Tooltip.Root>
-        <Tooltip.Trigger>
-          {#snippet child({ props })}
-            <Button
-              {...props}
-              variant={settingsOpen ? 'default' : 'secondary'}
-              size="icon-sm"
-              class={cn(
-                'shrink-0 app-no-drag',
-                !settingsOpen && 'text-muted-foreground hover:text-foreground',
-              )}
-              aria-label="Project settings"
-              aria-pressed={settingsOpen}
-              onclick={onsettings}
-            >
-              <Icon name="settings" />
-            </Button>
-          {/snippet}
-        </Tooltip.Trigger>
-        <Tooltip.Content side="bottom">Project settings</Tooltip.Content>
-      </Tooltip.Root>
-    {/if}
   </div>
 
   {#if project}
