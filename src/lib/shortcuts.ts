@@ -59,7 +59,7 @@ export const SHORTCUTS = define({
     chords: [mod('i')],
   },
   activity: {
-    group: 'General',
+    group: 'Projects',
     label: 'Activity',
     scope: 'global',
     chords: [mod('j')],

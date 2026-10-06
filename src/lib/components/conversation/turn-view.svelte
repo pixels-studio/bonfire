@@ -15,6 +15,7 @@
     projectId,
     expanded,
     inProgress = false,
+    onviewChanges,
   }: {
     /** A prompt (with its attachments) followed by the assistant's replies. */
     messages: ConversationMessage[];
@@ -26,6 +27,8 @@
     expanded: boolean;
     /** The active turn can pause between messages without being finished. */
     inProgress?: boolean;
+    /** Opens the project's code diff pane. */
+    onviewChanges: (path?: string) => void;
   } = $props();
 
   const promptLength = $derived.by(() => {
@@ -146,7 +149,7 @@
   {@render entry(message)}
 {/each}
 {#if turnComplete && projectId && editedFilePaths.length}
-  <EditedFiles {projectId} paths={editedFilePaths} />
+  <EditedFiles {projectId} paths={editedFilePaths} {onviewChanges} />
 {/if}
 {#if turnComplete && lastReply?.status === 'complete'}
   <TurnFooter message={lastReply} {paneId} />

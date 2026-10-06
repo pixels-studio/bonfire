@@ -51,12 +51,14 @@
     onresize,
     onrename,
     badge,
+    onviewChanges,
   }: PaneProps & {
     pane: Pane;
     /** A status worth flagging on the header icon: needs input, failed, or done but unreviewed. */
     badge?: PaneBadge;
     /** The agent the conversation is with; the composer offers its models. */
     provider: AssistantProvider;
+    onviewChanges: (path?: string) => void;
   } = $props();
 
   const providerLabel = $derived(PROVIDER_LABELS[provider]);
@@ -418,6 +420,7 @@
               messages={turn}
               paneId={pane.id}
               projectId={pane.projectId}
+              {onviewChanges}
               expanded={!!watched[turn[0].id]}
             />
           {/each}
@@ -433,6 +436,7 @@
                   messages={lastTurn}
                   paneId={pane.id}
                   projectId={pane.projectId}
+                  {onviewChanges}
                   expanded={!!watched[lastTurn[0].id]}
                   inProgress={running || !snapshotLoaded}
                 />

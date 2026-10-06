@@ -77,7 +77,7 @@
   );
   const motion = new StripMotion(() => paneStrip);
   let pullRequestOpen = $state(false);
-  /** The open panels, newest first, ahead of the panes. */
+  /** The open panels, newest first; Activity is placed at the strip's end. */
   let panels = $state<AppPanel[]>([]);
   /**
    * The strip's order after panes or panels are arranged by hand. Unlisted items
@@ -99,6 +99,13 @@
   let insightsTab = $state('tokens');
   /** The pane last clicked, focused or navigated to, which the pane shortcuts act on. */
   let currentPaneId = $state<string>();
+  /** The latest file card navigation into the code diff pane. */
+  let selectedDiff = $state<{
+    projectId: string;
+    path: string;
+    request: number;
+  }>();
+  let diffRequest = 0;
   /** Whether setup is on screen instead of the workspace: no agent signed in, or no project. */
   let onboarding = $state(false);
   let accounts = $state<Partial<Record<AssistantProvider, ProviderAccount>>>(
@@ -209,6 +216,8 @@
   }
 
   function closePane(paneId: string) {
+    if (panes.some((pane) => pane.id === paneId && pane.type === 'diff'))
+      selectedDiff = undefined;
     return changePanes(() => window.bonfire.panes.archive(paneId));
   }
 
@@ -279,6 +288,17 @@
     const open = panes.find((pane) => pane.type === type);
     if (open) void closePane(open.id);
     else void addPane(type);
+  }
+
+  /** Opens the diff pane and asks it to show a file, or the list for a summary click. */
+  function viewChanges(path?: string) {
+    if (projectId)
+      selectedDiff = {
+        projectId,
+        path: path ?? '',
+        request: ++diffRequest,
+      };
+    void addPane('diff');
   }
 
   function sizeClass(size: PaneSize) {
@@ -411,14 +431,18 @@
     return scrollToSection(`[data-panel="${panel}"]`, panel);
   }
 
-  /** Closes an open panel, or opens it at the front of the strip. */
+  /** Closes a panel, or opens Activity at the end and global panels at the front. */
   function togglePanel(panel: AppPanel) {
+    if (panel === 'activity' && !project) return;
     if (panels.includes(panel)) {
       panels = panels.filter((open) => open !== panel);
       return;
     }
+    if (panel === 'activity')
+      stripOrder = [...stripIds.filter((id) => id !== panel), panel];
     panels = [panel, ...panels];
-    void revealEdge('start');
+    if (panel === 'activity') void tick().then(() => scrollToPanel(panel));
+    else void revealEdge('start');
   }
 
   /** Applies a new visible pane order locally, then saves it. */
@@ -1009,6 +1033,8 @@
         {trafficLightInset}
         bind:pullRequestOpen
         disabled={!project}
+        activityOpen={panels.includes('activity')}
+        ontoggleActivity={() => togglePanel('activity')}
         {openViews}
         ontoggleView={toggleView}
         paneCount={panes.length + panels.length}
@@ -1058,6 +1084,15 @@
                 {@const pane = isPanel(id)
                   ? undefined
                   : panes.find((pane) => pane.id === id)}
+                {#if !panes.length && id === 'activity'}
+                  <section
+                    data-strip-id="placeholder"
+                    class={cn(SECTION_CLASS, autoSizeClass)}
+                    out:leave={{ animate: paneMotion }}
+                  >
+                    {@render placeholder()}
+                  </section>
+                {/if}
                 <!-- One section for panels and panes alike: an `out:` only plays when its own
                      block goes, so the section has to sit right in the `#each`. -->
                 <section
@@ -1081,6 +1116,10 @@
                       {pane}
                       projectId={project!.id}
                       badge={paneBadge(statuses.get(pane.id))}
+                      onviewChanges={viewChanges}
+                      selectedDiff={selectedDiff?.projectId === project!.id
+                        ? selectedDiff
+                        : undefined}
                       dragHandle={gripOf(pane.id)}
                       size={paneSize(pane.id)}
                       onclose={() => closePane(pane.id)}
@@ -1110,7 +1149,7 @@
                   {/if}
                 </section>
               {/each}
-              {#if !panes.length}
+              {#if !panes.length && !panels.includes('activity')}
                 <section
                   data-strip-id="placeholder"
                   class={cn(SECTION_CLASS, autoSizeClass)}

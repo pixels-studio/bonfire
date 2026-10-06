@@ -20,9 +20,15 @@
     trafficLightInset = false,
     paneCount = 0,
     onclosePanes,
+    activityOpen,
+    ontoggleActivity,
     openViews = [],
     ontoggleView,
   }: {
+    /** Whether this project's Activity panel is open. */
+    activityOpen: boolean;
+    /** Opens or closes this project's Activity panel. */
+    ontoggleActivity: () => void;
     /** The view panes open in the strip, whose toggles show as pressed. */
     openViews?: ViewPaneType[];
     /** Opens a view pane at the end of the strip, or closes it. */
@@ -66,6 +72,7 @@
   );
 
   const pullRequestHint = `(${shortcutText('pullRequest', isMac())})`;
+  const activityShortcut = shortcutText('activity', isMac());
 
   const VIEW_SHORTCUTS = {
     files: 'newFiles',
@@ -115,6 +122,17 @@
   </div>
   <div class="flex items-center gap-3 app-no-drag">
     {#if !disabled}
+      <Button
+        variant={activityOpen ? 'default' : 'secondary'}
+        size="icon-sm"
+        class={cn(!activityOpen && UTILITY_BUTTON_CLASS)}
+        aria-label="Activity"
+        aria-pressed={activityOpen}
+        title={`${activityOpen ? 'Close' : 'Open'} activity (${activityShortcut})`}
+        onclick={ontoggleActivity}
+      >
+        <Icon name="activity" />
+      </Button>
       {#each viewToggles as view (view.type)}
         {@const open = openViews.includes(view.type)}
         <Button

@@ -35,7 +35,7 @@ pull request. Thus the developer does not have to change between many applicatio
 | Branch | The Git branch that is checked out in the project folder. All panes use this branch. |
 | Pane | One work area in the strip. A pane is an agent, a terminal, the files, or the code diff. |
 | Strip | The horizontal row of panes. You can scroll it, reorder it and resize its items. |
-| Panel | A pane that shows the application, not the project. The panels are Activity, Insights, Settings and Shortcuts. |
+| Panel | An area in the strip opened from the header or rail. Activity shows the current project; Insights, Settings and Shortcuts are global. |
 | Turn | One request to an agent and all of its reply. |
 | Action | A prepared instruction that an agent does for you, for example "Create PR". |
 | Run script | A command that starts the project, for example `npm run dev`. |
@@ -48,8 +48,8 @@ pull request. Thus the developer does not have to change between many applicatio
 3. Add an agent pane with the "Add pane" button (＋) in the rail. Or push ⌘N.
 4. Type a message in the composer. Send it.
 5. Monitor the agent. Approve its tools if it asks.
-6. Open the Files pane (⌘E) or the Code diff pane (⌘D) from the header. Examine the
-   changes.
+6. Open Activity (⌘J), Files (⌘E) or Code diff (⌘D) from the header. Examine the
+   project's recent work and changes.
 7. Push "Run" to start the project.
 8. Push "Create PR". An agent writes the pull request and opens it.
 9. Push "Merge" when the pull request is ready.

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { overlayScrollbar } from '$lib/scrollbar';
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import GitCommitHorizontal from '@lucide/svelte/icons/git-commit-horizontal';
   import FolderX from '@lucide/svelte/icons/folder-x';
   import { Button } from '$lib/components/ui/button';
@@ -25,7 +25,12 @@
     onresize,
     onclose,
     onrename,
-  }: PaneProps & { projectId: string; title: string } = $props();
+    selectedDiff,
+  }: PaneProps & {
+    projectId: string;
+    title: string;
+    selectedDiff?: { path: string; request: number };
+  } = $props();
 
   let status = $state<GitStatus>();
   /** The changed file whose diff is expanded, if any. */
@@ -34,6 +39,8 @@
   let diff = $state<{ path: string; text: string }>();
   let error = $state('');
   let generation = 0;
+  let changeList: HTMLElement;
+  let lastRequest = 0;
 
   async function refresh() {
     const token = ++generation;
@@ -90,6 +97,31 @@
     if (selectedPath) void loadDiff(path);
   }
 
+  $effect(() => {
+    const request = selectedDiff;
+    if (!request || !status || request.request === lastRequest) return;
+    lastRequest = request.request;
+    selectedPath = status.changes.some((change) => change.path === request.path)
+      ? request.path
+      : '';
+    if (selectedPath) void loadDiff(selectedPath);
+    void tick().then(() => {
+      if (!changeList) return;
+      const row = request.path
+        ? changeList.querySelector<HTMLElement>(
+            `[data-diff-path="${CSS.escape(request.path)}"]`,
+          )
+        : undefined;
+      changeList.scrollTo({
+        top: row
+          ? changeList.scrollTop +
+            row.getBoundingClientRect().top -
+            changeList.getBoundingClientRect().top
+          : 0,
+      });
+    });
+  });
+
   onMount(() => {
     void refresh();
     const stop = watchFiles(projectId, refresh, {
@@ -123,13 +155,17 @@
     {/snippet}
   </PaneHeader>
   <section
+    bind:this={changeList}
     {@attach overlayScrollbar}
     class="min-h-0 flex-1 overflow-auto px-4 pt-2 pb-2 [&:has(>div:only-child)]:flex [&:has(>div:only-child)]:flex-col"
   >
     {#if error}<p class="text-sm text-destructive">{error}</p>{/if}
     {#each status?.changes ?? [] as change (change.path)}
       {@const slash = change.path.lastIndexOf('/') + 1}
-      <div class="group relative flex items-center">
+      <div
+        data-diff-path={change.path}
+        class="group relative flex items-center"
+      >
         <button
           type="button"
           class="flex min-w-0 flex-1 items-center gap-3 rounded-md py-3 text-left font-mono text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/60"

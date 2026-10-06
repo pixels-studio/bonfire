@@ -1,5 +1,5 @@
 <script lang="ts" module>
-  /** A pane of app-wide tools, opened from the rail ahead of the conversation panes. */
+  /** A strip panel opened from the header or rail ahead of the conversation panes. */
   export type AppPanel = 'shortcuts' | 'insights' | 'activity' | 'settings';
 
   type PanelItem = {
@@ -9,19 +9,19 @@
     shortcut: ShortcutId;
   };
 
-  /** The panel buttons at the foot of the rail, top to bottom, above help. */
-  const PANELS: PanelItem[] = [
-    {
-      panel: 'insights',
-      icon: 'insights',
-      label: 'Insights',
-      shortcut: 'insights',
-    },
+  /** Panel labels for the minimap; only the global ones have rail buttons. */
+  const PANEL_ITEMS: PanelItem[] = [
     {
       panel: 'activity',
       icon: 'activity',
       label: 'Activity',
       shortcut: 'activity',
+    },
+    {
+      panel: 'insights',
+      icon: 'insights',
+      label: 'Insights',
+      shortcut: 'insights',
     },
     {
       panel: 'settings',
@@ -36,6 +36,7 @@
       shortcut: 'shortcuts',
     },
   ];
+  const GLOBAL_PANELS = PANEL_ITEMS.filter(({ panel }) => panel !== 'activity');
 </script>
 
 <script lang="ts">
@@ -149,7 +150,9 @@
   );
 
   const openPanels = $derived(
-    panels.flatMap((panel) => PANELS.filter((item) => item.panel === panel)),
+    panels.flatMap((panel) =>
+      PANEL_ITEMS.filter((item) => item.panel === panel),
+    ),
   );
 </script>
 
@@ -269,7 +272,7 @@
     {#if cliVersions.outdated.length}
       {@render updateButton()}
     {/if}
-    {#each PANELS as item (item.panel)}
+    {#each GLOBAL_PANELS as item (item.panel)}
       {@render panelButton(item)}
     {/each}
     <Tooltip.Root>
