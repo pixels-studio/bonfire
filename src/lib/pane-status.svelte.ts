@@ -50,6 +50,17 @@ export class PaneStatuses {
     return 'idle';
   }
 
+  /** Shows states a demo chose, and stops asking the main process about those panes. */
+  preview(states: Record<string, PaneStatus>) {
+    for (const [paneId, status] of Object.entries(states)) {
+      this.#loaded.add(paneId);
+      this.#running[paneId] = status === 'working';
+      this.#failed[paneId] = status === 'error';
+      this.#unseen[paneId] = status === 'done';
+      this.#requests[paneId] = status === 'input' ? ['demo'] : [];
+    }
+  }
+
   /** Clears a finished turn's mark once the user has looked at its pane. */
   markSeen(paneId: string) {
     if (this.#unseen[paneId]) this.#unseen[paneId] = false;

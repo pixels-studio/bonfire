@@ -703,6 +703,14 @@ function buildState(paths) {
   };
 }
 
+/** Agent states to show, by pane title: no real run could leave these in a seeded folder. */
+const DEMO_STATUSES = {
+  'Paginate the orders endpoint': 'done',
+  'Fix invoice dates showing the wrong day': 'input',
+  'Rate limit the API': 'working',
+  'Document form validation': 'done',
+};
+
 function writeAppData(state) {
   rmSync(DATA, { recursive: true, force: true });
   mkdirSync(join(DATA, 'conversations'), { recursive: true });
@@ -716,6 +724,16 @@ function writeAppData(state) {
   writeFileSync(
     join(DATA, 'state.json'),
     JSON.stringify({ ...state, panes }, null, 2),
+  );
+  writeFileSync(
+    join(DATA, 'demo-statuses.json'),
+    JSON.stringify(
+      Object.fromEntries(
+        state.panes
+          .filter((pane) => DEMO_STATUSES[pane.title])
+          .map((pane) => [pane.id, DEMO_STATUSES[pane.title]]),
+      ),
+    ),
   );
 }
 

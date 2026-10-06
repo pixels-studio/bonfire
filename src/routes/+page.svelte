@@ -72,6 +72,7 @@
   let busy = $state(false);
   let paneStrip = $state<HTMLDivElement>();
   const statuses = new PaneStatuses();
+  if (window.bonfireDemoStatuses) statuses.preview(window.bonfireDemoStatuses);
   let inView = $state<Record<string, boolean>>({});
   let sizeOverrides = $state<Record<string, PaneSize>>({});
   let pullRequestSize = $state<PaneSize>();

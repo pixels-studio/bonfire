@@ -18,6 +18,7 @@ import {
   appendFileSync,
   existsSync,
   mkdirSync,
+  readFileSync,
   statSync,
   writeFileSync,
 } from 'node:fs';
@@ -388,6 +389,21 @@ function registerIpc() {
   // Each page load asks for a channel straight to the terminal host, which then carries the
   // terminals' output and typing instead of main. A host not yet started gets one as it
   // starts, with the first terminal, so a launch with no terminals doesn't start it.
+  // The demo (`npm run dev:demo`) lists agent states to show, which no real run would have.
+  ipcMain.on('demo-statuses', (event) => {
+    try {
+      event.returnValue = isTrustedSender(event)
+        ? JSON.parse(
+            readFileSync(
+              join(app.getPath('userData'), 'demo-statuses.json'),
+              'utf8',
+            ),
+          )
+        : undefined;
+    } catch {
+      event.returnValue = undefined;
+    }
+  });
   ipcMain.on(events.terminalPort, (event) => {
     if (isTrustedSender(event) && backend.terminalsRunning())
       connectTerminals();

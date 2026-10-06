@@ -77,3 +77,7 @@ api.scripts.onRun = subscribe(events.scriptRun);
 api.dictation.onEvent = subscribe(events.dictationEvent);
 
 contextBridge.exposeInMainWorld('bonfire', api as unknown as API);
+contextBridge.exposeInMainWorld(
+  'bonfireDemoStatuses',
+  ipcRenderer.sendSync('demo-statuses'),
+);
