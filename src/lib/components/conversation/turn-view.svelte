@@ -4,6 +4,7 @@
   import TextView from './text-view.svelte';
   import ThinkingView from './thinking-view.svelte';
   import ToolView from './tool-view.svelte';
+  import TurnFooter from './turn-footer.svelte';
   import WorkGroup from './work-group.svelte';
   import type { ConversationMessage } from '$shared/contracts';
   import { editedPaths, promptParts } from '$shared/domain';
@@ -62,11 +63,11 @@
           (item) => item.kind === 'tool' && !item.tool?.images?.length,
         ) + 1,
   );
-  /** The turn's final reply, which carries the copy button and timestamp once complete. */
-  const lastReplyId = $derived(
+  /** The final text reply supplies the turn's duration, time, copy text, and fork point. */
+  const lastReply = $derived(
     replies.findLast(
       (item) => item.kind === 'text' && item.role === 'assistant',
-    )?.id,
+    ),
   );
   const editedFilePaths = $derived(editedPaths(replies));
   const turnComplete = $derived(
@@ -78,7 +79,7 @@
 
 {#snippet entry(message: ConversationMessage)}
   {#if message.kind === 'text' || message.kind === 'error' || message.kind === 'capacity'}
-    <TextView {message} {paneId} isLastReply={message.id === lastReplyId} />
+    <TextView {message} />
   {:else if message.kind === 'thinking'}
     <!-- Thinking without text (e.g. redacted) has nothing to expand. -->
     {#if message.text || message.status === 'streaming'}
@@ -146,4 +147,7 @@
 {/each}
 {#if turnComplete && projectId && editedFilePaths.length}
   <EditedFiles {projectId} paths={editedFilePaths} />
+{/if}
+{#if turnComplete && lastReply?.status === 'complete'}
+  <TurnFooter message={lastReply} {paneId} />
 {/if}
