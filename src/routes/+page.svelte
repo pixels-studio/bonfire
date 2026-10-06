@@ -12,6 +12,7 @@
   import PaneView from '$lib/components/pane-view/pane-view.svelte';
   import PullRequestView from '$lib/components/pull-request/pull-request-view.svelte';
   import ShortcutsPane from '$lib/components/shortcuts/shortcuts-pane.svelte';
+  import SidebarControls from '$lib/components/workspace-list/sidebar-controls.svelte';
   import WorkspaceList, {
     type RailPanel,
   } from '$lib/components/workspace-list/workspace-list.svelte';
@@ -261,6 +262,28 @@
   function markSeen(matches: (pane: Pane) => boolean) {
     for (const pane of appState.panes)
       if (matches(pane)) statuses.markSeen(pane.id);
+  }
+
+  /** Whether the sidebar is hidden, which is kept for the next launch. */
+  let sidebarCollapsed = $state(
+    typeof localStorage !== 'undefined' &&
+      localStorage.getItem('bonfire.sidebarCollapsed') === '1',
+  );
+  function toggleSidebar() {
+    sidebarCollapsed = !sidebarCollapsed;
+    localStorage.setItem(
+      'bonfire.sidebarCollapsed',
+      sidebarCollapsed ? '1' : '0',
+    );
+  }
+
+  /** Opens the project before or after the open one, going round at the ends. */
+  function stepProject(step: 1 | -1) {
+    const { projects } = appState;
+    if (projects.length < 2) return;
+    const at = projects.findIndex(({ id }) => id === project?.id);
+    const next = projects[(at + step + projects.length) % projects.length];
+    openProject(next.id);
   }
 
   function openProject(projectId: string) {
@@ -1077,36 +1100,62 @@
     <div class="flex h-screen">
       <div class="relative flex min-w-0 flex-1">
         <div class="flex min-w-0 flex-1" inert={!!overlay}>
-          <WorkspaceList
-            projects={appState.projects}
-            {project}
-            attention={projectAttention}
-            bind:projectMenuOpen
-            workspaces={projectWorkspaces}
-            currentId={workspaceId}
-            activity={workspaceActivity}
-            creating={creatingWorkspace}
-            settingsOpen={overlay === 'project'}
-            {trafficLightInset}
-            panel={overlay === 'project' ? undefined : overlay}
-            onpanel={toggleOverlay}
-            onhelp={() => window.bonfire.navigation.help()}
-            onselectProject={openProject}
-            onaddProject={addProject}
-            onremoveProject={removeProject}
-            onsettings={() => toggleOverlay('project')}
-            oncreate={() => void createWorkspace()}
-            onopen={(id) => void openWorkspace(id)}
-            onrename={(id, title) =>
-              void runAction(() => window.bonfire.workspaces.rename(id, title))}
-            onarchive={(id) =>
-              void runAction(() => window.bonfire.workspaces.archive(id))}
-            onunarchive={(id) =>
-              void runAction(() => window.bonfire.workspaces.unarchive(id))}
-            ondelete={(id) =>
-              void runAction(() => window.bonfire.workspaces.remove(id))}
-          />
+          {#if !sidebarCollapsed}
+            <WorkspaceList
+              projects={appState.projects}
+              {project}
+              attention={projectAttention}
+              bind:projectMenuOpen
+              workspaces={projectWorkspaces}
+              currentId={workspaceId}
+              activity={workspaceActivity}
+              creating={creatingWorkspace}
+              settingsOpen={overlay === 'project'}
+              {trafficLightInset}
+              panel={overlay === 'project' ? undefined : overlay}
+              onpanel={toggleOverlay}
+              onhelp={() => window.bonfire.navigation.help()}
+              oncollapse={toggleSidebar}
+              onprevious={() => stepProject(-1)}
+              onnext={() => stepProject(1)}
+              onselectProject={openProject}
+              onaddProject={addProject}
+              onremoveProject={removeProject}
+              onsettings={() => toggleOverlay('project')}
+              oncreate={() => void createWorkspace()}
+              onopen={(id) => void openWorkspace(id)}
+              onrename={(id, title) =>
+                void runAction(() =>
+                  window.bonfire.workspaces.rename(id, title),
+                )}
+              onarchive={(id) =>
+                void runAction(() => window.bonfire.workspaces.archive(id))}
+              onunarchive={(id) =>
+                void runAction(() => window.bonfire.workspaces.unarchive(id))}
+              ondelete={(id) =>
+                void runAction(() => window.bonfire.workspaces.remove(id))}
+            />
+          {/if}
           <div class="flex min-w-0 flex-1 flex-col">
+            {#if sidebarCollapsed}
+              <!-- The sidebar's controls stay reachable, clear of the window buttons. -->
+              <div
+                class={cn(
+                  'flex h-13 shrink-0 items-center gap-1 px-4 app-drag',
+                  trafficLightInset && 'pl-20',
+                )}
+              >
+                <div class="flex w-24 items-center gap-0.5">
+                  <SidebarControls
+                    collapsed
+                    canSwitch={appState.projects.length > 1}
+                    ontoggle={toggleSidebar}
+                    onprevious={() => stepProject(-1)}
+                    onnext={() => stepProject(1)}
+                  />
+                </div>
+              </div>
+            {/if}
             <main class="flex min-h-0 min-w-0 flex-1 py-2 pr-2">
               <div class="min-w-0 flex-1">
                 <div

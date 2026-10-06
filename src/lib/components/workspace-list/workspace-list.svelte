@@ -58,6 +58,7 @@
   import * as Tooltip from '$lib/components/ui/tooltip';
   import Icon from '$lib/components/icon/icon.svelte';
   import ShortcutKeys from '$lib/components/shortcuts/shortcut-keys.svelte';
+  import SidebarControls from './sidebar-controls.svelte';
   import ProjectPicker from '$lib/components/workspace/project-picker.svelte';
   import type { PaneStatus, ProjectAttention } from '$lib/pane-status.svelte';
   import { cliVersions } from '$lib/stores/cli-versions.svelte';
@@ -80,6 +81,9 @@
     panel,
     onpanel,
     onhelp,
+    oncollapse,
+    onprevious,
+    onnext,
     onselectProject,
     onaddProject,
     onremoveProject,
@@ -111,6 +115,11 @@
     panel?: RailPanel;
     onpanel: (panel: RailPanel) => void;
     onhelp: () => void;
+    /** Hides the sidebar. */
+    oncollapse: () => void;
+    /** Opens the project before or after the open one. */
+    onprevious: () => void;
+    onnext: () => void;
     onselectProject: (id: string) => void;
     onaddProject: () => void;
     onremoveProject: (id: string) => void;
@@ -273,12 +282,21 @@
 {/snippet}
 
 <aside class="flex w-72 shrink-0 flex-col pb-2" aria-label="Workspaces">
+  <!-- The window buttons sit at the left in a window; the sidebar button makes room for them. -->
   <div
     class={cn(
-      'flex shrink-0 items-center gap-1.5 px-4 pt-4 pb-2 app-drag',
+      'flex h-13 shrink-0 items-center gap-1 px-4 app-drag',
       trafficLightInset && 'pl-20!',
     )}
   >
+    <SidebarControls
+      canSwitch={projects.length > 1}
+      ontoggle={oncollapse}
+      {onprevious}
+      {onnext}
+    />
+  </div>
+  <div class="flex shrink-0 items-center gap-1.5 px-4 pb-2 app-drag">
     <!-- One rounded-md control. The picker's trigger spans all of it, so its menu does too; the
          settings button sits over the trigger's right end. -->
     <div class="relative min-w-0 flex-1 rounded-md bg-secondary app-no-drag">
