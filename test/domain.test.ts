@@ -2,10 +2,12 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
   cloneUrl,
+  editedPaths,
   errorMessage,
   reorderLayout,
   repositoryName,
 } from '../shared/domain';
+import type { ConversationMessage } from '../shared/contracts';
 
 test('reorderLayout keeps hidden panes in their slots', () => {
   assert.deepEqual(
@@ -53,4 +55,29 @@ test('repositoryName is the last segment without .git', () => {
   assert.equal(repositoryName('git@github.com:o/repo.git'), 'repo');
   assert.equal(repositoryName('git@host:repo.git'), 'repo');
   assert.equal(repositoryName('https://host/o/repo/'), 'repo');
+});
+
+function tool(
+  name: string,
+  input: string,
+): Pick<ConversationMessage, 'kind' | 'tool'> {
+  return { kind: 'tool', tool: { name, input, output: '' } };
+}
+
+test('editedPaths collects each file-editing tool call once, in order', () => {
+  assert.deepEqual(
+    editedPaths([
+      tool('Read', '/a.ts'),
+      tool('Edit', '/a.ts'),
+      tool('Write', '/b.ts'),
+      tool('Edit', '/a.ts'),
+      tool('Bash', 'ls'),
+      { kind: 'text', tool: undefined },
+    ]),
+    ['/a.ts', '/b.ts'],
+  );
+});
+
+test('editedPaths splits a Codex fileChange covering several paths at once', () => {
+  assert.deepEqual(editedPaths([tool('Edit', 'a.ts, b.ts')]), ['a.ts', 'b.ts']);
 });

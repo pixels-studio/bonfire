@@ -44,6 +44,8 @@ export const conversationMessageSchema = z.object({
       /** The call's key argument, such as a shell command or file path. */
       input: z.string().default(''),
       output: z.string().default(''),
+      /** Previews of images the call's result carried, such as a screenshot read from disk. */
+      images: z.array(z.string()).max(4).readonly().optional(),
     })
     .optional(),
 });
@@ -702,6 +704,7 @@ export const requests = {
   'git.localBranches': z.tuple([id]),
   'git.branches': z.tuple([id]),
   'git.diff': z.tuple([id, filePath]),
+  'git.changesAmong': z.tuple([id, z.array(filePath).min(1).max(32)]),
   'git.checkout': z.tuple([id, branchName]),
   'git.createBranch': z.tuple([id, branchName, branchName]),
   'git.pull': z.tuple([id]),
@@ -966,6 +969,8 @@ export type API = {
     /** Local and remote-tracking branches, to start a new branch from. */
     branches(projectId: string): Promise<string[]>;
     diff(projectId: string, path: string): Promise<string>;
+    /** The current changes among the given paths, such as the files a turn edited. */
+    changesAmong(projectId: string, paths: string[]): Promise<Change[]>;
     /**
      * Switches the project folder to another branch. Uncommitted changes come along when
      * they can; refused while an agent in the project is working.

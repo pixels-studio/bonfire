@@ -1,6 +1,6 @@
-import type { GitStatus, Project } from '../../../shared/contracts';
+import type { Change, GitStatus, Project } from '../../../shared/contracts';
 import * as git from '../git';
-import type { Machines } from '../machines';
+import { resolvePlace, type Machines } from '../machines';
 import type { Store } from '../persistence';
 import type { ProjectView } from '../state';
 
@@ -50,6 +50,23 @@ export function repositoryService({
       );
   }
 
+  /** The current changes among `paths`, such as the files one turn of a conversation touched. */
+  async function changesAmong(
+    projectId: string,
+    paths: string[],
+  ): Promise<Change[]> {
+    const { machine, path: root } = resolvePlace(folder(projectId));
+    const wanted = new Set(
+      paths.map((path) =>
+        machine.path.isAbsolute(path)
+          ? machine.path.relative(root, path)
+          : path,
+      ),
+    );
+    const { changes } = await status(projectId);
+    return changes.filter((change) => wanted.has(change.path));
+  }
+
   async function diff(projectId: string, path: string) {
     const root = folder(projectId);
     if (path.includes('\0') || path.split(/[\\/]/).includes('..'))
@@ -88,6 +105,7 @@ export function repositoryService({
     placeOf,
     folder,
     status,
+    changesAmong,
     diff,
     checkout,
     createBranch,

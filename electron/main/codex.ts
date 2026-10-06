@@ -26,7 +26,12 @@ import {
   type RequestAnswer,
   type Turn,
 } from './assistant';
-import { displayCommand, messageFromItem, planMessage } from './codex-items';
+import {
+  displayCommand,
+  imagesFromItem,
+  messageFromItem,
+  planMessage,
+} from './codex-items';
 import type {
   CodexAccount,
   CommandApprovalDecision,
@@ -515,6 +520,11 @@ export class CodexAssistant extends ChatAssistant {
           }
         }
         if (message) this.publish(pane, message, completed);
+        if (completed && message?.tool) {
+          const images = imagesFromItem(item);
+          if (images.length)
+            void this.attachToolImages(pane, message.id, images);
+        }
         break;
       }
       case 'item/agentMessage/delta':

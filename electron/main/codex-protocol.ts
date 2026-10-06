@@ -31,7 +31,7 @@ export type ThreadItem =
       tool: string;
       status: ItemStatus;
       arguments: unknown;
-      result: { content: unknown[] } | null;
+      result: { content: McpContentItem[] } | null;
       error: { message: string } | null;
     }
   | {
@@ -40,7 +40,7 @@ export type ThreadItem =
       tool: string;
       status: ItemStatus;
       arguments: unknown;
-      contentItems: { type: string; text?: string }[] | null;
+      contentItems: McpContentItem[] | null;
     }
   | {
       type: 'collabAgentToolCall';
@@ -50,6 +50,15 @@ export type ThreadItem =
       prompt: string | null;
     }
   | { type: 'webSearch'; id: string; query: string };
+
+/** One block of an MCP tool's result, as the content array of the MCP spec carries it. */
+export type McpContentItem = {
+  type: string;
+  text?: string;
+  /** Set with `type: 'image'`: the image's bytes, base64-encoded. */
+  data?: string;
+  mimeType?: string;
+};
 
 export type ItemStatus = 'inProgress' | 'completed' | 'failed' | 'declined';
 

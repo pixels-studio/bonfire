@@ -415,6 +415,7 @@
             <TurnView
               messages={turn}
               paneId={pane.id}
+              projectId={pane.projectId}
               expanded={!!watched[turn[0].id]}
             />
           {/each}
@@ -429,6 +430,7 @@
                 <TurnView
                   messages={lastTurn}
                   paneId={pane.id}
+                  projectId={pane.projectId}
                   expanded={!!watched[lastTurn[0].id]}
                 />
                 {#if running && !assistantStarted && !requests.length}

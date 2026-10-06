@@ -2,6 +2,7 @@
   import X from '@lucide/svelte/icons/x';
   import Icon from '$lib/components/icon/icon.svelte';
   import * as Tooltip from '$lib/components/ui/tooltip';
+  import { lightbox, rectOf } from '$lib/stores/lightbox.svelte';
   import { cn } from '$lib/utils';
 
   let {
@@ -21,7 +22,7 @@
 {#snippet chip()}
   <span
     class={cn(
-      'group inline-flex h-6.5 max-w-48 shrink-0 items-center gap-1.5 rounded-md border border-border bg-background/40 px-1.5 align-middle text-xs text-foreground transition-colors hover:border-foreground/40',
+      'group inline-flex max-w-48 shrink-0 items-center gap-1.5 align-middle text-foreground',
       className,
     )}
     title={onremove ? undefined : name}
@@ -53,7 +54,7 @@
         </button>
       {/if}
     </span>
-    <span class="truncate">{name}</span>
+    <span class="truncate font-semibold">{name}</span>
   </span>
 {/snippet}
 
@@ -63,7 +64,37 @@
     <Tooltip.Root>
       <Tooltip.Trigger>
         {#snippet child({ props })}
-          <span {...props} class="inline-flex align-middle">
+          <!-- role and tabindex are only set without onremove, i.e. when this is a button. -->
+          <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+          <span
+            {...props}
+            class={cn(
+              'inline-flex align-middle',
+              !onremove && 'cursor-pointer',
+            )}
+            role={onremove ? undefined : 'button'}
+            tabindex={onremove ? undefined : 0}
+            onclick={(event) => {
+              if (onremove) return;
+              const thumb = event.currentTarget.querySelector('img');
+              lightbox.show({
+                src: previewUrl,
+                alt: name,
+                origin: thumb ? rectOf(thumb) : undefined,
+              });
+            }}
+            onkeydown={(event) => {
+              if (onremove || (event.key !== 'Enter' && event.key !== ' '))
+                return;
+              event.preventDefault();
+              const thumb = event.currentTarget.querySelector('img');
+              lightbox.show({
+                src: previewUrl,
+                alt: name,
+                origin: thumb ? rectOf(thumb) : undefined,
+              });
+            }}
+          >
             {@render chip()}
           </span>
         {/snippet}

@@ -13,6 +13,12 @@ import type { Attachment, ConversationMessage } from '../../shared/contracts';
 const PREVIEW_MAX_SIZE = 480;
 /** Images the preview can't be made from are kept as they are only up to this size. */
 const MAX_RAW_PREVIEW_BYTES = 128_000;
+/**
+ * The longer side kept for an image a tool result carries, such as a screenshot read from
+ * disk. Shown inline rather than cropped to a chip, so it keeps more detail than an attachment's.
+ */
+const TOOL_IMAGE_MAX_SIZE = 1024;
+const MAX_RAW_TOOL_IMAGE_BYTES = 512_000;
 
 export type ImageMimeType =
   'image/png' | 'image/webp' | 'image/gif' | 'image/jpeg';
@@ -47,16 +53,14 @@ export async function readImage(
   };
 }
 
-/** The image scaled down to fit within the preview size, kept at its own aspect ratio. */
-function scaledPreview(image: NativeImage) {
+/** The image scaled down to fit within `maxSize`, kept at its own aspect ratio. */
+function scaledPreview(image: NativeImage, maxSize = PREVIEW_MAX_SIZE) {
   if (image.isEmpty()) return undefined;
   const { width, height } = image.getSize();
-  if (Math.max(width, height) <= PREVIEW_MAX_SIZE) return image.toDataURL();
+  if (Math.max(width, height) <= maxSize) return image.toDataURL();
   // Only the longer side is given, so Electron scales the other to match it.
   const long = width >= height ? 'width' : 'height';
-  return image
-    .resize({ [long]: PREVIEW_MAX_SIZE, quality: 'good' })
-    .toDataURL();
+  return image.resize({ [long]: maxSize, quality: 'good' }).toDataURL();
 }
 
 /**
@@ -83,6 +87,24 @@ export async function imagePreview(
   }
   return data.byteLength <= MAX_RAW_PREVIEW_BYTES
     ? `data:${mimeType};base64,${data.toString('base64')}`
+    : undefined;
+}
+
+/**
+ * A preview of an image a tool result carried, such as a screenshot the agent read back.
+ * The data arrives already decoded from the model's response, so this only scales it down,
+ * rather than reading or thumbnailing a file the way `imagePreview` does for an attachment.
+ */
+export async function toolImagePreview(base64: string, mimeType: string) {
+  const { nativeImage } = await import('electron');
+  const data = Buffer.from(base64, 'base64');
+  const preview = scaledPreview(
+    nativeImage.createFromBuffer(data),
+    TOOL_IMAGE_MAX_SIZE,
+  );
+  if (preview) return preview;
+  return data.byteLength <= MAX_RAW_TOOL_IMAGE_BYTES
+    ? `data:${mimeType};base64,${base64}`
     : undefined;
 }
 
