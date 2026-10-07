@@ -1,4 +1,7 @@
 <script lang="ts">
+  import { fly } from 'svelte/transition';
+  import { expoOut } from 'svelte/easing';
+  import { MediaQuery } from 'svelte/reactivity';
   import { overlayScrollbar } from '$lib/scrollbar';
   import { Button } from '$lib/components/ui/button';
   import { Checkbox } from '$lib/components/ui/checkbox';
@@ -21,6 +24,10 @@
   let typed = $state<Record<string, string>>({});
   /** Questions whose "Other" row is picked; a question without options is always answering in its own words. */
   let other = $state<Record<string, boolean>>({});
+
+  /** 20px filled circle: faint when empty, accent once picked (the dot / check is drawn by the control). */
+  const control =
+    'size-5 border-0 bg-foreground/10 data-[state=checked]:bg-brand';
 
   /** Stands in for the "Other" row as a radio value, which an option label can't collide with. */
   const OTHER = '\0other';
@@ -51,6 +58,31 @@
     other[id] = on;
     if (!multiple) selected[id] = [];
   }
+
+  /** Multiple questions are asked one at a time; this is the index of the one showing. */
+  let step = $state(0);
+  /** Height of the question showing, including an opened "Other" input. */
+  let contentHeight = $state(0);
+  /** +1 moving forward, -1 back; decides which side the next question slides in from. */
+  let direction = $state(1);
+  const reduceMotion = new MediaQuery('prefers-reduced-motion: reduce');
+  const slide = (side: 1 | -1) => ({
+    x: reduceMotion.current ? 0 : 32 * direction * side,
+    // Enter 200ms, exit 150ms, like `dialog-motion`. Reduced motion keeps the fade.
+    duration: side === 1 ? 200 : 150,
+    easing: expoOut,
+  });
+
+  function go(delta: 1 | -1) {
+    direction = delta;
+    step += delta;
+  }
+  const questions = $derived(
+    request.kind === 'question' ? request.questions : [],
+  );
+  const current = $derived(questions[step]);
+  const isLast = $derived(step >= questions.length - 1);
+  const currentAnswered = $derived(!!current && answerTo(current).length > 0);
 
   const answered = $derived(
     request.kind === 'question' &&
@@ -128,106 +160,141 @@
     </div>
   {:else}
     <form
-      class="flex flex-col gap-4"
+      class="flex flex-col gap-6"
       aria-labelledby={`request-${request.id}`}
       onsubmit={(event) => {
         event.preventDefault();
-        if (answered) submit();
+        if (!currentAnswered) return;
+        if (!isLast) go(1);
+        else if (answered) submit();
       }}
     >
-      <div class="flex items-baseline justify-between gap-2">
-        <p id={`request-${request.id}`} class="font-medium">
-          {request.questions.length === 1
-            ? request.questions[0].question
-            : 'Answer to continue'}
-        </p>
-        {#if request.questions.length === 1}
+      {#if request.questions.length === 1}
+        <div class="flex items-baseline justify-between gap-2">
+          <p id={`request-${request.id}`} class="font-medium">
+            {request.questions[0].question}
+          </p>
           {@render tag(request.questions[0].header)}
-        {/if}
-      </div>
-      {#each request.questions as question (question.id)}
-        <fieldset class="flex min-w-0 flex-col gap-2">
-          <legend
-            class={request.questions.length === 1
-              ? 'sr-only'
-              : 'mb-1 flex w-full items-baseline justify-between gap-2'}
+        </div>
+      {:else}
+        <p id={`request-${request.id}`} class="sr-only">Answer to continue</p>
+      {/if}
+      <!-- Both questions share one grid cell while sliding; the height follows the one
+           arriving, so the card grows or shrinks instead of jumping. The padding keeps
+           focus rings from being clipped. -->
+      <div
+        class="-m-1 grid overflow-clip p-1 transition-[height] duration-200 ease-[cubic-bezier(0.19,1,0.22,1)] motion-reduce:transition-none"
+        style:height={contentHeight ? `${contentHeight + 8}px` : undefined}
+      >
+        {#each [current] as question (question.id)}
+          <fieldset
+            bind:offsetHeight={contentHeight}
+            class="col-start-1 row-start-1 flex min-w-0 flex-col gap-6"
+            in:fly={slide(1)}
+            out:fly={slide(-1)}
           >
-            <span>{question.question}</span>
-            {#if request.questions.length > 1}
-              {@render tag(question.header)}
-            {/if}
-          </legend>
-          {#if question.multiple}
-            {#each question.options as option (option.label)}
-              <label class="flex cursor-pointer items-start gap-2">
-                <Checkbox
-                  class="mt-0.5"
-                  checked={!!selected[question.id]?.includes(option.label)}
-                  onCheckedChange={(on) => choose(question, option.label, on)}
-                />
-                {@render choice(option.label, option.description)}
-              </label>
-            {/each}
-            <label class="flex cursor-pointer items-start gap-2">
-              <Checkbox
-                class="mt-0.5"
-                checked={!!other[question.id]}
-                onCheckedChange={(on) => chooseOther(question, on)}
-              />
-              {@render choice('Other')}
-            </label>
-          {:else if question.options.length}
-            <RadioGroup.Root
-              value={other[question.id]
-                ? OTHER
-                : (selected[question.id]?.[0] ?? '')}
-              onValueChange={(value) =>
-                value === OTHER
-                  ? chooseOther(question, true)
-                  : choose(question, value, true)}
+            <legend
+              class={request.questions.length === 1 ? 'sr-only' : 'mb-6 w-full'}
             >
+              {#if request.questions.length > 1}
+                <span
+                  class="flex items-baseline justify-between gap-2 text-muted-foreground"
+                >
+                  <span>Question {step + 1} of {request.questions.length}</span>
+                  {@render tag(question.header)}
+                </span>
+              {/if}
+              <span
+                class={request.questions.length > 1 ? 'block font-medium' : ''}
+                >{question.question}</span
+              >
+            </legend>
+            {#if question.multiple}
               {#each question.options as option (option.label)}
                 <label class="flex cursor-pointer items-start gap-2">
-                  <RadioGroup.Item class="mt-0.5" value={option.label} />
+                  <Checkbox
+                    class={control}
+                    checked={!!selected[question.id]?.includes(option.label)}
+                    onCheckedChange={(on) => choose(question, option.label, on)}
+                  />
                   {@render choice(option.label, option.description)}
                 </label>
               {/each}
               <label class="flex cursor-pointer items-start gap-2">
-                <RadioGroup.Item class="mt-0.5" value={OTHER} />
+                <Checkbox
+                  class={control}
+                  checked={!!other[question.id]}
+                  onCheckedChange={(on) => chooseOther(question, on)}
+                />
                 {@render choice('Other')}
               </label>
-            </RadioGroup.Root>
-          {/if}
-          {#if isOther(question)}
-            <input
-              class="rounded-lg border border-border bg-transparent px-3 py-1.5 outline-none placeholder:text-muted-foreground focus-visible:border-brand"
-              type="text"
-              placeholder="Your answer"
-              aria-label={`${question.header}: your answer`}
-              bind:value={typed[question.id]}
-              {@attach (node) => {
-                if (question.options.length) node.focus();
-              }}
-            />
-          {/if}
-        </fieldset>
-      {/each}
-      <div class="flex justify-end gap-2">
-        <Button
-          class="rounded-full"
-          type="button"
-          size="sm"
-          variant="secondary"
-          onclick={() => onrespond({ answers: {} })}
-        >
-          Skip
-        </Button>
-        <Button
-          class="rounded-full"
-          type="submit"
-          size="sm"
-          disabled={!answered}>Send answer</Button
-        >
+            {:else if question.options.length}
+              <RadioGroup.Root
+                value={other[question.id]
+                  ? OTHER
+                  : (selected[question.id]?.[0] ?? '')}
+                onValueChange={(value) =>
+                  value === OTHER
+                    ? chooseOther(question, true)
+                    : choose(question, value, true)}
+              >
+                {#each question.options as option (option.label)}
+                  <label class="flex cursor-pointer items-start gap-2">
+                    <RadioGroup.Item class={control} value={option.label} />
+                    {@render choice(option.label, option.description)}
+                  </label>
+                {/each}
+                <label class="flex cursor-pointer items-start gap-2">
+                  <RadioGroup.Item class={control} value={OTHER} />
+                  {@render choice('Other')}
+                </label>
+              </RadioGroup.Root>
+            {/if}
+            {#if isOther(question)}
+              <input
+                class="-mt-4 rounded-lg border border-border bg-transparent px-3 py-1.5 outline-none placeholder:text-muted-foreground focus-visible:border-brand"
+                type="text"
+                placeholder="Your answer"
+                aria-label={`${question.header}: your answer`}
+                bind:value={typed[question.id]}
+                {@attach (node) => {
+                  if (question.options.length) node.focus();
+                }}
+              />
+            {/if}
+          </fieldset>
+        {/each}
+      </div>
+      <div class="flex items-center justify-between gap-2">
+        {#if step > 0}
+          <Button
+            class="min-w-20 rounded-full"
+            type="button"
+            size="sm"
+            variant="secondary"
+            onclick={() => go(-1)}
+          >
+            Back
+          </Button>
+        {/if}
+        <div class="ml-auto flex gap-2">
+          <Button
+            class="min-w-20 rounded-full"
+            type="button"
+            size="sm"
+            variant="secondary"
+            onclick={() => onrespond({ answers: {} })}
+          >
+            Skip
+          </Button>
+          <Button
+            class="min-w-20 rounded-full"
+            type="submit"
+            size="sm"
+            disabled={!currentAnswered}
+            >{isLast ? 'Send answer' : 'Next'}</Button
+          >
+        </div>
       </div>
     </form>
   {/if}
