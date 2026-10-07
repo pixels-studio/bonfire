@@ -6,12 +6,24 @@
   import { PROVIDER_LABELS } from '$shared/domain';
   import LimitMeter from './limit-meter.svelte';
   import LimitMeterSkeleton from './limit-meter-skeleton.svelte';
+  import { limitsPace } from './pace';
+  import { refreshOnTurns } from './refresh-on-turns.svelte';
+
+  /** Whether any agent is at work, so limits are worth checking on between turns. */
+  let { working }: { working: boolean } = $props();
 
   /** Windows each provider usually reports, so the placeholder is about as tall as the result. */
   const SKELETON_ROWS: Record<AssistantProvider, number> = {
     claude: 3,
     codex: 1,
   };
+
+  // Each provider at its own pace, as reading their limits costs very differently.
+  for (const provider of ['claude', 'codex'] as const)
+    refreshOnTurns(
+      () => limits.refresh(provider),
+      () => limitsPace(provider, limits.entries[provider].limits, working),
+    );
 </script>
 
 <div class="divide-y divide-border">

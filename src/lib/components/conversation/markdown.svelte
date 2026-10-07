@@ -50,7 +50,7 @@
 <!-- svelte-ignore a11y_click_events_have_key_events -->
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div
-  class={cn('prose prose-sm max-w-none prose-bonfire wrap-anywhere', className)}
+  class={cn('prose prose-sm max-w-none text-pretty prose-bonfire wrap-anywhere', className)}
   {onclick}
 >
   {#each blocks as html, index (index)}{@html html}{/each}

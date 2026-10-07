@@ -1,10 +1,8 @@
 <script lang="ts">
   import { overlayScrollbar } from '$lib/scrollbar';
-  import { onMount } from 'svelte';
   import * as Card from '$lib/components/ui/card';
   import PaneHeader from '$lib/components/pane-header/pane-header.svelte';
   import type { PanelProps } from '$lib/panes';
-  import { limits } from '$lib/stores/limits.svelte';
   import SegmentedControl from './segmented-control.svelte';
   import TokensTab from './tokens-tab.svelte';
   import UsageTab from './usage-tab.svelte';
@@ -16,13 +14,16 @@
 
   let {
     tab = $bindable('tokens'),
+    working = false,
     dragHandle,
     size,
     onresize,
     onclose,
-  }: { tab?: string } & PanelProps = $props();
-
-  onMount(() => void limits.refresh());
+  }: {
+    tab?: string;
+    /** Whether any agent is at work; usage is only checked on between turns then. */
+    working?: boolean;
+  } & PanelProps = $props();
 </script>
 
 <Card.Root class="h-full min-w-0 gap-0">
@@ -46,9 +47,9 @@
   </PaneHeader>
   <div {@attach overlayScrollbar} class="min-h-0 flex-1 overflow-y-auto">
     {#if tab === 'usage'}
-      <UsageTab />
+      <UsageTab {working} />
     {:else}
-      <TokensTab />
+      <TokensTab {working} />
     {/if}
   </div>
 </Card.Root>
