@@ -122,10 +122,10 @@
         <label class="flex flex-col gap-2">
           <Label>Display name</Label>
           <div
-            class="flex items-center rounded-lg border border-input transition-colors focus-within:border-ring dark:bg-input/30"
+            class="flex items-center rounded-lg border border-input transition-colors focus-within:border-brand dark:bg-input/30"
           >
             <span
-              class="grid h-8.5 w-10 shrink-0 place-items-center border-r border-input text-muted-foreground"
+              class="grid h-8.5 w-10 shrink-0 place-items-center border-r border-input text-brand"
               aria-hidden="true"
             >
               <Globe class="size-4" />

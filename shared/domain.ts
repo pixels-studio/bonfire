@@ -234,8 +234,8 @@ export function emptyState(): State {
   };
 }
 
-/** The wallpaper a fresh install starts with: a river mouth at dusk. */
-export const DEFAULT_WALLPAPER = 'lagoon';
+/** The OKLCH hue of the original orange accent, #ea580c. */
+export const DEFAULT_ACCENT_HUE = 41;
 
 /** Pasted text longer than this becomes an attachment when `convertLongText` is on. */
 export const LONG_TEXT_THRESHOLD = 5_000;
@@ -521,7 +521,7 @@ export const DEFAULT_PREFERENCES: Preferences = {
   followUp: 'queue',
   textModel: { provider: 'claude', model: 'haiku' },
   convertLongText: true,
-  wallpaper: DEFAULT_WALLPAPER,
+  accentHue: DEFAULT_ACCENT_HUE,
   notifications: true,
   completionSound: false,
   providers: { claude: true, codex: true },

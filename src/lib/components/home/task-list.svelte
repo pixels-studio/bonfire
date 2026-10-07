@@ -1,14 +1,30 @@
 <script lang="ts" module>
-  import type { WorkspaceStatus } from '$shared/contracts';
+  import type { Workspace } from '$shared/contracts';
   import type { PaneStatus } from '$lib/pane-status.svelte';
 
   /** A task still being set up: its worktree is being made. */
   export type PendingTask = { key: string; request: string; base?: string };
 
-  const SECTIONS: { status: WorkspaceStatus; label: string }[] = [
-    { status: 'in_progress', label: 'In progress' },
-    { status: 'done', label: 'Done' },
-    { status: 'archived', label: 'Closed' },
+  type SectionKey =
+    'attention' | 'in_progress' | 'review' | 'done' | 'archived';
+
+  /**
+   * A task's section comes from its status and, while it is in progress, from what its agents
+   * are doing: stuck or waiting on you is "Needs attention", finished is "Ready to review".
+   */
+  function sectionOf(workspace: Workspace, activity?: PaneStatus): SectionKey {
+    if (workspace.status !== 'in_progress') return workspace.status;
+    if (activity === 'input' || activity === 'error') return 'attention';
+    if (activity === 'done') return 'review';
+    return 'in_progress';
+  }
+
+  const SECTIONS: { key: SectionKey; label: string }[] = [
+    { key: 'attention', label: 'Needs attention' },
+    { key: 'in_progress', label: 'In progress' },
+    { key: 'review', label: 'Ready to review' },
+    { key: 'done', label: 'Done' },
+    { key: 'archived', label: 'Closed' },
   ];
 
   const ACTIVITY_DOTS: Record<Exclude<PaneStatus, 'idle'>, string> = {
@@ -45,7 +61,6 @@
   import Icon from '$lib/components/icon/icon.svelte';
   import { cn } from '$lib/utils';
   import { workspaceLabel } from '$shared/domain';
-  import type { Workspace } from '$shared/contracts';
 
   let {
     workspaces,
@@ -77,7 +92,10 @@
     SECTIONS.map((section) => ({
       ...section,
       items: workspaces
-        .filter((item) => !item.main && item.status === section.status)
+        .filter(
+          (item) =>
+            !item.main && sectionOf(item, activity[item.id]) === section.key,
+        )
         .toSorted((a, b) => b.createdAt - a.createdAt),
     })),
   );
@@ -238,12 +256,12 @@
 {/snippet}
 
 <div class="flex flex-col gap-10">
-  {#each sections as section (section.status)}
-    {@const waiting = section.status === 'in_progress' ? pending : []}
+  {#each sections as section (section.key)}
+    {@const waiting = section.key === 'in_progress' ? pending : []}
     {#if section.items.length || waiting.length}
-      <section aria-labelledby={`tasks-${section.status}`}>
+      <section aria-labelledby={`tasks-${section.key}`}>
         <h2
-          id={`tasks-${section.status}`}
+          id={`tasks-${section.key}`}
           class="mb-3 px-1 text-sm text-muted-foreground"
         >
           {section.label}

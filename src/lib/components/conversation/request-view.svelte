@@ -200,7 +200,7 @@
           {/if}
           {#if isOther(question)}
             <input
-              class="rounded-lg border border-border bg-transparent px-3 py-1.5 outline-none placeholder:text-muted-foreground focus-visible:border-ring"
+              class="rounded-lg border border-border bg-transparent px-3 py-1.5 outline-none placeholder:text-muted-foreground focus-visible:border-brand"
               type="text"
               placeholder="Your answer"
               aria-label={`${question.header}: your answer`}

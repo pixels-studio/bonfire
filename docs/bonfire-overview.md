@@ -209,7 +209,7 @@ edit scripts.
 |---|---|
 | Activity | The pull requests of the repository and the commits pushed directly to the default branch. |
 | Insights | Token use (today, 7 days, 30 days), with cost for each model. It also shows the plan limits of Claude and Codex. |
-| Settings | Accounts, models, approvals, follow-up mode, wallpaper, notifications, SSH connections, GitHub, action instructions. |
+| Settings | Accounts, models, approvals, follow-up mode, accent color, notifications, SSH connections, GitHub, action instructions. |
 | Shortcuts | The list of keyboard shortcuts. |
 
 Insights reads the session logs of the Claude CLI and the Codex CLI on the computer. It
@@ -247,7 +247,7 @@ and sends them to the window. Only one composer can dictate at a time.
 - **CLI version check.** Bonfire compares the installed CLIs with the version it expects.
   It can update an old CLI.
 - **Onboarding.** The first screens help you sign in to an agent and add a project.
-- **Wallpaper.** You can pick one of six photos, or none. The home shows the photo; inside a task, a gradient in its colors takes its place.
+- **Accent color.** You can select the hue of the accent color.
 - **Simplified English.** Optional. The agent writes its replies in ASD-STE100.
 - **Recap.** On by default. When a task starts, the agent writes its understanding and its
   plan. After each turn that changes files, it writes a short title and summary. The Summary

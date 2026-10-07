@@ -36,15 +36,13 @@
 
   const UTILITY_BUTTON_CLASS = 'text-muted-foreground hover:text-foreground';
   const ACTION_BUTTON_CLASS = 'h-auto px-2 py-1';
-  /** The way forward is white; only a problem to fix takes a color, so it shows before it is read. */
-  const PUSH_BUTTON_CLASS =
-    'bg-primary text-primary-foreground hover:bg-primary/85';
+  /** Each action has its own color, so what a button does shows before it is read. */
+  const PUSH_BUTTON_CLASS = 'bg-green-700 text-white hover:bg-green-700/85';
   const CONFLICTS_BUTTON_CLASS =
     'bg-amber-500 text-black hover:bg-amber-500/85';
   const CHECKS_BUTTON_CLASS =
     'bg-destructive text-black hover:bg-destructive/85';
-  const MERGE_BUTTON_CLASS =
-    'bg-primary text-primary-foreground hover:bg-primary/85';
+  const MERGE_BUTTON_CLASS = 'bg-brand text-white hover:bg-brand/85';
 </script>
 
 {#snippet pushButton()}

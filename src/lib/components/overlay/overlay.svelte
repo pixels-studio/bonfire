@@ -33,9 +33,9 @@
 
 <svelte:window onkeydown={handleKeydown} />
 
-<!-- Covers the workspace list and panes; a click on the dimmed area around the panel closes it. -->
+<!-- Covers the workspace list and panes; a click on the blur around the panel closes it. -->
 <div
-  class="absolute inset-0 z-50 grid place-items-center bg-black/70 p-6"
+  class="absolute inset-0 z-50 grid place-items-center bg-background/55 p-6 backdrop-blur-md"
   transition:fade={{ duration }}
   onpointerdown={(event) => {
     if (event.target === event.currentTarget) onclose();
@@ -43,7 +43,6 @@
   role="presentation"
 >
   <section
-    data-overlay
     class="h-full max-h-[52rem] w-full max-w-4xl min-w-0 outline-none *:shadow-2xl *:shadow-black/40"
     aria-label={label}
     tabindex="-1"

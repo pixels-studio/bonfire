@@ -7,16 +7,16 @@
   } from 'svelte/elements';
 
   export const buttonVariants = tv({
-    base: "focus-visible:ring-ring/60 rounded-full border border-transparent bg-clip-padding backdrop-blur-xs text-sm font-medium leading-5 focus-visible:ring-2 active:not-aria-[haspopup]:scale-[0.97] [&_svg:not([class*='size-'])]:size-4 group/button inline-flex shrink-0 items-center justify-center whitespace-nowrap transition-[color,background-color,border-color,opacity,transform] duration-150 ease-out outline-none select-none disabled:pointer-events-none disabled:opacity-40 [&_svg]:pointer-events-none [&_svg]:shrink-0",
+    base: "focus-visible:ring-ring/60 rounded-full border border-transparent bg-clip-padding text-sm font-medium leading-5 focus-visible:ring-2 active:not-aria-[haspopup]:scale-[0.97] [&_svg:not([class*='size-'])]:size-4 group/button inline-flex shrink-0 items-center justify-center whitespace-nowrap transition-[color,background-color,border-color,opacity,transform] duration-150 ease-out outline-none select-none disabled:pointer-events-none disabled:opacity-40 [&_svg]:pointer-events-none [&_svg]:shrink-0",
     variants: {
       variant: {
         default: 'bg-primary text-primary-foreground hover:bg-primary/80',
         outline:
-          'border-border bg-clip-border bg-foreground/8 hover:bg-foreground/12 focus-visible:bg-foreground/12 aria-expanded:bg-foreground/12',
+          'border-border bg-background hover:bg-muted hover:text-foreground dark:bg-input/30 dark:border-input dark:hover:bg-input/50 aria-expanded:bg-muted aria-expanded:text-foreground',
         secondary:
-          'bg-clip-border bg-foreground/8 text-foreground hover:bg-foreground/12 focus-visible:bg-foreground/12 aria-expanded:bg-foreground/12',
+          'bg-secondary text-secondary-foreground hover:bg-foreground/20 aria-expanded:bg-secondary aria-expanded:text-secondary-foreground',
         ghost:
-          'bg-clip-border bg-foreground/8 text-foreground hover:bg-foreground/12 focus-visible:bg-foreground/12 aria-expanded:bg-foreground/12',
+          'hover:bg-muted hover:text-foreground dark:hover:bg-muted/50 aria-expanded:bg-muted aria-expanded:text-foreground',
         destructive:
           'bg-destructive/10 hover:bg-destructive/20 focus-visible:ring-destructive/20 dark:focus-visible:ring-destructive/40 dark:bg-destructive/20 text-destructive focus-visible:border-destructive/40 dark:hover:bg-destructive/30',
         link: 'text-primary underline-offset-4 hover:underline',

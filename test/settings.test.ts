@@ -1,14 +1,19 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import {
+  ACCENT_RANGE,
+  ACCENT_STOPS,
+  accentStopHue,
+  accentStopIndex,
+} from '../src/lib/accent';
 import { noticeBody } from '../electron/main/notifier';
 import { cleanTitle, titlePrompt } from '../electron/main/titles';
 import {
+  DEFAULT_ACCENT_HUE,
   DEFAULT_PREFERENCES,
-  DEFAULT_WALLPAPER,
   resolvePreferences,
 } from '../shared/domain';
 import { stateSchema } from '../shared/contracts';
-import { wallpaperById } from '../src/lib/wallpapers';
 
 test('unset preferences fall back to the defaults', () => {
   assert.deepEqual(resolvePreferences({}), DEFAULT_PREFERENCES);
@@ -34,9 +39,17 @@ test('state saved before preferences existed still loads', () => {
   assert.equal(state.panes[0].approvals, 'auto');
 });
 
-test('an unknown wallpaper falls back to the default', () => {
-  assert.equal(wallpaperById(DEFAULT_WALLPAPER).id, DEFAULT_WALLPAPER);
-  assert.equal(wallpaperById('gone').id, DEFAULT_WALLPAPER);
+test('accent stops round-trip through their hues', () => {
+  for (let index = 0; index < ACCENT_STOPS; index++)
+    assert.equal(accentStopIndex(accentStopHue(index)), index);
+  const index = accentStopIndex(DEFAULT_ACCENT_HUE);
+  assert(index >= 0 && index < ACCENT_STOPS);
+});
+
+test('hues outside the slider snap to its nearer end', () => {
+  assert.equal(accentStopIndex(160), ACCENT_STOPS - 1);
+  assert.equal(accentStopIndex(220), 0);
+  assert.equal(accentStopHue(0), ACCENT_RANGE.min);
 });
 
 test('titles are pulled out of quotes, labels, and markdown', () => {

@@ -97,7 +97,7 @@
     <form class="flex flex-col" onsubmit={create}>
       <Dialog.Body class="gap-6">
         <div
-          class="flex items-center rounded-lg border border-input transition-colors focus-within:border-ring dark:bg-input/30"
+          class="flex items-center rounded-lg border border-input transition-colors focus-within:border-brand dark:bg-input/30"
         >
           <input
             bind:value={name}

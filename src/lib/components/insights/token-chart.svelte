@@ -16,11 +16,8 @@
     $props();
 
   const config = {
-    claude: { label: PROVIDER_LABELS.claude, color: 'var(--color-foreground)' },
-    codex: {
-      label: PROVIDER_LABELS.codex,
-      color: 'var(--color-muted-foreground)',
-    },
+    claude: { label: PROVIDER_LABELS.claude, color: 'var(--color-brand)' },
+    codex: { label: PROVIDER_LABELS.codex, color: 'var(--color-foreground)' },
   } satisfies Chart.ChartConfig;
 
   const LEGEND = ['codex', 'claude'] as const;

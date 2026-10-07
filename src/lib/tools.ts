@@ -1,4 +1,3 @@
-import ListTodo from '@lucide/svelte/icons/list-todo';
 import Search from '@lucide/svelte/icons/search';
 import Wrench from '@lucide/svelte/icons/wrench';
 import AgentIcon from '$lib/components/icon/agent-icon.svelte';
@@ -6,6 +5,7 @@ import AskUserQuestionIcon from '$lib/components/icon/ask-user-question-icon.sve
 import BashIcon from '$lib/components/icon/bash-icon.svelte';
 import EditIcon from '$lib/components/icon/edit-icon.svelte';
 import ReadIcon from '$lib/components/icon/read-icon.svelte';
+import TodoIcon from '$lib/components/icon/todo-icon.svelte';
 import ToolSearchIcon from '$lib/components/icon/tool-search-icon.svelte';
 import WriteIcon from '$lib/components/icon/write-icon.svelte';
 import WebFetchIcon from '$lib/components/icon/web-fetch-icon.svelte';
@@ -24,6 +24,7 @@ const ICONS: Record<
   | typeof WebFetchIcon
   | typeof WebSearchIcon
   | typeof ToolSearchIcon
+  | typeof TodoIcon
   | typeof AgentIcon
   | typeof AskUserQuestionIcon
 > = {
@@ -40,7 +41,7 @@ const ICONS: Record<
   ToolSearch: ToolSearchIcon,
   Task: AgentIcon,
   Agent: AgentIcon,
-  TodoWrite: ListTodo,
+  TodoWrite: TodoIcon,
   AskUserQuestion: AskUserQuestionIcon,
 };
 

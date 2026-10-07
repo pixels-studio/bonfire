@@ -16,6 +16,7 @@
     LONG_TEXT_THRESHOLD,
   } from '$shared/domain';
   import ActionSettings from './action-settings.svelte';
+  import AccentSlider from './accent-slider.svelte';
   import ConnectionSettings from './connection-settings.svelte';
   import GithubSettings from './github-settings.svelte';
   import ModelChoiceSelect from './model-choice-select.svelte';
@@ -23,7 +24,6 @@
   import ProviderSetting from './provider-setting.svelte';
   import Setting from './setting.svelte';
   import SettingsSection from './settings-section.svelte';
-  import WallpaperPicker from './wallpaper-picker.svelte';
 
   const FOLLOW_UPS: { value: FollowUpMode; label: string }[] = [
     { value: 'queue', label: 'Queue' },
@@ -103,14 +103,14 @@
 
   <SettingsSection title="General" icon="section-general">
     <Setting
-      title="Wallpaper"
-      description="The photo behind the home screen. Inside a task, a gradient in its colors takes its place"
+      title="Accent color"
+      description="Tints buttons, highlights, and surfaces"
     >
       {#snippet control(props)}
-        <WallpaperPicker
+        <AccentSlider
           {...props}
-          value={current.wallpaper}
-          onchange={(wallpaper) => preferences.update({ wallpaper })}
+          hue={current.accentHue}
+          oncommit={(accentHue) => preferences.update({ accentHue })}
         />
       {/snippet}
     </Setting>

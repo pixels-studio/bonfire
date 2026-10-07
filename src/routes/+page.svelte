@@ -23,7 +23,6 @@
   import Logo from '$lib/components/logo/logo.svelte';
   import ScriptMenu from '$lib/components/terminal-view/script-menu.svelte';
   import LauncherPane from '$lib/components/launcher/launcher-pane.svelte';
-  import Wallpaper from '$lib/components/wallpaper/wallpaper.svelte';
   import ProjectPicker from '$lib/components/workspace/project-picker.svelte';
   import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
   import Onboarding from '$lib/components/onboarding/onboarding.svelte';
@@ -50,7 +49,6 @@
   import { cliVersions } from '$lib/stores/cli-versions.svelte';
   import { fork } from '$lib/stores/fork.svelte';
   import { preferences } from '$lib/stores/preferences.svelte';
-  import { wallpaperById } from '$lib/wallpapers';
   import { pullRequest } from '$lib/stores/pull-request.svelte';
   import { scripts } from '$lib/stores/scripts.svelte';
   import { toast } from '$lib/stores/toast.svelte';
@@ -1094,8 +1092,6 @@
     }
   });
 
-  const wallpaper = $derived(wallpaperById(preferences.current.wallpaper));
-
   const launcherSubtitle = $derived.by(() => {
     if (!current) return '';
     return `Agents and terminals work on ${current.branch}, apart from your other workspaces.`;
@@ -1399,7 +1395,7 @@
           </Button>
         </Card.Root>
       {:else}
-        <h1 class="mb-6 text-2xl font-medium">What should we work on?</h1>
+        <h1 class="mb-6 text-3xl font-medium">What should we work on?</h1>
         <TaskComposer
           projectId={project.id}
           settings={appState.settings}
@@ -1548,11 +1544,7 @@
       onfinish={() => void finishOnboarding()}
     />
   {:else}
-    <div
-      class="isolate flex h-screen flex-col"
-      data-wallpaper={wallpaper.src ? wallpaper.id : undefined}
-    >
-      <Wallpaper {wallpaper} depth={taskOpen && !!current} />
+    <div class="flex h-screen flex-col">
       <div class="relative flex min-h-0 flex-1 flex-col">
         <div class="flex min-h-0 flex-1 flex-col" inert={!!overlay}>
           {@render header()}

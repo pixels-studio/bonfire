@@ -79,7 +79,7 @@
 >
   <DialogPrimitive.Portal>
     <DialogPrimitive.Overlay
-      class="overlay-motion fixed inset-0 z-50 bg-black/85"
+      class="overlay-motion fixed inset-0 z-50 bg-black/60 backdrop-blur-lg"
     />
     <DialogPrimitive.Content
       class="dialog-motion fixed inset-0 z-50 flex flex-col items-center justify-center p-8 outline-hidden"

@@ -109,7 +109,7 @@
   }
 
   const PICKER_CLASS =
-    'h-8 w-auto max-w-56 gap-1.5 rounded-full border-none bg-transparent px-2 text-sm text-muted-foreground shadow-none hover:bg-muted hover:text-foreground dark:bg-transparent dark:hover:bg-muted';
+    "h-7 w-auto max-w-56 gap-1 rounded-full border-none bg-secondary px-2.5 text-[0.8rem] text-secondary-foreground shadow-none hover:bg-foreground/20 aria-expanded:bg-foreground/20 dark:bg-secondary dark:hover:bg-foreground/20 [&_svg:not([class*='size-'])]:size-3.5";
 </script>
 
 <form
@@ -127,9 +127,9 @@
     {onkeydown}
     rows="4"
     placeholder="Describe a task…"
-    class="field-sizing-content max-h-80 min-h-28 w-full resize-none bg-transparent px-4 pt-4 pb-2 text-base outline-none placeholder:text-muted-foreground"
+    class="field-sizing-content max-h-80 min-h-28 w-full resize-none bg-transparent px-3 pt-3 pb-2 text-base outline-none placeholder:text-muted-foreground"
   ></textarea>
-  <div class="flex items-center gap-1 px-2 pb-2">
+  <div class="flex items-center gap-3 p-3 pt-0">
     <Select.Root
       type="single"
       items={branchItems}
@@ -142,7 +142,7 @@
         aria-label="Target branch"
         title="The branch the task starts from and merges into"
       >
-        <Icon name="branch" class="size-4 shrink-0" />
+        <Icon name="branch" class="size-3.5 shrink-0" />
         <span class="truncate">
           {loadingBranches ? 'Loading…' : (base ?? 'Default branch')}
         </span>
@@ -165,7 +165,7 @@
         title="The agent the task is assigned to"
       >
         {#if model}
-          <Icon name={model.provider} class="size-4 shrink-0" />
+          <Icon name={model.provider} class="size-3.5 shrink-0" />
         {/if}
         <span class="truncate">
           {#if model}
@@ -191,10 +191,10 @@
     <Button
       type="submit"
       size="sm"
-      class={cn('ml-auto min-w-16')}
+      class={cn('ml-auto')}
       disabled={!ready}
     >
-      Add
+      Add Task
     </Button>
   </div>
 </form>

@@ -92,12 +92,8 @@ export const preferencesSchema = z.object({
   textModel: modelChoice,
   /** Pasted text longer than `LONG_TEXT_THRESHOLD` becomes an attachment. */
   convertLongText: z.boolean(),
-  /**
-   * The picture behind the window, by id (see `src/lib/wallpapers.ts`). A string rather than an
-   * enum, so an id from a later or earlier build falls back to the default instead of failing
-   * to load the whole state.
-   */
-  wallpaper: z.string().max(100),
+  /** OKLCH hue of the accent color, in degrees. */
+  accentHue: z.number().min(0).max(360),
   notifications: z.boolean(),
   completionSound: z.boolean(),
   providers: z.object({ claude: z.boolean(), codex: z.boolean() }),

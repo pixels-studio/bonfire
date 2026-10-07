@@ -381,7 +381,7 @@
 >
   {#if dragging}
     <div
-      class="pointer-events-none absolute inset-0 z-50 grid place-items-center rounded-lg border-2 border-dashed border-foreground/50 bg-background/80 text-sm"
+      class="pointer-events-none absolute inset-0 z-50 grid place-items-center rounded-lg border-2 border-dashed border-brand bg-background/80 text-sm"
     >
       Drop to attach
     </div>
@@ -472,7 +472,7 @@
           size="icon"
           aria-label="Scroll to bottom"
           onclick={scrollToBottom}
-          class="absolute bottom-4 left-1/2 -translate-x-1/2 bg-popover shadow-md hover:bg-surface-raised"
+          class="absolute bottom-4 left-1/2 -translate-x-1/2 shadow-md backdrop-blur-md"
         >
           <Icon name="chevron-down" />
         </Button>

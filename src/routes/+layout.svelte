@@ -4,11 +4,14 @@
   import * as Tooltip from '$lib/components/ui/tooltip';
   import Toast from '$lib/components/ui/toast/toast.svelte';
   import ImageLightbox from '$lib/components/conversation/image-lightbox.svelte';
+  import { applyAccent } from '$lib/accent';
   import { connections } from '$lib/stores/connections.svelte';
   import { preferences } from '$lib/stores/preferences.svelte';
   import { toast } from '$lib/stores/toast.svelte';
   import { errorMessage } from '$shared/domain';
   let { children } = $props();
+
+  $effect(() => applyAccent(preferences.current.accentHue));
 
   // Main writes lines starting with [perf] to bonfire.log, which says what a freeze was.
   onMount(() => {
