@@ -131,7 +131,10 @@ export class PaneChanges {
     // A turn stopped as the pane closed can leave a message that would look busy forever.
     settleMessages(reopened);
     this.state().layout.paneIds.unshift(reopened.id);
+    // Saved twice: the pane's conversation is written, and the open panes changed, which
+    // the agent host's copy needs to hear of or it can't find the pane to send to.
     this.save(reopened);
+    this.save();
   }
 
   reorder(ids: string[]) {

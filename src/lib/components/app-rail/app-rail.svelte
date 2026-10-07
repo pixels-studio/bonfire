@@ -233,7 +233,7 @@
           {/each}
         </DropdownMenu.Content>
       </DropdownMenu.Root>
-      {#if panes.length + panels.length + closedPanes.length > 0}
+      {#if panes.length + panels.length > 0}
         <!-- Holds the collapsed width in the rail; the minimap overflows it rightward over the panes. -->
         <div class="minimap-slot relative z-40 w-7">
           <nav
@@ -274,11 +274,11 @@
                 >
               </button>
             {/each}
-            {#if closedPanes.length}
-              {@render closedRow()}
-            {/if}
           </nav>
         </div>
+      {/if}
+      {#if closedPanes.length}
+        {@render closedRow()}
       {/if}
     </div>
   </div>
@@ -296,22 +296,16 @@
   <DropdownMenu.Root>
     <DropdownMenu.Trigger>
       {#snippet child({ props })}
-        <button
+        <Button
           {...props}
-          type="button"
-          class={cn(ROW_CLASS, 'group/closed hover:bg-foreground/10')}
+          variant="secondary"
+          size="icon"
+          class={BUTTON_CLASS}
           aria-label="Reopen a closed conversation"
+          title="Recently closed"
         >
-          <span class="grid size-6 shrink-0 place-content-center">
-            <Icon
-              name="clock"
-              class="size-3.5 text-foreground/40 transition-colors duration-150 group-hover/closed:text-foreground/70"
-            />
-          </span>
-          <span class="minimap-label truncate text-muted-foreground"
-            >Recently closed</span
-          >
-        </button>
+          <Icon name="clock" />
+        </Button>
       {/snippet}
     </DropdownMenu.Trigger>
     <DropdownMenu.Content side="right" align="start" class="w-72">
