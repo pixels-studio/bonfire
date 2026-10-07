@@ -1,6 +1,6 @@
 <script lang="ts">
   import ChevronDown from '@lucide/svelte/icons/chevron-down';
-  import { buttonVariants } from '$lib/components/ui/button';
+  import { Button, buttonVariants } from '$lib/components/ui/button';
   import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
   import Icon from '$lib/components/icon/icon.svelte';
   import { scripts } from '$lib/stores/scripts.svelte';
@@ -8,6 +8,7 @@
   import type { RunScript } from '$shared/contracts';
   import ScriptDialog from './script-dialog.svelte';
 
+  // A Run button (Stop while scripts run) with the script list behind its chevron, for the header.
   let menuOpen = $state(false);
   let dialogOpen = $state(false);
   /** The script the dialog edits; unset when it adds one. */
@@ -23,6 +24,12 @@
     requestAnimationFrame(() => (dialogOpen = true));
   }
 
+  // The run shortcut and button ask for a script through this dialog when the project has none.
+  $effect(() => {
+    scripts.onNeedScript = () => openDialog();
+    return () => (scripts.onNeedScript = undefined);
+  });
+
   function toggle(script: RunScript) {
     if (scripts.isRunning(script.id)) void scripts.stop(script.id);
     else void scripts.run(script.id);
@@ -30,26 +37,32 @@
 </script>
 
 <DropdownMenu.Root bind:open={menuOpen}>
-  <DropdownMenu.Trigger
-    class={cn(
-      buttonVariants({ variant: 'secondary', size: 'default' }),
-      'gap-1.5 leading-4 text-foreground',
-    )}
-    disabled={list === undefined}
-    aria-label="Scripts"
-  >
-    <Icon name="play" class="size-3" />
-    Scripts
-    {#if runningCount}
-      <span
-        class="grid h-4 min-w-4 place-items-center rounded-full bg-foreground/15 px-1 text-[0.65rem] leading-none font-semibold tabular-nums"
-        aria-label={`${runningCount} running`}
-      >
-        {runningCount}
-      </span>
-    {/if}
-    <ChevronDown class="size-3.5 text-muted-foreground" />
-  </DropdownMenu.Trigger>
+  <div class="flex items-center gap-px">
+    <Button
+      variant="secondary"
+      class="gap-1.5 rounded-r-sm pr-3 leading-4 text-foreground"
+      disabled={list === undefined}
+      onclick={() => scripts.toggle()}
+    >
+      {#if runningCount}
+        <Icon name="stop" class="size-3 text-destructive" />
+        Stop
+      {:else}
+        <Icon name="play" class="size-3" />
+        Run
+      {/if}
+    </Button>
+    <DropdownMenu.Trigger
+      class={cn(
+        buttonVariants({ variant: 'secondary', size: 'icon' }),
+        'h-full w-9 rounded-l-sm text-muted-foreground hover:text-foreground',
+      )}
+      disabled={list === undefined}
+      aria-label="Scripts"
+    >
+      <ChevronDown class="size-4" />
+    </DropdownMenu.Trigger>
+  </div>
   <DropdownMenu.Content align="end" class="w-76">
     <DropdownMenu.Label>Run scripts</DropdownMenu.Label>
     {#each list ?? [] as script (script.id)}

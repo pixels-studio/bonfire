@@ -78,9 +78,15 @@ export const SHORTCUTS = define({
   },
   newWorkspace: {
     group: 'Projects',
-    label: 'New workspace',
+    label: 'New task',
     scope: 'global',
     chords: [mod('b')],
+  },
+  home: {
+    group: 'Projects',
+    label: 'Back to all tasks',
+    scope: 'global',
+    chords: [mod('h', { shift: true })],
   },
   pullRequest: {
     group: 'Projects',

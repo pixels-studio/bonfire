@@ -2,7 +2,6 @@
   import { Button } from '$lib/components/ui/button';
   import * as Card from '$lib/components/ui/card';
   import Icon from '$lib/components/icon/icon.svelte';
-  import ScriptMenu from './script-menu.svelte';
   import PaneHeader from '$lib/components/pane-header/pane-header.svelte';
   import { toolPaneIcon, type PaneProps } from '$lib/panes';
   import { scripts } from '$lib/stores/scripts.svelte';
@@ -34,7 +33,6 @@
 </script>
 
 {#snippet scriptActions()}
-  <ScriptMenu />
   {#if scriptId && known}
     {#if run?.running}
       <Button

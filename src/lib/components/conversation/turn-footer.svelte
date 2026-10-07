@@ -6,7 +6,7 @@
   import { fork } from '$lib/stores/fork.svelte';
   import { preferences } from '$lib/stores/preferences.svelte';
   import { toast } from '$lib/stores/toast.svelte';
-  import { PROVIDER_LABELS, errorMessage } from '$shared/domain';
+  import { PROVIDER_LABELS, errorMessage, visibleReply } from '$shared/domain';
   import type {
     AssistantProvider,
     ConversationMessage,
@@ -43,7 +43,7 @@
 
   async function copy() {
     try {
-      await window.bonfire.app.copyText(message.text);
+      await window.bonfire.app.copyText(visibleReply(message.text));
       copied = true;
       setTimeout(() => (copied = false), 1500);
     } catch (cause) {

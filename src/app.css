@@ -8,15 +8,16 @@
     'Segoe UI', sans-serif;
   --font-mono: 'SFMono-Regular', Menlo, Consolas, monospace;
 
-  /* Surfaces take on a trace of the accent. */
-  --color-background: color-mix(in oklab, #111111 98%, var(--color-brand));
+  /* Two inks and no accent: white for anything that acts or is on (send, switches, checks),
+     dark for its label. The wallpaper brings the color. */
+  --color-background: #111111;
   --color-foreground: #ffffff;
-  --color-card: color-mix(in oklab, #1a1a1a 98%, var(--color-brand));
+  --color-card: #1a1a1a;
   --color-card-foreground: #ffffff;
-  --color-popover: color-mix(in oklab, #252525 98%, var(--color-brand));
+  --color-popover: #252525;
   --color-popover-foreground: #ffffff;
-  --color-composer: color-mix(in oklab, #242424 98%, var(--color-brand));
-  --color-surface-raised: color-mix(in oklab, #303030 98%, var(--color-brand));
+  --color-composer: #242424;
+  --color-surface-raised: #303030;
   --color-primary: #ffffff;
   --color-primary-foreground: #111111;
   --color-secondary: rgb(255 255 255 / 8%);
@@ -25,11 +26,8 @@
   --color-muted-foreground: rgb(255 255 255 / 60%);
   --color-accent: rgb(255 255 255 / 12%);
   --color-accent-foreground: #ffffff;
-  /* The accent the user picks; the default hue gives the original orange, #ea580c. */
-  --color-brand: oklch(
-    var(--accent-lightness) var(--accent-chroma) var(--accent-hue)
-  );
   --color-success: #48b005;
+  --color-warning: #f5a524;
   --color-destructive: #ff8c73;
   --color-destructive-surface: #3a211d;
   --color-border: rgb(255 255 255 / 10%);
@@ -109,7 +107,8 @@ body.pane-dragging .app-drag {
     width: 1rem;
     height: 1rem;
     background-color: currentColor;
-    mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M18.2194 12.2804L10.6657 19.8341C10.2342 20.2656 9.67148 20.5417 9.06611 20.6183L6.12763 20.9894C5.47967 21.0711 4.92859 20.5202 5.01045 19.8722L5.38154 16.9337C5.45812 16.3284 5.73429 15.7655 6.16572 15.3341L13.7194 7.78039L18.2194 12.2804Z'/%3E%3Cpath d='M16.5554 4.94445C17.6293 3.87051 19.3711 3.87051 20.445 4.94445L21.0554 5.55578C22.1292 6.62973 22.1293 8.37055 21.0554 9.44445L19.28 11.2198L14.78 6.71984L16.5554 4.94445Z'/%3E%3Cpath d='M7.25818 4.23127L6.54359 2.37334C6.45708 2.14842 6.24099 2 6 2C5.75901 2 5.54292 2.14842 5.45641 2.37334L4.74182 4.23127C4.65153 4.46602 4.46602 4.65153 4.23127 4.74182L2.37334 5.45641C2.14842 5.54292 2 5.75901 2 6C2 6.24099 2.14842 6.45708 2.37334 6.54359L4.23127 7.25818C4.46602 7.34847 4.65153 7.53398 4.74182 7.76873L5.45641 9.62666C5.54292 9.85158 5.75901 10 6 10C6.24099 10 6.45708 9.85158 6.54359 9.62666L7.25818 7.76873C7.34847 7.53398 7.53398 7.34847 7.76873 7.25818L9.62666 6.54359C9.85158 6.45708 10 6.24099 10 6C10 5.75901 9.85158 5.54292 9.62666 5.45641L7.76873 4.74182C7.53398 4.65153 7.34847 4.46602 7.25818 4.23127Z'/%3E%3C/svg%3E") center / contain no-repeat;
+    mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M18.2194 12.2804L10.6657 19.8341C10.2342 20.2656 9.67148 20.5417 9.06611 20.6183L6.12763 20.9894C5.47967 21.0711 4.92859 20.5202 5.01045 19.8722L5.38154 16.9337C5.45812 16.3284 5.73429 15.7655 6.16572 15.3341L13.7194 7.78039L18.2194 12.2804Z'/%3E%3Cpath d='M16.5554 4.94445C17.6293 3.87051 19.3711 3.87051 20.445 4.94445L21.0554 5.55578C22.1292 6.62973 22.1293 8.37055 21.0554 9.44445L19.28 11.2198L14.78 6.71984L16.5554 4.94445Z'/%3E%3Cpath d='M7.25818 4.23127L6.54359 2.37334C6.45708 2.14842 6.24099 2 6 2C5.75901 2 5.54292 2.14842 5.45641 2.37334L4.74182 4.23127C4.65153 4.46602 4.46602 4.65153 4.23127 4.74182L2.37334 5.45641C2.14842 5.54292 2 5.75901 2 6C2 6.24099 2.14842 6.45708 2.37334 6.54359L4.23127 7.25818C4.46602 7.34847 4.65153 7.53398 4.74182 7.76873L5.45641 9.62666C5.54292 9.85158 5.75901 10 6 10C6.24099 10 6.45708 9.85158 6.54359 9.62666L7.25818 7.76873C7.34847 7.53398 7.53398 7.34847 7.76873 7.25818L9.62666 6.54359C9.85158 6.45708 10 6.24099 10 6C10 5.75901 9.85158 5.54292 9.62666 5.45641L7.76873 4.74182C7.53398 4.65153 7.34847 4.46602 7.25818 4.23127Z'/%3E%3C/svg%3E")
+      center / contain no-repeat;
   }
 }
 
@@ -288,10 +287,6 @@ body.pane-dragging .app-drag {
 @layer base {
   html {
     @apply scheme-dark;
-    --accent-lightness: 0.646;
-    --accent-chroma: 0.194;
-    /* Overridden inline from the user's preferences. */
-    --accent-hue: 41;
   }
 
   body {
@@ -307,11 +302,11 @@ body.pane-dragging .app-drag {
   }
 
   ::selection {
-    @apply bg-brand/40;
+    @apply bg-white/25;
   }
 }
 
-/* The top thinking effort: the accent fill gives way to a spectrum. */
+/* The top thinking effort: the white fill gives way to a spectrum. */
 .effort-max-gradient {
   background: linear-gradient(
     90deg,
@@ -371,4 +366,86 @@ body.pane-dragging .app-drag {
     animation: none;
     transform: translateX(40cqw);
   }
+}
+
+/*
+ * Opening a task morphs its row on the home into the task view's header, and back. The
+ * row and header share a view-transition name; everything else cross-fades quickly.
+ */
+::view-transition-group(*) {
+  animation-duration: 320ms;
+  animation-timing-function: cubic-bezier(0.32, 0.72, 0, 1);
+}
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 180ms;
+  animation-timing-function: ease-out;
+}
+/* The row and the header differ in shape; each fades into the other as the box moves. */
+::view-transition-old(*):not(::view-transition-old(root)),
+::view-transition-new(*):not(::view-transition-new(root)) {
+  height: 100%;
+  object-fit: none;
+  object-position: left center;
+}
+
+/* With a wallpaper behind the window, every surface is a wash built from two inks only: black for
+   the base layer (panes, home composer, task rows) and white for whatever sits on it (composers,
+   bubbles, hover, borders). Depth is the strength of the ink, never a gray. Only the
+   home's composer and rows blur the photo; inside a task the panes sit on the wallpaper's
+   gradient, which has no detail to blur. */
+[data-wallpaper] {
+  --ink-black: rgb(0 0 0 / 45%);
+  --ink-white-1: rgb(255 255 255 / 6%);
+  --ink-white-2: rgb(255 255 255 / 8%);
+  --ink-white-3: rgb(255 255 255 / 12%);
+  --color-card: var(--ink-black);
+  --color-composer: var(--ink-white-2);
+  --color-surface-raised: var(--ink-white-3);
+}
+
+/* A panel over the page (Settings, Insights) has no blur to hide what's under it, so its
+   black is solid. */
+[data-wallpaper] [data-overlay] {
+  --color-card: #141414;
+}
+
+/* A row's hover swaps `bg-card` for a faint white wash, which over the photo reads as a change
+   of color. Hold the fill as it is and let the border say it's hovered. */
+[data-wallpaper] button.bg-card:hover {
+  background-color: var(--color-card);
+  outline-color: var(--ink-white-3);
+}
+
+/* A faint white hairline. An outline rather than a shadow, so the rows' activity rings and focus rings keep
+   theirs. */
+[data-wallpaper] [data-slot='card'],
+[data-wallpaper] form.bg-card,
+[data-wallpaper] button.bg-card {
+  outline: 1px solid var(--ink-white-1);
+  outline-offset: -1px;
+}
+
+/* The home's composer and task rows sit over the photo itself, so they blur it a little. Task
+   panes sit on the flat gradient and have nothing to blur. */
+[data-wallpaper] form.bg-card,
+[data-wallpaper] button.bg-card {
+  backdrop-filter: blur(var(--blur-xs));
+}
+
+/* The header's buttons and the project picker are black ink too, like the cards, with no
+   border. With no border to brighten, the hover lays a white wash over the ink. */
+[data-wallpaper] [data-app-header] .bg-secondary {
+  background-color: var(--ink-black);
+}
+
+[data-wallpaper] [data-app-header] .bg-secondary:hover {
+  background-image: linear-gradient(var(--ink-white-2), var(--ink-white-2));
+}
+
+/* A sticky strip inside a pane (the Files search bar) sits on the pane's own ink. Its own fill
+   would stack a second layer on it and show as a darker band running past the pane's edges, so
+   it is left clear. */
+[data-wallpaper] [data-slot='card'] .sticky.bg-card {
+  background: none;
 }

@@ -16,7 +16,7 @@
   bind:checked
   data-slot="checkbox"
   class={cn(
-    'peer flex size-4 shrink-0 items-center justify-center rounded-[5px] border border-input text-white outline-none transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-ring/60 disabled:cursor-not-allowed disabled:opacity-40 data-[state=checked]:border-brand data-[state=checked]:bg-brand motion-reduce:transition-none',
+    'peer flex size-4 shrink-0 items-center justify-center rounded-[5px] border border-input text-primary-foreground outline-none transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-ring/60 disabled:cursor-not-allowed disabled:opacity-40 data-[state=checked]:border-primary data-[state=checked]:bg-primary motion-reduce:transition-none',
     className,
   )}
   {...restProps}

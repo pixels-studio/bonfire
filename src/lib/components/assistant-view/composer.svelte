@@ -710,7 +710,9 @@
               size="icon"
               aria-label={dictating ? 'Stop dictation' : 'Dictate'}
               aria-pressed={dictating}
-              class={dictating ? 'text-brand' : undefined}
+              class={dictating
+                ? 'bg-primary text-primary-foreground hover:bg-primary/85'
+                : undefined}
               disabled={!dictating && (disabled || !dictationSupported)}
               onclick={dictating ? () => stopDictation() : startDictation}
             >
@@ -755,7 +757,7 @@
         <Button
           type="submit"
           size="icon"
-          class="bg-brand text-white hover:bg-brand/80"
+          class="bg-primary text-primary-foreground hover:bg-primary/85"
           aria-label={running ? FOLLOW_UP_ACTIONS[followUp] : submitLabel}
           disabled={disabled || (!hasMessage && !allowEmpty)}
         >
@@ -832,7 +834,7 @@
     border-color: var(--color-border);
   }
   div :global(.composer-editor a) {
-    color: var(--color-brand);
+    color: var(--color-foreground);
     text-decoration: underline;
   }
   div :global(.composer-editor .composer-attachment) {
@@ -847,10 +849,11 @@
   }
   div :global(.composer-editor .composer-attachment.ProseMirror-selectednode) {
     border-radius: 0.375rem;
-    outline: 2px solid var(--color-brand);
+    outline: 2px solid var(--color-foreground);
   }
   div :global(.composer-editor .composer-skill) {
-    color: var(--color-brand);
+    color: var(--color-foreground);
+    font-weight: 600;
   }
   div :global(.composer-editor p.is-editor-empty:first-child::before) {
     content: attr(data-placeholder);

@@ -256,10 +256,11 @@ export function services(options: ServiceOptions) {
       update: async (id, input) =>
         sendable<Project>(projects.update(id, input)),
       config: async (id) => projects.config(id),
+      branches: async (id) => workspaces.branches(id),
     },
     workspaces: {
-      create: async (projectId) =>
-        sendable<Workspace>(await workspaces.create(projectId)),
+      create: async (projectId, input) =>
+        sendable<Workspace>(await workspaces.create(projectId, input)),
       open: async (id) => workspaces.open(id),
       rename: async (id, title) => workspaces.rename(id, title),
       archive: async (id) => workspaces.archive(id),
@@ -275,8 +276,14 @@ export function services(options: ServiceOptions) {
       browse: async (id, path) => connections.browse(id, path),
     },
     panes: {
-      add: async (type, other) =>
-        sendable<Pane>(panes.add(type, undefined, other)),
+      add: async (type, other, workspaceId) =>
+        sendable<Pane>(
+          panes.add(
+            type,
+            workspaceId ? store.workspace(workspaceId) : undefined,
+            other,
+          ),
+        ),
       fork: async (paneId, messageId, provider) => {
         const { pane, attachment } = await panes.fork(
           paneId,

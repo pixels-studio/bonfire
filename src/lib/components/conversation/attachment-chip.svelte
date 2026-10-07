@@ -22,7 +22,7 @@
 {#snippet chip()}
   <span
     class={cn(
-      'group inline-flex max-w-48 shrink-0 items-center gap-1.5 align-middle text-blue-500',
+      'group inline-flex max-w-48 shrink-0 items-center gap-1.5 align-middle text-foreground',
       className,
     )}
     title={onremove ? undefined : name}

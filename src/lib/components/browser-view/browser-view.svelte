@@ -168,7 +168,10 @@
         disabled={!initialSrc}
         onclick={reload}
       >
-        <Icon name="refresh" class={cn(loading && 'animate-spin')} />
+        <Icon
+          name="refresh"
+          class={cn(loading && 'animate-spin [animation-direction:reverse]')}
+        />
       </Button>
     {/snippet}
   </PaneHeader>

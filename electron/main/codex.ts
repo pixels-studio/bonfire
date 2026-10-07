@@ -11,6 +11,7 @@ import type {
 } from '../../shared/contracts';
 import {
   SIMPLIFIED_ENGLISH_INSTRUCTIONS,
+  TASK_ACTIVITY_INSTRUCTIONS,
   errorMessage,
   stripAnsi,
   withSkillNames,
@@ -110,9 +111,15 @@ export class CodexAssistant extends ChatAssistant {
     const auto = turn.approvals === 'auto';
     const settings = {
       model: input.model || undefined,
-      developerInstructions: this.store.preferences.simplifiedEnglish
-        ? SIMPLIFIED_ENGLISH_INSTRUCTIONS
-        : undefined,
+      developerInstructions:
+        [
+          this.store.preferences.simplifiedEnglish &&
+            SIMPLIFIED_ENGLISH_INSTRUCTIONS,
+          this.store.preferences.recap && TASK_ACTIVITY_INSTRUCTIONS,
+          input.guidance,
+        ]
+          .filter(Boolean)
+          .join('\n\n') || undefined,
       cwd: folder.path,
       // The sandbox keeps writes inside the project; "on-request" asks before leaving it.
       approvalPolicy: auto ? 'never' : 'on-request',

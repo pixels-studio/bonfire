@@ -92,8 +92,12 @@ export const preferencesSchema = z.object({
   textModel: modelChoice,
   /** Pasted text longer than `LONG_TEXT_THRESHOLD` becomes an attachment. */
   convertLongText: z.boolean(),
-  /** OKLCH hue of the accent color, in degrees. */
-  accentHue: z.number().min(0).max(360),
+  /**
+   * The picture behind the window, by id (see `src/lib/wallpapers.ts`). A string rather than an
+   * enum, so an id from a later or earlier build falls back to the default instead of failing
+   * to load the whole state.
+   */
+  wallpaper: z.string().max(100),
   notifications: z.boolean(),
   completionSound: z.boolean(),
   providers: z.object({ claude: z.boolean(), codex: z.boolean() }),
@@ -101,6 +105,11 @@ export const preferencesSchema = z.object({
   codexPersonality,
   /** Asks the agent to write replies in Simplified Technical English (ASD-STE100). */
   simplifiedEnglish: z.boolean(),
+  /**
+   * Recap: agents write a plan when a task starts and a short record of each change, which
+   * the summary pane shows. Off, they are not asked, which saves a few tokens a turn.
+   */
+  recap: z.boolean(),
   /** Archives conversations once the pull request for their branch is merged, through the `gh` CLI. */
   archiveOnMerge: z.boolean(),
   /** Keeps the system awake while a turn runs. */
@@ -232,7 +241,27 @@ export const workspaceSchema = z.object({
   createdAt: z.number(),
   /** The panes open when it was archived, which unarchiving reopens. */
   archivedPaneIds: z.array(id).optional(),
+  /** The branch it started from and merges back into, such as `main`. */
+  base: z.string().optional(),
+  /** What the user asked for when they made it as a task. */
+  request: z.string().optional(),
 });
+
+/** A task as it is made: the branch to start from and what to do. */
+export const workspaceCreateInput = z.object({
+  /** A local or `origin` branch; the default branch when unset. */
+  base: z
+    .string()
+    .trim()
+    .min(1)
+    .max(255)
+    .regex(/^[^\s-][^\s]*$/, 'Choose a branch')
+    .optional(),
+  request: z.string().trim().max(100_000).optional(),
+  /** Whether to put it on screen once made; it is by default. */
+  open: z.boolean().optional(),
+});
+export type WorkspaceCreateInput = z.infer<typeof workspaceCreateInput>;
 
 export const stateSchema = z.object({
   version: z.literal(1),
@@ -277,6 +306,8 @@ export const assistantSendInput = z
     reasoningEffort,
     fastMode: z.boolean().default(false),
     approvals: approvalMode,
+    /** Extra instructions for this turn only, such as how a new task's first reply is laid out. */
+    guidance: z.string().max(10_000).optional(),
     /** How to deliver the message if a turn is already running; without it the send is refused. */
     followUp: followUpMode.optional(),
   })
@@ -673,7 +704,8 @@ export const requests = {
   'projects.favicon': z.tuple([id]),
   'projects.update': z.tuple([id, projectSettingsInput]),
   'projects.config': z.tuple([id]),
-  'workspaces.create': z.tuple([id]),
+  'projects.branches': z.tuple([id]),
+  'workspaces.create': z.tuple([id, workspaceCreateInput.optional()]),
   'workspaces.open': z.tuple([id]),
   'workspaces.rename': z.tuple([id, z.string().trim().min(1).max(200)]),
   'workspaces.archive': z.tuple([id]),
@@ -685,7 +717,11 @@ export const requests = {
   'connections.check': z.tuple([sshConnectionInput]),
   'connections.chooseIdentity': z.tuple([]),
   'connections.browse': z.tuple([id, filePath.optional()]),
-  'panes.add': z.tuple([paneType.optional(), z.boolean().optional()]),
+  'panes.add': z.tuple([
+    paneType.optional(),
+    z.boolean().optional(),
+    id.optional(),
+  ]),
   'panes.fork': z.tuple([id, z.string().min(1).max(200), assistantProvider]),
   'panes.archive': z.tuple([id]),
   'panes.restore': z.tuple([id]),
@@ -866,13 +902,15 @@ export type API = {
     update(id: string, input: ProjectSettingsInput): Promise<Project>;
     /** What the repository's `bonfire.json` asks for, which the project's settings override. */
     config(id: string): Promise<BonfireConfig>;
+    /** What the project's repository can start work from: its branches, most recent first, and its default. */
+    branches(id: string): Promise<{ branches: string[]; default?: string }>;
   };
   workspaces: {
     /**
-     * Creates a worktree on a new branch from the default branch, named after a landmark,
-     * runs the setup script in it, and opens it.
+     * Creates a worktree on a new branch from `input.base`, else the default branch, named
+     * after a landmark, runs the setup script in it, and opens it.
      */
-    create(projectId: string): Promise<Workspace>;
+    create(projectId: string, input?: WorkspaceCreateInput): Promise<Workspace>;
     /** Puts the workspace, and its project, on screen. */
     open(id: string): Promise<void>;
     rename(id: string, title: string): Promise<void>;
@@ -904,8 +942,9 @@ export type API = {
     /**
      * Adds a pane at the front of the workspace on screen; an agent pane by default.
      * With `other`, the agent is the enabled provider that new panes don't start with.
+     * With `workspaceId`, the pane goes in that workspace instead.
      */
-    add(type?: PaneType, other?: boolean): Promise<Pane>;
+    add(type?: PaneType, other?: boolean, workspaceId?: string): Promise<Pane>;
     /**
      * Summarizes the conversation up to `messageId` and opens a new pane with `provider`,
      * the summary attached so the user can continue the work with a different agent.

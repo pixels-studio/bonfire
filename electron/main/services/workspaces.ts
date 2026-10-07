@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import type { WorkspaceCreateInput } from '../../../shared/contracts';
 import { errorMessage, isReopenable, slug } from '../../../shared/domain';
 import { landmarkName } from '../../../shared/landmarks';
 import type { Filesystem } from '../filesystem';
@@ -179,7 +180,30 @@ export function workspaceService({
     if (next) store.workspaces.open(next);
   }
 
-  async function create(projectId: string) {
+  /** The branches a task can start from, most recent first, and the default among them. */
+  async function branches(projectId: string) {
+    const repo = repository.projectFolder(projectId);
+    const [names, fallback] = await Promise.all([
+      git.branches(repo),
+      git.defaultBranch(repo),
+    ]);
+    const current = await git.currentBranch(repo);
+    return { branches: names, default: fallback ?? current };
+  }
+
+  /** The commit a new branch starts at: `origin`'s copy of `wanted` when there is one, else the local one. */
+  async function startingPoint(repo: Place, wanted: string | undefined) {
+    if (!wanted) return 'HEAD';
+    if (await git.hasRef(repo, `refs/remotes/origin/${wanted}`))
+      return `origin/${wanted}`;
+    if (await git.hasRef(repo, `refs/heads/${wanted}`)) return wanted;
+    return undefined;
+  }
+
+  async function create(
+    projectId: string,
+    { base: requested, request, open = true }: WorkspaceCreateInput = {},
+  ) {
     const project = store.project(projectId);
     const repo = repository.projectFolder(project.id);
     if (!(await git.head(repo)).isGit)
@@ -189,12 +213,9 @@ export function workspaceService({
     const prefix = await branchPrefix(repo);
     // Offline or without a remote, the branch starts from what the clone already has.
     await git.fetch(repo).catch(() => {});
-    const defaultBranch = await git.defaultBranch(repo);
-    const base =
-      defaultBranch &&
-      (await git.hasRef(repo, `refs/remotes/origin/${defaultBranch}`))
-        ? `origin/${defaultBranch}`
-        : 'HEAD';
+    const target = requested ?? (await git.defaultBranch(repo));
+    const base = await startingPoint(repo, target);
+    if (!base) throw Error(`There is no branch called ${requested}.`);
     const { name, branch, path } = await freeName(project, repo, prefix);
     await git.addWorktree(repo, path, branch, base);
     const workspace = store.workspaces.add({
@@ -206,8 +227,10 @@ export function workspaceService({
       main: false,
       status: 'in_progress',
       createdAt: Date.now(),
+      base: target,
+      request: request || undefined,
     });
-    store.workspaces.open(workspace);
+    if (open) store.workspaces.open(workspace);
     await setUp(workspace);
     return workspace;
   }
@@ -289,6 +312,7 @@ export function workspaceService({
   }
 
   return {
+    branches,
     create,
     open: (id: string) => store.workspaces.open(store.workspace(id)),
     rename: (id: string, title: string) =>

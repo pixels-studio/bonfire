@@ -5,20 +5,35 @@
   import CreateProjectDialog from '$lib/components/workspace/create-project-dialog.svelte';
   import Icon from '$lib/components/icon/icon.svelte';
   import InsightsPane from '$lib/components/insights/insights-pane.svelte';
-  import LauncherPane from '$lib/components/launcher/launcher-pane.svelte';
   import Overlay from '$lib/components/overlay/overlay.svelte';
-  import ProjectSettings from '$lib/components/project-settings/project-settings.svelte';
   import SettingsPane from '$lib/components/settings/settings-pane.svelte';
   import PaneView from '$lib/components/pane-view/pane-view.svelte';
   import PullRequestView from '$lib/components/pull-request/pull-request-view.svelte';
   import ShortcutsPane from '$lib/components/shortcuts/shortcuts-pane.svelte';
-  import SidebarControls from '$lib/components/workspace-list/sidebar-controls.svelte';
-  import WorkspaceList, {
-    type RailPanel,
-  } from '$lib/components/workspace-list/workspace-list.svelte';
+  import AppMenu, { type AppPanel } from '$lib/components/home/app-menu.svelte';
+  import TaskComposer, {
+    type TaskDraft,
+  } from '$lib/components/home/task-composer.svelte';
+  import TaskList, {
+    taskMorphName,
+    type PendingTask,
+  } from '$lib/components/home/task-list.svelte';
+  import TaskSummary from '$lib/components/task/task-summary.svelte';
+  import GitActions from '$lib/components/git-actions/git-actions.svelte';
+  import Logo from '$lib/components/logo/logo.svelte';
+  import ScriptMenu from '$lib/components/terminal-view/script-menu.svelte';
+  import LauncherPane from '$lib/components/launcher/launcher-pane.svelte';
+  import Wallpaper from '$lib/components/wallpaper/wallpaper.svelte';
+  import ProjectPicker from '$lib/components/workspace/project-picker.svelte';
+  import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
   import Onboarding from '$lib/components/onboarding/onboarding.svelte';
   import Bloom from '$lib/components/onboarding/bloom.svelte';
-  import { PANE_SIZES, defaultPaneSize, type PaneSize } from '$lib/panes';
+  import {
+    PANE_SIZES,
+    defaultPaneSize,
+    paneIcon,
+    type PaneSize,
+  } from '$lib/panes';
   import { digitOf, matchShortcut, type ShortcutId } from '$lib/shortcuts';
   import { assistantEvents } from '$lib/main-events';
   import { PaneDrag } from '$lib/pane-drag.svelte';
@@ -35,10 +50,11 @@
   import { cliVersions } from '$lib/stores/cli-versions.svelte';
   import { fork } from '$lib/stores/fork.svelte';
   import { preferences } from '$lib/stores/preferences.svelte';
+  import { wallpaperById } from '$lib/wallpapers';
   import { pullRequest } from '$lib/stores/pull-request.svelte';
   import { scripts } from '$lib/stores/scripts.svelte';
   import { toast } from '$lib/stores/toast.svelte';
-  import { cn, isMac, scrollBehavior } from '$lib/utils';
+  import { cn, isMac, reducedMotion, scrollBehavior } from '$lib/utils';
   import type { HTMLButtonAttributes } from 'svelte/elements';
   import type {
     AssistantEvent,
@@ -48,6 +64,7 @@
     PaneType,
     PanesClosedEvent,
     State,
+    Workspace,
   } from '$shared/contracts';
   import {
     MAX_PANES,
@@ -60,12 +77,13 @@
     isViewPaneType,
     reorderLayout,
     startingProvider,
+    TASK_PLAN_INSTRUCTIONS,
     workspaceLabel,
     type ViewPaneType,
   } from '$shared/domain';
 
-  /** What opens over the workspace: a rail panel, or the project's settings. */
-  type OverlayPanel = RailPanel | 'project';
+  /** What opens over the app: a header panel, or the project's settings. */
+  type OverlayPanel = AppPanel;
 
   let appState = $state<State>(emptyState());
   let loaded = $state(false);
@@ -97,6 +115,16 @@
   let paneMotion = $state(false);
   let creatingProject = $state(false);
   let creatingWorkspace = $state(false);
+  /**
+   * Whether a task is on screen; otherwise the project's home, where tasks are made and
+   * listed. The app opens on the home.
+   */
+  let taskOpen = $state(false);
+  /** The task whose row and header morph into each other as it opens or closes. */
+  let morphingId = $state<string>();
+  /** Tasks being set up, shown in the list until their worktree is made. */
+  let pendingTasks = $state<PendingTask[]>([]);
+  let composerInput = $state<HTMLTextAreaElement>();
   let projectMenuOpen = $state(false);
   /** The tab the insights panel is on, which the usage shortcut switches. */
   let insightsTab = $state('tokens');
@@ -135,8 +163,18 @@
   const workspaceId = $derived(current?.id);
   /** An archived workspace has no folder to work in until it is unarchived. */
   const archived = $derived(current?.status === 'archived');
-  /** A workspace that can be worked in: its folder is there. */
-  const activeId = $derived(archived ? undefined : workspaceId);
+  /** The task on screen that can be worked in: its folder is there. None on the home. */
+  const activeId = $derived(taskOpen && !archived ? workspaceId : undefined);
+  /** The task's agents, closed ones too, whose changes its summary's activity shows. */
+  const taskAgents = $derived(
+    appState.panes
+      .filter((pane) => pane.workspaceId === workspaceId)
+      .filter(isAssistantPane),
+  );
+  /** The task's first agent, whose reading of the task its summary shows. */
+  const summaryAgentId = $derived(
+    taskAgents.find((pane) => !pane.archived)?.id,
+  );
 
   /** The open panes of the workspace on screen, agents and tools alike, in layout order. */
   const panes = $derived(
@@ -152,6 +190,12 @@
   const openViews = $derived(
     views.map(({ type }) => type).filter(isViewPaneType),
   );
+  /** The view panes the header toggles. */
+  const TASK_VIEWS: { type: ViewPaneType; label: string; icon: string }[] = [
+    { type: 'files', label: 'Project tree', icon: paneIcon('files') },
+    { type: 'diff', label: 'Git changes', icon: paneIcon('diff') },
+    { type: 'browser', label: 'Browser', icon: paneIcon('browser') },
+  ];
   const PULL_REQUEST_ID = 'pull-request';
   /** Every open pane, in the order the strip shows them. */
   const stripIds = $derived.by(() => {
@@ -176,6 +220,8 @@
       .sort((a, b) => (b.closedAt ?? 0) - (a.closedAt ?? 0))
       .slice(0, HISTORY_LIMIT),
   );
+  /** The closed agents, which the header's history lists to reopen. */
+  const closedAgents = $derived(closedPanes.filter(isAssistantPane));
   /** The pane the pane shortcuts act on: the current one, else the first in sight. */
   const activePane = $derived(
     panes.find(({ id }) => id === currentPaneId) ??
@@ -264,64 +310,102 @@
       if (matches(pane)) statuses.markSeen(pane.id);
   }
 
-  /** Whether the sidebar is hidden, which is kept for the next launch. */
-  let sidebarCollapsed = $state(
-    typeof localStorage !== 'undefined' &&
-      localStorage.getItem('bonfire.sidebarCollapsed') === '1',
-  );
-  function toggleSidebar() {
-    sidebarCollapsed = !sidebarCollapsed;
-    localStorage.setItem(
-      'bonfire.sidebarCollapsed',
-      sidebarCollapsed ? '1' : '0',
-    );
-  }
-
-  /** Where the pane in sight sits in the strip, which the sidebar's arrows step from. */
-  const activeStripIndex = $derived(
-    activePane ? stripIds.indexOf(activePane.id) : -1,
-  );
-  const canScrollBack = $derived(activeStripIndex > 0);
-  const canScrollForward = $derived(
-    activeStripIndex >= 0 && activeStripIndex < stripIds.length - 1,
-  );
-
-  /** Scrolls the strip to the pane before or after the one in sight. */
-  function scrollStrip(step: 1 | -1) {
-    const id = stripIds[activeStripIndex + step];
-    if (id) void focusPane(id);
-  }
-
   function openProject(projectId: string) {
     if (projectId === project?.id) return;
-    const next = appState.projects.find(({ id }) => id === projectId);
-    const shown = next && currentWorkspaceOf(appState, next)?.id;
-    markSeen((pane) => pane.workspaceId === shown);
+    taskOpen = false;
     void runAction(() => window.bonfire.projects.open(projectId));
   }
 
-  function openWorkspace(id: string) {
-    overlay = undefined;
-    if (id === workspaceId) return;
-    markSeen((pane) => pane.workspaceId === id);
-    return runAction(() => window.bonfire.workspaces.open(id));
+  /**
+   * Swaps the screen between the home and a task. Where the browser can, the task's row
+   * morphs into the task view's header and back, so it is clear where the task went.
+   */
+  async function morph(id: string | undefined, change: () => Promise<unknown>) {
+    if (!id || reducedMotion() || !document.startViewTransition) {
+      await change();
+      return;
+    }
+    morphingId = id;
+    await tick();
+    const transition = document.startViewTransition(async () => {
+      await change();
+      await tick();
+    });
+    try {
+      await transition.finished;
+    } finally {
+      morphingId = undefined;
+    }
   }
 
-  /** Makes a workspace and starts a conversation in it, as that is what one is for. */
-  async function createWorkspace() {
-    if (!project || creatingWorkspace) return;
-    creatingWorkspace = true;
+  /** Puts a task on screen, its row morphing into its header. */
+  async function openWorkspace(id: string) {
     overlay = undefined;
+    markSeen((pane) => pane.workspaceId === id);
+    if (id === workspaceId && taskOpen) return;
+    await morph(id, async () => {
+      if (id !== workspaceId)
+        await runAction(() => window.bonfire.workspaces.open(id));
+      taskOpen = true;
+    });
+  }
+
+  /** Goes back to the project's home, the task's header morphing back into its row. */
+  async function goHome({ focusComposer = false } = {}) {
+    overlay = undefined;
+    if (taskOpen) await morph(workspaceId, async () => (taskOpen = false));
+    if (focusComposer) {
+      await tick();
+      composerInput?.focus();
+    }
+  }
+
+  /**
+   * Makes a task: a worktree on a branch of its own from the chosen branch, with an agent
+   * that is sent the request at once. The user stays on the home, where the task shows.
+   */
+  async function createTask(draft: TaskDraft) {
+    if (!project) return;
+    const pending = { key: crypto.randomUUID(), request: draft.request };
+    pendingTasks = [pending, ...pendingTasks];
+    creatingWorkspace = true;
     try {
-      await window.bonfire.workspaces.create(project.id);
+      const workspace = await window.bonfire.workspaces.create(project.id, {
+        base: draft.base,
+        request: draft.request,
+        // The user stays where they are; the task shows in the list.
+        open: false,
+      });
+      const pane = await window.bonfire.panes.add(
+        draft.provider,
+        false,
+        workspace.id,
+      );
       await refresh();
-      await addPane();
+      // The turn runs on its own; the task's dot and the agent pane follow it by events.
+      window.bonfire.assistant
+        .send({
+          paneId: pane.id,
+          text: draft.request,
+          attachmentIds: [],
+          skills: [],
+          model: draft.model,
+          reasoningEffort: appState.settings.lastReasoningEffort ?? 'medium',
+          fastMode: false,
+          approvals: preferences.current.approvals,
+          // Recap asks for the task's plan in the first reply; the summary pane shows it.
+          guidance: preferences.current.recap
+            ? TASK_PLAN_INSTRUCTIONS
+            : undefined,
+        })
+        .catch(showError);
     } catch (cause) {
       showError(cause);
       // A setup script that failed to start leaves the workspace made all the same.
       await refresh().catch(() => {});
     } finally {
-      creatingWorkspace = false;
+      pendingTasks = pendingTasks.filter(({ key }) => key !== pending.key);
+      creatingWorkspace = pendingTasks.length > 0;
     }
   }
 
@@ -422,7 +506,7 @@
    * above sticky content, like the file search, which would otherwise cover it.
    */
   const HIGHLIGHT_CLASS =
-    'relative after:pointer-events-none after:absolute after:z-20 after:inset-x-1 after:inset-y-0 after:rounded-lg after:opacity-0 after:ring-2 after:ring-brand after:transition-opacity after:duration-500 after:ease-out after:ring-inset motion-reduce:after:transition-none';
+    'relative after:pointer-events-none after:absolute after:z-20 after:inset-x-1 after:inset-y-0 after:rounded-lg after:opacity-0 after:ring-2 after:ring-foreground/70 after:transition-opacity after:duration-500 after:ease-out after:ring-inset motion-reduce:after:transition-none';
   const HIGHLIGHTED_CLASS = 'after:opacity-100 after:duration-150';
   /** The pane just scrolled to, outlined briefly so it's found at a glance. */
   let highlightedId = $state<string>();
@@ -478,10 +562,10 @@
       ?.focus({ preventScroll: true });
   }
 
-  /** Goes to a pane wherever it is, opening its workspace first, such as from a notification. */
+  /** Goes to a pane wherever it is, opening its task first, such as from a notification. */
   async function goToPane(paneId: string) {
     const pane = appState.panes.find(({ id }) => id === paneId);
-    if (pane?.workspaceId && pane.workspaceId !== workspaceId) {
+    if (pane?.workspaceId && (pane.workspaceId !== workspaceId || !taskOpen)) {
       await openWorkspace(pane.workspaceId);
       await tick();
     }
@@ -586,6 +670,17 @@
     return activity;
   });
 
+  /** Any agent, in any project, is running right now. */
+  const anyWorking = $derived(
+    appState.panes.some(
+      (pane) =>
+        !pane.archived &&
+        isAssistantPane(pane) &&
+        statuses.get(pane.id) === 'working',
+    ),
+  );
+  let logoHovered = $state(false);
+
   /** What needs the user in each project other than the open one: the most urgent state wins. */
   const projectAttention = $derived.by(() => {
     const attention: Record<string, ProjectAttention> = {};
@@ -600,6 +695,11 @@
         attention[owner] = status;
     }
     return attention;
+  });
+
+  // A task that goes away, such as one deleted, leaves the home on screen.
+  $effect(() => {
+    if (taskOpen && loaded && !current) taskOpen = false;
   });
 
   // A workspace's strip arrangement and pull request are its own.
@@ -755,7 +855,10 @@
         projectMenuOpen = true;
         break;
       case 'newWorkspace':
-        void createWorkspace();
+        void goHome({ focusComposer: true });
+        break;
+      case 'home':
+        void goHome();
         break;
       case 'pullRequest':
         togglePullRequest();
@@ -991,23 +1094,18 @@
     }
   });
 
+  const wallpaper = $derived(wallpaperById(preferences.current.wallpaper));
+
   const launcherSubtitle = $derived.by(() => {
     if (!current) return '';
     return `Agents and terminals work on ${current.branch}, apart from your other workspaces.`;
   });
 </script>
 
-<svelte:head><title>Bonfire</title></svelte:head>
-<!-- The CLIs update themselves in the background; the backend's cached answer keeps focus cheap. -->
-<svelte:window
-  onkeydowncapture={handleKeydown}
-  onfocus={() => loaded && void cliVersions.refresh()}
-/>
-
 {#snippet launcher()}
   <section
     data-strip-id="launcher"
-    class={cn(SECTION_CLASS, stripCount ? 'basis-1/2 min-w-105' : 'basis-full')}
+    class={cn(SECTION_CLASS, 'basis-1/3 min-w-90')}
   >
     {#if !project}
       <Card.Root
@@ -1035,7 +1133,7 @@
         <Button
           disabled={busy || creatingWorkspace}
           loading={creatingWorkspace}
-          onclick={() => void createWorkspace()}
+          onclick={() => void goHome({ focusComposer: true })}
         >
           New workspace
         </Button>
@@ -1073,12 +1171,359 @@
         {canAddTerminal}
         disabled={!canAddPane || busy}
         {openViews}
-        {closedPanes}
         onadd={(type) => void addPane(type)}
-        onrestore={(id) => void restorePane(id)}
       />
     {/if}
   </section>
+{/snippet}
+
+{#snippet projectControl()}
+  <div class="max-w-full rounded-full bg-secondary app-no-drag">
+    <ProjectPicker
+      projects={appState.projects}
+      active={project}
+      attention={projectAttention}
+      bind:open={projectMenuOpen}
+      onselect={openProject}
+      onadd={addProject}
+      class="h-9 max-w-72 rounded-full"
+    />
+  </div>
+{/snippet}
+
+{#snippet header()}
+  <!-- The window buttons sit at the top left in a window; the header makes room for them. -->
+  <header
+    data-app-header
+    class={cn(
+      'grid h-14 shrink-0 grid-cols-[1fr_auto_1fr] items-center gap-4 px-4 transition-[padding] duration-200 ease-out app-drag motion-reduce:transition-none',
+      // The lights end 68px from the edge (16px in, 52px wide); the logo keeps 16px clear of them.
+      trafficLightInset && 'pl-21',
+    )}
+  >
+    <div class="flex min-w-0 items-center gap-2">
+      {#if taskOpen && current}
+        <Button
+          variant="secondary"
+          size="icon-sm"
+          class="shrink-0 text-muted-foreground hover:text-foreground app-no-drag"
+          aria-label="All tasks"
+          title="All tasks"
+          onclick={() => void goHome()}
+        >
+          <Icon name="chevron-left" />
+        </Button>
+        <div
+          class="flex min-w-0 items-center gap-1.5 rounded-lg px-1 py-1"
+          style:view-transition-name={morphingId === current.id
+            ? taskMorphName(current.id)
+            : undefined}
+        >
+          {#if project}
+            <span class="shrink-0 text-sm text-muted-foreground">
+              {project.name}
+            </span>
+            <span
+              class="shrink-0 text-sm text-muted-foreground"
+              aria-hidden="true">/</span
+            >
+          {/if}
+          <h1
+            class="truncate text-sm font-medium"
+            title={workspaceLabel(current)}
+          >
+            {workspaceLabel(current)}
+          </h1>
+        </div>
+      {:else}
+        <!-- In a window the traffic lights stand where the logo would; it shows in full screen. -->
+        {#if !trafficLightInset}
+          <div
+            class="shrink-0 app-no-drag"
+            role="presentation"
+            onpointerenter={() => (logoHovered = true)}
+            onpointerleave={() => (logoHovered = false)}
+          >
+            <Logo idle active={anyWorking || logoHovered} class="size-6" />
+          </div>
+        {/if}
+      {/if}
+    </div>
+    <div class="flex min-w-0 justify-center">
+      {#if !taskOpen || !current}
+        {@render projectControl()}
+      {/if}
+    </div>
+    <div class="flex min-w-0 items-center justify-end gap-2">
+      {#if taskOpen && current}
+        {#if activeId}
+          <div class="flex items-center gap-2 app-no-drag">
+            <DropdownMenu.Root>
+              <DropdownMenu.Trigger>
+                {#snippet child({ props })}
+                  <Button
+                    {...props}
+                    variant="secondary"
+                    size="icon-sm"
+                    class="text-muted-foreground hover:text-foreground"
+                    aria-label="Closed agents"
+                    title="Closed agents"
+                  >
+                    <Icon name="clock" />
+                  </Button>
+                {/snippet}
+              </DropdownMenu.Trigger>
+              <DropdownMenu.Content align="end" class="w-72">
+                <DropdownMenu.Label>Closed agents</DropdownMenu.Label>
+                {#each closedAgents as pane (pane.id)}
+                  <DropdownMenu.Item
+                    class="gap-2.5"
+                    disabled={busy || !canAddPane}
+                    onclick={() => void restorePane(pane.id)}
+                  >
+                    <Icon
+                      name={paneIcon(pane.type)}
+                      class="shrink-0 text-muted-foreground"
+                    />
+                    <span class="min-w-0 flex-1 truncate">{pane.title}</span>
+                  </DropdownMenu.Item>
+                {:else}
+                  <p class="px-1.5 pt-1 pb-2 text-xs text-muted-foreground">
+                    No closed agents in this task.
+                  </p>
+                {/each}
+              </DropdownMenu.Content>
+            </DropdownMenu.Root>
+            {#each TASK_VIEWS as view (view.type)}
+              {@const pressed = openViews.includes(view.type)}
+              <Button
+                variant={pressed ? 'default' : 'secondary'}
+                size="icon-sm"
+                class={cn(
+                  !pressed && 'text-muted-foreground hover:text-foreground',
+                )}
+                aria-label={view.label}
+                aria-pressed={pressed}
+                title={view.label}
+                onclick={() => toggleView(view.type)}
+              >
+                <Icon name={view.icon} />
+              </Button>
+            {/each}
+            <ScriptMenu />
+            <GitActions />
+          </div>
+        {/if}
+        <DropdownMenu.Root>
+          <DropdownMenu.Trigger>
+            {#snippet child({ props })}
+              <Button
+                {...props}
+                variant="ghost"
+                size="icon-sm"
+                class="text-muted-foreground hover:text-foreground app-no-drag"
+                aria-label="Task options"
+                title="Task options"
+              >
+                <Icon name="dots" />
+              </Button>
+            {/snippet}
+          </DropdownMenu.Trigger>
+          <DropdownMenu.Content align="end" class="w-48">
+            {#if current.status === 'archived'}
+              <DropdownMenu.Item
+                onclick={() =>
+                  void runAction(() =>
+                    window.bonfire.workspaces.unarchive(current.id),
+                  )}
+              >
+                <Icon name="revert" /> Unarchive
+              </DropdownMenu.Item>
+            {:else}
+              <DropdownMenu.Item
+                onclick={() => {
+                  const id = current.id;
+                  void goHome().then(() =>
+                    runAction(() => window.bonfire.workspaces.archive(id)),
+                  );
+                }}
+              >
+                <Icon name="close-panes" /> Archive task
+              </DropdownMenu.Item>
+            {/if}
+            <DropdownMenu.Separator />
+            <DropdownMenu.Item onclick={() => void addPane()}>
+              <Icon name="plus" /> New agent
+            </DropdownMenu.Item>
+            <DropdownMenu.Item
+              disabled={!canAddTerminal}
+              onclick={() => void addPane('terminal')}
+            >
+              <Icon name="terminal" /> New terminal
+            </DropdownMenu.Item>
+            <DropdownMenu.Separator />
+            <DropdownMenu.Item onclick={() => toggleOverlay('settings')}>
+              <Icon name="settings" /> Settings
+            </DropdownMenu.Item>
+            <DropdownMenu.Item onclick={() => toggleOverlay('insights')}>
+              <Icon name="insights" /> Insights
+            </DropdownMenu.Item>
+          </DropdownMenu.Content>
+        </DropdownMenu.Root>
+      {:else}
+        <AppMenu
+          panel={overlay}
+          onpanel={toggleOverlay}
+          onhelp={() => window.bonfire.navigation.help()}
+        />
+      {/if}
+    </div>
+  </header>
+{/snippet}
+
+{#snippet home()}
+  <main class="min-h-0 flex-1 overflow-y-auto">
+    <div class="mx-auto flex w-full max-w-3xl flex-col px-6 pt-16 pb-24">
+      {#if !project}
+        <Card.Root
+          class="grid place-content-center justify-items-center py-16 text-center text-muted-foreground"
+        >
+          <Icon name="project" class="size-7" />
+          <h1 class="mt-6 font-medium text-foreground">Add a project</h1>
+          <p class="mb-6">
+            Choose a repository on this computer, or on another over SSH, for
+            Claude and Codex to work in.
+          </p>
+          <Button disabled={!loaded || busy} onclick={addProject}>
+            Add project
+          </Button>
+        </Card.Root>
+      {:else}
+        <h1 class="mb-6 text-2xl font-medium">What should we work on?</h1>
+        <TaskComposer
+          projectId={project.id}
+          settings={appState.settings}
+          bind:textarea={composerInput}
+          oncreate={(draft) => void createTask(draft)}
+        />
+        <div class="mt-14">
+          {#if projectWorkspaces.some((item) => !item.main) || pendingTasks.length}
+            <TaskList
+              workspaces={projectWorkspaces}
+              pending={pendingTasks}
+              activity={workspaceActivity}
+              {morphingId}
+              onopen={(id) => void openWorkspace(id)}
+              onrename={(id, title) =>
+                void runAction(() =>
+                  window.bonfire.workspaces.rename(id, title),
+                )}
+              onarchive={(id) =>
+                void runAction(() => window.bonfire.workspaces.archive(id))}
+              onunarchive={(id) =>
+                void runAction(() => window.bonfire.workspaces.unarchive(id))}
+              ondelete={(id) =>
+                void runAction(() => window.bonfire.workspaces.remove(id))}
+            />
+          {:else}
+            <p class="text-center text-sm text-pretty text-muted-foreground">
+              Each task gets its own branch and folder, so agents work apart
+              from each other. Describe one above to start.
+            </p>
+          {/if}
+        </div>
+      {/if}
+    </div>
+  </main>
+{/snippet}
+
+{#snippet taskView(task: Workspace)}
+  <main class="flex min-h-0 min-w-0 flex-1 px-3 pb-3">
+    <div class="min-w-0 flex-1">
+      <div
+        bind:this={paneStrip}
+        onfocusin={trackPane}
+        onpointerdowncapture={trackPane}
+        class={cn(
+          '-mx-1 flex h-full snap-x snap-mandatory overflow-x-auto overflow-y-hidden overscroll-x-contain scrollbar-none',
+          drag.active && 'select-none',
+          (drag.active || motion.active) && 'snap-none',
+        )}
+      >
+        <section
+          data-strip-id="summary"
+          class={cn(SECTION_CLASS, 'basis-1/3 min-w-90')}
+        >
+          <TaskSummary
+            workspace={task}
+            agentPaneId={summaryAgentId}
+            agents={taskAgents}
+            onviewChanges={viewChanges}
+          />
+        </section>
+        {#each stripIds as id (id)}
+          {@const pane = panes.find((pane) => pane.id === id)!}
+          <!-- The section sits right in the `#each`: an `out:` only plays when its own block goes. -->
+          <section
+            data-pane-id={pane.id}
+            data-strip-id={id}
+            class={cn(
+              SECTION_CLASS,
+              sizeOverrides[id] ? sizeClass(sizeOverrides[id]) : autoSizeClass,
+              HIGHLIGHT_CLASS,
+              highlightedId === id && HIGHLIGHTED_CLASS,
+              drag.isDragging(id) && '*:shadow-2xl *:shadow-black/50',
+            )}
+            style={drag.style(id)}
+            out:leave={{ animate: paneMotion }}
+          >
+            <PaneView
+              {pane}
+              workspaceId={pane.workspaceId!}
+              badge={paneBadge(statuses.get(pane.id))}
+              onviewChanges={viewChanges}
+              selectedDiff={selectedDiff?.workspaceId === pane.workspaceId
+                ? selectedDiff
+                : undefined}
+              dragHandle={gripOf(pane.id)}
+              size={paneSize(pane.id)}
+              onclose={() => closePane(pane.id)}
+              onresize={(size) => (sizeOverrides[pane.id] = size)}
+              onrename={(title) => {
+                pane.title = title;
+                void runAction(() =>
+                  window.bonfire.panes.rename(pane.id, title),
+                );
+              }}
+              onnavigate={(url) => {
+                if (pane.url === url) return;
+                pane.url = url;
+                window.bonfire.panes.navigate(pane.id, url).catch(showError);
+              }}
+            />
+          </section>
+        {/each}
+        {#if activeId && showPullRequest}
+          <section
+            data-strip-id={PULL_REQUEST_ID}
+            class={cn(
+              SECTION_CLASS,
+              pullRequestSize ? sizeClass(pullRequestSize) : autoSizeClass,
+            )}
+            out:leave
+          >
+            <PullRequestView
+              workspaceId={activeId}
+              size={pullRequestSize ?? autoSize}
+              onresize={(size) => (pullRequestSize = size)}
+              onclose={() => (pullRequest.paneOpen = false)}
+            />
+          </section>
+        {/if}
+        {@render launcher()}
+      </div>
+    </div>
+  </main>
 {/snippet}
 
 <Bloom bind:this={bloom}>
@@ -1103,156 +1548,29 @@
       onfinish={() => void finishOnboarding()}
     />
   {:else}
-    <div class="flex h-screen">
-      <div class="relative flex min-w-0 flex-1">
-        <div class="flex min-w-0 flex-1" inert={!!overlay}>
-          {#if !sidebarCollapsed}
-            <WorkspaceList
-              projects={appState.projects}
-              {project}
-              attention={projectAttention}
-              bind:projectMenuOpen
-              workspaces={projectWorkspaces}
-              currentId={workspaceId}
-              activity={workspaceActivity}
-              creating={creatingWorkspace}
-              settingsOpen={overlay === 'project'}
-              {trafficLightInset}
-              panel={overlay === 'project' ? undefined : overlay}
-              onpanel={toggleOverlay}
-              onhelp={() => window.bonfire.navigation.help()}
-              oncollapse={toggleSidebar}
-              canPrevious={canScrollBack}
-              canNext={canScrollForward}
-              onprevious={() => scrollStrip(-1)}
-              onnext={() => scrollStrip(1)}
-              onselectProject={openProject}
-              onaddProject={addProject}
-              onremoveProject={removeProject}
-              onsettings={() => toggleOverlay('project')}
-              oncreate={() => void createWorkspace()}
-              onopen={(id) => void openWorkspace(id)}
-              onrename={(id, title) =>
-                void runAction(() =>
-                  window.bonfire.workspaces.rename(id, title),
-                )}
-              onarchive={(id) =>
-                void runAction(() => window.bonfire.workspaces.archive(id))}
-              onunarchive={(id) =>
-                void runAction(() => window.bonfire.workspaces.unarchive(id))}
-              ondelete={(id) =>
-                void runAction(() => window.bonfire.workspaces.remove(id))}
-            />
+    <div
+      class="isolate flex h-screen flex-col"
+      data-wallpaper={wallpaper.src ? wallpaper.id : undefined}
+    >
+      <Wallpaper {wallpaper} depth={taskOpen && !!current} />
+      <div class="relative flex min-h-0 flex-1 flex-col">
+        <div class="flex min-h-0 flex-1 flex-col" inert={!!overlay}>
+          {@render header()}
+          {#if taskOpen && current}
+            {@render taskView(current)}
+          {:else}
+            {@render home()}
           {/if}
-          <div class="flex min-w-0 flex-1 flex-col">
-            {#if sidebarCollapsed}
-              <!-- The sidebar's controls stay reachable, clear of the window buttons. -->
-              <div
-                class={cn(
-                  'flex h-13 shrink-0 items-center gap-1 px-4 pt-4.5 app-drag',
-                  trafficLightInset && 'pl-20',
-                )}
-              >
-                <div class="flex w-24 items-center gap-0.5">
-                  <SidebarControls
-                    collapsed
-                    ontoggle={toggleSidebar}
-                    canPrevious={canScrollBack}
-                    canNext={canScrollForward}
-                    onprevious={() => scrollStrip(-1)}
-                    onnext={() => scrollStrip(1)}
-                  />
-                </div>
-              </div>
-            {/if}
-            <main class="flex min-h-0 min-w-0 flex-1 py-2 pr-2">
-              <div class="min-w-0 flex-1">
-                <div
-                  bind:this={paneStrip}
-                  onfocusin={trackPane}
-                  onpointerdowncapture={trackPane}
-                  class={cn(
-                    '-mx-1 flex h-full snap-x snap-mandatory overflow-x-auto overflow-y-hidden overscroll-x-contain scrollbar-none',
-                    drag.active && 'select-none',
-                    (drag.active || motion.active) && 'snap-none',
-                  )}
-                >
-                  {#each stripIds as id (id)}
-                    {@const pane = panes.find((pane) => pane.id === id)!}
-                    <!-- The section sits right in the `#each`: an `out:` only plays when its own block goes. -->
-                    <section
-                      data-pane-id={pane.id}
-                      data-strip-id={id}
-                      class={cn(
-                        SECTION_CLASS,
-                        sizeOverrides[id]
-                          ? sizeClass(sizeOverrides[id])
-                          : autoSizeClass,
-                        HIGHLIGHT_CLASS,
-                        highlightedId === id && HIGHLIGHTED_CLASS,
-                        drag.isDragging(id) && '*:shadow-2xl *:shadow-black/50',
-                      )}
-                      style={drag.style(id)}
-                      out:leave={{ animate: paneMotion }}
-                    >
-                      <PaneView
-                        {pane}
-                        workspaceId={pane.workspaceId!}
-                        badge={paneBadge(statuses.get(pane.id))}
-                        onviewChanges={viewChanges}
-                        selectedDiff={selectedDiff?.workspaceId ===
-                        pane.workspaceId
-                          ? selectedDiff
-                          : undefined}
-                        dragHandle={gripOf(pane.id)}
-                        size={paneSize(pane.id)}
-                        onclose={() => closePane(pane.id)}
-                        onresize={(size) => (sizeOverrides[pane.id] = size)}
-                        onrename={(title) => {
-                          pane.title = title;
-                          void runAction(() =>
-                            window.bonfire.panes.rename(pane.id, title),
-                          );
-                        }}
-                        onnavigate={(url) => {
-                          if (pane.url === url) return;
-                          pane.url = url;
-                          window.bonfire.panes
-                            .navigate(pane.id, url)
-                            .catch(showError);
-                        }}
-                      />
-                    </section>
-                  {/each}
-                  {#if activeId && showPullRequest}
-                    <section
-                      data-strip-id={PULL_REQUEST_ID}
-                      class={cn(
-                        SECTION_CLASS,
-                        pullRequestSize
-                          ? sizeClass(pullRequestSize)
-                          : autoSizeClass,
-                      )}
-                      out:leave
-                    >
-                      <PullRequestView
-                        workspaceId={activeId}
-                        size={pullRequestSize ?? autoSize}
-                        onresize={(size) => (pullRequestSize = size)}
-                        onclose={() => (pullRequest.paneOpen = false)}
-                      />
-                    </section>
-                  {/if}
-                  {@render launcher()}
-                </div>
-              </div>
-            </main>
-          </div>
         </div>
 
         {#if overlay === 'settings'}
           <Overlay label="Settings" onclose={() => (overlay = undefined)}>
-            <SettingsPane onclose={() => (overlay = undefined)} />
+            <SettingsPane
+              projects={appState.projects}
+              onsaved={() => void refresh().catch(showError)}
+              onremove={removeProject}
+              onclose={() => (overlay = undefined)}
+            />
           </Overlay>
         {:else if overlay === 'shortcuts'}
           <Overlay
@@ -1265,17 +1583,6 @@
           <Overlay label="Insights" onclose={() => (overlay = undefined)}>
             <InsightsPane
               bind:tab={insightsTab}
-              onclose={() => (overlay = undefined)}
-            />
-          </Overlay>
-        {:else if overlay === 'project' && project}
-          <Overlay
-            label={`${project.name} settings`}
-            onclose={() => (overlay = undefined)}
-          >
-            <ProjectSettings
-              {project}
-              onsaved={() => void refresh().catch(showError)}
               onclose={() => (overlay = undefined)}
             />
           </Overlay>

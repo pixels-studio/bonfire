@@ -5,8 +5,7 @@
 
   const SECONDS = 20;
 
-  let { message, onretry }: { message: string; onretry: () => void } =
-    $props();
+  let { message, onretry }: { message: string; onretry: () => void } = $props();
 
   let remaining = $state(SECONDS);
   let filling = $state(false);
@@ -47,7 +46,7 @@
     onclick={retry}
   >
     <span
-      class="absolute inset-0 origin-left bg-brand/25 motion-safe:transition-transform motion-safe:ease-linear"
+      class="absolute inset-0 origin-left bg-foreground/15 motion-safe:transition-transform motion-safe:ease-linear"
       style:transition-duration={filling ? `${SECONDS}s` : '0s'}
       style:transform={filling ? 'scaleX(1)' : 'scaleX(0)'}
       aria-hidden="true"

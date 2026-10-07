@@ -6,6 +6,11 @@ import {
   errorMessage,
   reorderLayout,
   repositoryName,
+  splitTaskSummary,
+  summarySections,
+  activitySteps,
+  taskActivity,
+  visibleReply,
 } from '../shared/domain';
 import type { ConversationMessage } from '../shared/contracts';
 import { LANDMARKS, landmarkLabel, landmarkName } from '../shared/landmarks';
@@ -102,4 +107,139 @@ test('a new workspace takes a free landmark, then numbered ones once all are tak
 
 test('slugs are lowercase words joined by hyphens', () => {
   assert.equal(slug('  Abhi Ñandú!! '), 'abhi-nandu');
+});
+
+test('splitTaskSummary separates the summary block from the reply', () => {
+  assert.deepEqual(
+    splitTaskSummary(
+      '<task-summary>\n**Understanding**\n- A.\n</task-summary>\n\nI will start.',
+    ),
+    { summary: '**Understanding**\n- A.', reply: 'I will start.' },
+  );
+});
+
+test('splitTaskSummary treats a block still being written as a summary', () => {
+  assert.deepEqual(splitTaskSummary('<task-summary>\n**Understanding**\n- A'), {
+    summary: '**Understanding**\n- A',
+    reply: '',
+  });
+});
+
+test('splitTaskSummary leaves a reply with no block whole', () => {
+  assert.deepEqual(splitTaskSummary('Done.'), { reply: 'Done.' });
+});
+
+test('taskActivity reads the title and summary tags', () => {
+  assert.deepEqual(
+    taskActivity(
+      'Done.\n\n<task-activity>\n<title>Shared Model</title>\n<summary>The change adds a model.</summary>\n</task-activity>',
+    ),
+    { title: 'Shared Model', body: 'The change adds a model.' },
+  );
+  assert.equal(taskActivity('Done.'), undefined);
+});
+
+test('taskActivity reads an older block by its lines', () => {
+  assert.deepEqual(
+    taskActivity(
+      '<task-activity>\n**Shared Model**\nThe change adds a model.\n</task-activity>',
+    ),
+    { title: 'Shared Model', body: 'The change adds a model.' },
+  );
+});
+
+test('visibleReply hides the summary and activity blocks', () => {
+  assert.equal(
+    visibleReply(
+      '<task-summary>\nA\n</task-summary>\nStarted.\n<task-activity>\nT\nB\n</task-activity>',
+    ),
+    'Started.',
+  );
+});
+
+test('activitySteps keeps finished turns that changed files', () => {
+  const message = (
+    id: string,
+    role: 'user' | 'assistant',
+    kind: ConversationMessage['kind'],
+    text = '',
+    extra: Partial<ConversationMessage> = {},
+  ): ConversationMessage => ({
+    id,
+    role,
+    kind,
+    text,
+    status: 'complete',
+    ...extra,
+  });
+  const messages = [
+    message('u1', 'user', 'text', 'Add the model'),
+    message('t1', 'assistant', 'tool', '', {
+      tool: { name: 'Write', input: '/repo/a.ts', output: '' },
+    }),
+    message(
+      'r1',
+      'assistant',
+      'text',
+      '<task-activity>\nModel\nAdded it.\n</task-activity>',
+      {
+        createdAt: 5,
+      },
+    ),
+    message('u2', 'user', 'text', 'What does it do?'),
+    message('r2', 'assistant', 'text', 'It models.', { createdAt: 9 }),
+    message('u3', 'user', 'text', 'Now test it'),
+    message('t3', 'assistant', 'tool', '', {
+      tool: { name: 'Edit', input: '/repo/a.test.ts', output: '' },
+    }),
+  ];
+  // The last turn is still running, so it waits until it ends.
+  const steps = activitySteps(messages, true);
+  assert.deepEqual(
+    steps.map(({ id, paths, activity, startedAt }) => ({
+      id,
+      paths,
+      activity,
+      startedAt,
+    })),
+    [
+      {
+        id: 'u1',
+        paths: ['/repo/a.ts'],
+        activity: { title: 'Model', body: 'Added it.' },
+        startedAt: 5,
+      },
+    ],
+  );
+  assert.deepEqual(
+    activitySteps(messages, false).map(({ id }) => id),
+    ['u1', 'u3'],
+  );
+});
+
+test('summarySections reads the part tags in order, leaving out empty ones', () => {
+  assert.deepEqual(
+    summarySections(
+      '<plan>\n1. B.\n</plan>\n<understanding>\n- A.\n</understanding>\n<needs>\n</needs>',
+    ),
+    [
+      { heading: 'understanding', body: '- A.' },
+      { heading: 'plan', body: '1. B.' },
+    ],
+  );
+});
+
+test('summarySections cuts an older summary at its bold headings', () => {
+  assert.deepEqual(
+    summarySections(
+      '**Understanding**\n- A.\n\n**Plan**\n1. B.\n\n**Needs**\n',
+    ),
+    [
+      { heading: 'Understanding', body: '- A.' },
+      { heading: 'Plan', body: '1. B.' },
+    ],
+  );
+  assert.deepEqual(summarySections('Just text.'), [
+    { heading: undefined, body: 'Just text.' },
+  ]);
 });

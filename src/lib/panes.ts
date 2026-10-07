@@ -58,9 +58,9 @@ export const PANE_SIZES: {
 ];
 
 /**
- * The size of a pane that hasn't been resized. The sidebar takes its share of the window, so
- * two panes fit at a time: each takes half the strip, and the launcher takes half too.
+ * The size of a pane that hasn't been resized. A task shows three columns at a time: its
+ * summary, then its panes, each a third of the strip, and the launcher after them.
  */
 export function defaultPaneSize(_paneCount: number): PaneSize {
-  return 'half';
+  return 'third';
 }

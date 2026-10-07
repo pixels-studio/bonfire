@@ -10,7 +10,6 @@
   import {
     ATTENTION_DOTS,
     ATTENTION_LABELS,
-    ATTENTION_RANK,
     type ProjectAttention,
   } from '$lib/pane-status.svelte';
 
@@ -45,14 +44,6 @@
     for (const char of id) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
     return `color: oklch(0.72 0.15 ${hash % 360})`;
   }
-
-  /** The trigger repeats the most urgent of the others, so the signal shows with the menu closed. */
-  const triggerAttention = $derived(
-    Object.entries(attention)
-      .filter(([id]) => id !== active?.id)
-      .map(([, status]) => status)
-      .sort((a, b) => ATTENTION_RANK[b] - ATTENTION_RANK[a])[0],
-  );
 
   let favicons = $state<Record<string, string | null>>({});
   const requestedFavicons = new Set<string>();
@@ -100,18 +91,14 @@
   <DropdownMenu.Trigger
     class={cn(
       buttonVariants({ variant: 'ghost' }),
-      'h-7.5 max-w-56 min-w-0 justify-start gap-2 py-0 pr-2.5 pl-2',
+      'h-7.5 max-w-56 min-w-0 justify-center gap-2 px-2.5 py-0',
       className,
     )}
     title={`Switch project (${shortcutText('switchProject', isMac())})`}
   >
     {@render favicon(active)}
-    <span class="flex-1 truncate text-left"
-      >{active?.name || 'Select project'}</span
-    >
-    {#if triggerAttention}
-      {@render attentionDot(triggerAttention)}
-    {/if}
+    <span class="truncate">{active?.name || 'Select project'}</span>
+    <Icon name="chevron-down" class="size-4 shrink-0 text-muted-foreground" />
   </DropdownMenu.Trigger>
   <DropdownMenu.Content align="start" {side} class="min-w-60">
     {#each projects as project (project.id)}

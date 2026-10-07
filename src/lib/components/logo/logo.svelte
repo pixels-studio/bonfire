@@ -99,6 +99,7 @@
   class={cn('logo', className)}
   data-active={active}
   data-warm={warm}
+  data-idle={idle}
   width="24"
   height="24"
   viewBox="-40 -60 592 735"
@@ -168,10 +169,10 @@
     overflow: hidden;
     transition: filter 300ms ease-out;
   }
-  .logo[data-active='true'] {
+  .logo[data-active='true']:not([data-idle='true']) {
     filter: drop-shadow(0 0 3px rgb(250 100 31 / 0.55));
   }
-  .logo[data-warm='true'][data-active='true'] {
+  .logo[data-warm='true'][data-active='true']:not([data-idle='true']) {
     filter: drop-shadow(0 0 4px rgb(251 113 133 / 0.55));
   }
   .lit,

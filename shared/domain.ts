@@ -234,8 +234,8 @@ export function emptyState(): State {
   };
 }
 
-/** The OKLCH hue of the original orange accent, #ea580c. */
-export const DEFAULT_ACCENT_HUE = 41;
+/** The wallpaper a fresh install starts with: a river mouth at dusk. */
+export const DEFAULT_WALLPAPER = 'lagoon';
 
 /** Pasted text longer than this becomes an attachment when `convertLongText` is on. */
 export const LONG_TEXT_THRESHOLD = 5_000;
@@ -300,6 +300,187 @@ export const DEFAULT_ACTION_PROMPTS: Record<ActionId, string> = {
  * keep text easy to read are firm; the model may bend any rule that would make a
  * reply wrong, unclear, or much longer.
  */
+/**
+ * For the first reply of a new task. The agent writes the task's summary in a block of its
+ * own, which the summary pane shows and the chat hides, so the text is not shown twice.
+ */
+export const TASK_PLAN_INSTRUCTIONS = [
+  'Before you use any tool, start your first reply with a summary block. Put the block first, and write it in this exact layout. Write it in Simplified Technical English, as in ASD-STE100.',
+  '',
+  '<task-summary>',
+  '<understanding>',
+  '- One short sentence for each fact you understand: the goal, the problem or missing feature, and the limits the user gave.',
+  '</understanding>',
+  '<plan>',
+  '1. One step for each change you will make. Name the file, the function, or the part of the product. Start each step with a verb: "Add", "Change", "Fix", "Remove", "Test".',
+  '</plan>',
+  '<needs>',
+  '- One line for each action that the user must do, or each fact that the user must give, before or after your work. Examples: a key, a setting, a choice, a review. Leave out the whole <needs> tag if there is nothing.',
+  '</needs>',
+  '</task-summary>',
+  '',
+  'After the block, write one or two short sentences in plain words for the chat. Do not repeat the block.',
+  '',
+  'Rules for the block:',
+  '- Use short sentences of 20 words or fewer. Use the active voice and simple tenses. Use "will" for what you will do.',
+  '- Match the plan to the kind of task. For a bug, name the cause you suspect, then the fix. For a feature, name what you will add and where. For a change, name what you will change and why.',
+  '- If you do not know a fact yet, say what you will read to find it.',
+  '- Use at most 6 facts, 8 steps, and 4 needs. Use only these tags. Do not add headings, praise, or filler.',
+  '',
+  'After this reply, do the work as usual. Later replies do not need this block.',
+].join('\n');
+
+/**
+ * For every turn. An agent that changed files ends its turn with a short record of the
+ * change, which the summary pane shows as one step of the task's activity.
+ */
+export const TASK_ACTIVITY_INSTRUCTIONS = [
+  'When a reply ends a turn in which you changed files, end that reply with an activity block. Write it in Simplified Technical English, as in ASD-STE100, and in this exact layout:',
+  '',
+  '<task-activity>',
+  '<title>Title of the change</title>',
+  '<summary>Two or three short sentences: what you changed, and why.</summary>',
+  '</task-activity>',
+  '',
+  'Rules for the block:',
+  '- The title has 2 to 6 words, in title case. It names the change, not the files. Example: "Shared Notification Model".',
+  '- Write the summary in plain text, with no Markdown. Use sentences of 20 words or fewer, the active voice, and the simple past tense. Do not list file names; the summary pane shows them.',
+  '- Say why the change is necessary when the reason is not clear from the change.',
+  '- Write the block once, at the end of the turn. Leave it out when you changed no files. The chat hides the block, so do not depend on it to answer the user.',
+].join('\n');
+
+/**
+ * A text cut at its `<tag>` block: the block's body, and the text without it. A block that
+ * is still being written has no end yet, and runs to the end of the text. A text with no
+ * block has no body.
+ */
+function splitBlock(text: string, tag: string) {
+  const open = `<${tag}>`;
+  const close = `</${tag}>`;
+  const start = text.indexOf(open);
+  if (start < 0) return { rest: text };
+  const bodyStart = start + open.length;
+  const end = text.indexOf(close, bodyStart);
+  const body = text.slice(bodyStart, end < 0 ? undefined : end).trim();
+  const after = end < 0 ? '' : text.slice(end + close.length);
+  return { body, rest: (text.slice(0, start) + after).trim() };
+}
+
+/** A reply cut at its task summary block: the summary, and the reply without it. */
+export function splitTaskSummary(text: string): {
+  summary?: string;
+  reply: string;
+} {
+  const { body, rest } = splitBlock(text, 'task-summary');
+  return body === undefined ? { reply: rest } : { summary: body, reply: rest };
+}
+
+/** A reply as the chat shows it: without the blocks the summary pane shows. */
+export function visibleReply(text: string) {
+  return splitBlock(splitTaskSummary(text).reply, 'task-activity').rest;
+}
+
+/** The parts of a task summary block, each in a tag of its own, in the order they show. */
+const SUMMARY_PARTS = ['understanding', 'plan', 'needs'] as const;
+
+/**
+ * A task summary cut into its parts: each part's name and its text. A summary is written
+ * with a tag for each part. Older ones used bold heading lines such as `**Plan**`, and are
+ * cut at those; text before the first heading, or a summary with none, has no name.
+ */
+export function summarySections(
+  summary: string,
+): { heading?: string; body: string }[] {
+  const tagged = SUMMARY_PARTS.flatMap((part) => {
+    const body = splitBlock(summary, part).body;
+    return body ? [{ heading: part, body }] : [];
+  });
+  if (tagged.length) return tagged;
+  const sections: { heading?: string; lines: string[] }[] = [{ lines: [] }];
+  for (const line of summary.split('\n')) {
+    const heading = /^\s*\*\*(.+?)\*\*:?\s*$/.exec(line)?.[1];
+    if (heading) sections.push({ heading, lines: [] });
+    else sections.at(-1)!.lines.push(line);
+  }
+  return sections.flatMap(({ heading, lines }) => {
+    const body = lines.join('\n').trim();
+    return body ? [{ heading, body }] : [];
+  });
+}
+
+/**
+ * A reply's activity block, as its title and summary, each in a tag of its own. An older
+ * block, with no tags, has its title on the first line and its summary under it.
+ */
+export function taskActivity(
+  text: string,
+): { title: string; body: string } | undefined {
+  const { body } = splitBlock(text, 'task-activity');
+  if (body === undefined) return;
+  const title = splitBlock(body, 'title').body;
+  if (title !== undefined)
+    return { title, body: splitBlock(body, 'summary').body ?? '' };
+  const [first = '', ...rest] = body.split('\n');
+  return {
+    title: first.replace(/^[#*\s]+|[*\s]+$/g, ''),
+    body: rest.join('\n').trim(),
+  };
+}
+
+/** One step of a task's activity: a turn of one agent, and the files it changed. */
+export type ActivityStep = {
+  /** The turn's prompt message, unique within its conversation. */
+  id: string;
+  /** What the agent was asked in the turn. */
+  prompt: string;
+  /** The files the turn's tool calls edited, as the tools named them. */
+  paths: string[];
+  /** The agent's own record of the change, once it has written one. */
+  activity?: { title: string; body: string };
+  /** When the turn's first reply finished; unset if it has none. */
+  startedAt?: number;
+};
+
+/**
+ * A conversation's finished turns that changed files or recorded a change, oldest first.
+ * The last turn of a running conversation is still in progress, so it is left out until
+ * it ends, when its record of the change is written.
+ */
+export function activitySteps(
+  messages: readonly ConversationMessage[],
+  running: boolean,
+): ActivityStep[] {
+  // A turn starts at the first of a run of user messages: the prompt and its attachments.
+  const turns: ConversationMessage[][] = [];
+  let previous: ConversationMessage | undefined;
+  for (const message of messages) {
+    if (message.role === 'user' && previous?.role !== 'user')
+      turns.push([message]);
+    else turns.at(-1)?.push(message);
+    previous = message;
+  }
+  if (running) turns.pop();
+  return turns.flatMap((turn) => {
+    const replies = turn.filter(({ role }) => role === 'assistant');
+    const paths = editedPaths(replies);
+    const activity = replies
+      .filter(({ kind }) => kind === 'text')
+      .map(({ text }) => taskActivity(text))
+      .findLast(Boolean);
+    if (!paths.length && !activity) return [];
+    const times = replies.flatMap(({ createdAt }) => createdAt ?? []);
+    return {
+      id: turn[0].id,
+      prompt: withoutMarkers(
+        turn.find(({ kind }) => kind === 'text')?.text ?? '',
+      ),
+      paths,
+      activity,
+      startedAt: times.length ? Math.min(...times) : undefined,
+    };
+  });
+}
+
 export const SIMPLIFIED_ENGLISH_INSTRUCTIONS = [
   'Write every reply in Simplified Technical English, as in ASD-STE100. Follow these rules.',
   '',
@@ -340,13 +521,14 @@ export const DEFAULT_PREFERENCES: Preferences = {
   followUp: 'queue',
   textModel: { provider: 'claude', model: 'haiku' },
   convertLongText: true,
-  accentHue: DEFAULT_ACCENT_HUE,
+  wallpaper: DEFAULT_WALLPAPER,
   notifications: true,
   completionSound: false,
   providers: { claude: true, codex: true },
   claudeOutputStyle: 'default',
   codexPersonality: 'default',
   simplifiedEnglish: false,
+  recap: true,
   archiveOnMerge: false,
   caffeinate: true,
   actionPrompts: DEFAULT_ACTION_PROMPTS,

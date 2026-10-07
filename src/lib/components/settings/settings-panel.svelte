@@ -5,13 +5,17 @@
   import { playCompletionSound } from '$lib/sounds';
   import { preferences } from '$lib/stores/preferences.svelte';
   import { isMac } from '$lib/utils';
-  import type { CodexPersonality, FollowUpMode } from '$shared/contracts';
+  import Icon from '$lib/components/icon/icon.svelte';
+  import type {
+    CodexPersonality,
+    FollowUpMode,
+    Project,
+  } from '$shared/contracts';
   import {
     CAFFEINATE_BATTERY_FLOOR,
     LONG_TEXT_THRESHOLD,
   } from '$shared/domain';
   import ActionSettings from './action-settings.svelte';
-  import AccentSlider from './accent-slider.svelte';
   import ConnectionSettings from './connection-settings.svelte';
   import GithubSettings from './github-settings.svelte';
   import ModelChoiceSelect from './model-choice-select.svelte';
@@ -19,6 +23,7 @@
   import ProviderSetting from './provider-setting.svelte';
   import Setting from './setting.svelte';
   import SettingsSection from './settings-section.svelte';
+  import WallpaperPicker from './wallpaper-picker.svelte';
 
   const FOLLOW_UPS: { value: FollowUpMode; label: string }[] = [
     { value: 'queue', label: 'Queue' },
@@ -58,6 +63,15 @@
       })
       .catch(() => {});
   });
+
+  let {
+    projects,
+    onproject,
+  }: {
+    projects: Project[];
+    /** Opens a project's own settings. */
+    onproject: (id: string) => void;
+  } = $props();
 </script>
 
 {#snippet followUpDescription()}
@@ -66,16 +80,37 @@
 {/snippet}
 
 <div class="divide-y divide-border">
+  <SettingsSection title="Projects" icon="project">
+    {#if projects.length}
+      <ul class="-mx-2 -my-3 flex flex-col">
+        {#each projects as project (project.id)}
+          <li>
+            <button
+              type="button"
+              class="flex h-9 w-full items-center gap-2 rounded-md px-2 text-left text-sm hover:bg-muted"
+              onclick={() => onproject(project.id)}
+            >
+              <span class="min-w-0 flex-1 truncate">{project.name}</span>
+              <Icon name="arrow-right" class="size-4 text-muted-foreground" />
+            </button>
+          </li>
+        {/each}
+      </ul>
+    {:else}
+      <p class="text-sm text-muted-foreground">No projects added yet.</p>
+    {/if}
+  </SettingsSection>
+
   <SettingsSection title="General" icon="section-general">
     <Setting
-      title="Accent color"
-      description="Tints buttons, highlights, and surfaces"
+      title="Wallpaper"
+      description="The photo behind the home screen. Inside a task, a gradient in its colors takes its place"
     >
       {#snippet control(props)}
-        <AccentSlider
+        <WallpaperPicker
           {...props}
-          hue={current.accentHue}
-          oncommit={(accentHue) => preferences.update({ accentHue })}
+          value={current.wallpaper}
+          onchange={(wallpaper) => preferences.update({ wallpaper })}
         />
       {/snippet}
     </Setting>
@@ -213,6 +248,19 @@
           checked={current.simplifiedEnglish}
           onCheckedChange={(simplifiedEnglish) =>
             preferences.update({ simplifiedEnglish })}
+        />
+      {/snippet}
+    </Setting>
+    <Setting
+      title="Recap"
+      description="Agents explain their plan and each step of their work in plain English, shown in a task’s Summary pane"
+      inline
+    >
+      {#snippet control(props)}
+        <Switch
+          {...props}
+          checked={current.recap}
+          onCheckedChange={(recap) => preferences.update({ recap })}
         />
       {/snippet}
     </Setting>

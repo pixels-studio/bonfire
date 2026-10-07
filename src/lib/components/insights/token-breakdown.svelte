@@ -50,7 +50,7 @@
                   name={row.provider}
                   class={cn(
                     'size-3.5 shrink-0',
-                    row.provider === 'claude' && 'text-brand',
+                    row.provider === 'claude' && 'text-foreground',
                   )}
                 />
               {/if}

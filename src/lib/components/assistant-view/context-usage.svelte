@@ -110,7 +110,7 @@
           {#if oncompact}
             <button
               type="button"
-              class="text-sm text-brand transition-opacity hover:underline disabled:pointer-events-none disabled:opacity-50"
+              class="text-sm text-foreground underline-offset-2 transition-opacity hover:underline disabled:pointer-events-none disabled:opacity-50"
               {disabled}
               onclick={() => {
                 open = false;

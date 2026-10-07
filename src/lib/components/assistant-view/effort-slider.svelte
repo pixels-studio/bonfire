@@ -43,7 +43,7 @@
     <span
       class="effort-track relative h-4 grow overflow-hidden rounded-full bg-muted"
     >
-      <SliderPrimitive.Range class="absolute h-full bg-brand" />
+      <SliderPrimitive.Range class="absolute h-full bg-primary" />
       <span
         class="effort-max-gradient absolute inset-0 opacity-0 transition-opacity duration-300 group-data-max/effort:opacity-100"
         aria-hidden="true"

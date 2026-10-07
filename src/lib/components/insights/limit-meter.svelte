@@ -5,7 +5,7 @@
 
   const TONES = {
     normal: 'bg-foreground/70',
-    warning: 'bg-brand',
+    warning: 'bg-warning',
     critical: 'bg-destructive',
   };
 

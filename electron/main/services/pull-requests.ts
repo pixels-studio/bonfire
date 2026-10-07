@@ -65,7 +65,8 @@ export function pullRequestService({
     // the workspace's views share, as this runs whenever its files change.
     const [currentBranch, base, changes] = await Promise.all([
       git.currentBranch(cwd),
-      pullRequestBase(cwd),
+      // A task started from a chosen branch merges back into it.
+      store.workspace(workspaceId).base ?? pullRequestBase(cwd),
       repository.status(workspaceId),
     ]);
     const branch = currentBranch ?? '';

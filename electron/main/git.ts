@@ -286,6 +286,29 @@ export async function defaultBranch(cwd: Place) {
   }
 }
 
+/**
+ * The branches work can start from: local ones and `origin`'s, each name once, the most
+ * recently committed to first.
+ */
+export async function branches(cwd: Place) {
+  const output = await git(cwd, [
+    'for-each-ref',
+    '--sort=-committerdate',
+    '--format=%(refname)',
+    'refs/heads',
+    'refs/remotes/origin',
+  ]);
+  const names = new Set<string>();
+  for (const ref of output.split('\n')) {
+    const name = ref
+      .trim()
+      .replace(/^refs\/heads\//, '')
+      .replace(/^refs\/remotes\/origin\//, '');
+    if (name && name !== 'HEAD' && !name.startsWith('refs/')) names.add(name);
+  }
+  return [...names];
+}
+
 /** Subjects of the commits on HEAD that `base` doesn't have, newest first. */
 export async function commitsAhead(cwd: Place, base: string) {
   const output = await git(cwd, ['log', '--format=%s', `${base}..HEAD`]);

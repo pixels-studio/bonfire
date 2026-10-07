@@ -35,7 +35,7 @@
           {@const { label, run } = item.action}
           <button
             type="button"
-            class="-my-0.5 shrink-0 rounded-md px-1.5 py-0.5 text-sm font-medium whitespace-nowrap text-brand outline-none hover:bg-foreground/10 focus-visible:ring-2 focus-visible:ring-ring/60"
+            class="-my-0.5 shrink-0 rounded-md px-1.5 py-0.5 text-sm font-medium whitespace-nowrap text-foreground underline-offset-2 hover:underline outline-none hover:bg-foreground/10 focus-visible:ring-2 focus-visible:ring-ring/60"
             onclick={() => {
               dismissToast(item.id);
               run();

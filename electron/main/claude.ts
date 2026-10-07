@@ -28,6 +28,7 @@ import type {
 } from '../../shared/contracts';
 import {
   SIMPLIFIED_ENGLISH_INSTRUCTIONS,
+  TASK_ACTIVITY_INSTRUCTIONS,
   stripAnsi,
   withSkillNames,
 } from '../../shared/domain';
@@ -113,7 +114,15 @@ export class ClaudeAssistant extends ChatAssistant {
 
   protected async run(turn: Turn) {
     const { pane, folder, machine, input, attachments, controller } = turn;
-    const { claudeOutputStyle, simplifiedEnglish } = this.store.preferences;
+    const { claudeOutputStyle, simplifiedEnglish, recap } =
+      this.store.preferences;
+    const appended = [
+      simplifiedEnglish && SIMPLIFIED_ENGLISH_INSTRUCTIONS,
+      recap && TASK_ACTIVITY_INSTRUCTIONS,
+      input.guidance,
+    ]
+      .filter(Boolean)
+      .join('\n\n');
     const options: Options = {
       cwd: folder.path,
       resume: pane.threadId || undefined,
@@ -121,11 +130,11 @@ export class ClaudeAssistant extends ChatAssistant {
       thinking: THINKING[input.reasoningEffort],
       // Rendered fresh each request, since Claude otherwise keeps a conversation's first
       // prompt, and the setting could then not be turned on or off mid-conversation.
-      ...(simplifiedEnglish && {
+      ...(appended && {
         systemPrompt: {
           type: 'preset',
           preset: 'claude_code',
-          append: SIMPLIFIED_ENGLISH_INSTRUCTIONS,
+          append: appended,
           snapshot: false,
         },
       }),

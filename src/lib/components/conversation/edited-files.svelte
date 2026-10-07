@@ -10,25 +10,31 @@
   let {
     workspaceId,
     paths,
+    changes: given,
     onviewChanges,
   }: {
-    workspaceId: string;
-    paths: string[];
+    workspaceId?: string;
+    /** Files to look up the changes of, when `changes` isn't given. */
+    paths?: string[];
+    /** Changes already known, such as a whole task's; looked up from `paths` without it. */
+    changes?: Change[];
     onviewChanges: (path?: string) => void;
   } = $props();
 
   /** Shown past this many files, behind "Show N more files". */
   const COLLAPSED_COUNT = 3;
 
-  let changes = $state<Change[]>();
+  let fetched = $state<Change[]>();
+  const changes = $derived(given ?? fetched);
   let expanded = $state(false);
   let generation = 0;
 
   async function load() {
+    if (given || !workspaceId || !paths) return;
     const token = ++generation;
     try {
       const next = await window.bonfire.git.changesAmong(workspaceId, paths);
-      if (token === generation) changes = next;
+      if (token === generation) fetched = next;
     } catch (cause) {
       if (token === generation)
         toast(errorMessage(cause), { variant: 'error' });
@@ -37,6 +43,7 @@
 
   $effect(() => {
     void paths;
+    void given;
     void load();
   });
 

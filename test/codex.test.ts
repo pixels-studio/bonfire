@@ -4,7 +4,10 @@ import { afterEach, test } from 'node:test';
 import type { AssistantEvent } from '../shared/contracts';
 import { CodexAssistant } from '../electron/main/codex';
 import { SshMachine } from '../electron/main/machines';
-import { SIMPLIFIED_ENGLISH_INSTRUCTIONS } from '../shared/domain';
+import {
+  SIMPLIFIED_ENGLISH_INSTRUCTIONS,
+  TASK_ACTIVITY_INSTRUCTIONS,
+} from '../shared/domain';
 import { fakeStore, host, sendInput, sleep } from './helpers';
 
 const FIXTURE = join(process.cwd(), 'test/fixtures/fake-codex.mjs');
@@ -305,12 +308,22 @@ test('Simplified English is sent as developer instructions when on', async () =>
   await send('instructions');
   assert.equal(
     pane.messages.find((item) => item.id === 'a1')?.text,
-    `instructions:${SIMPLIFIED_ENGLISH_INSTRUCTIONS}`,
+    `instructions:${SIMPLIFIED_ENGLISH_INSTRUCTIONS}\n\n${TASK_ACTIVITY_INSTRUCTIONS}`,
   );
 });
 
-test('no developer instructions are sent when Simplified English is off', async () => {
+test('only the activity instructions are sent when Simplified English is off', async () => {
   const { pane, send } = codex();
+  await send('instructions');
+  assert.equal(
+    pane.messages.find((item) => item.id === 'a1')?.text,
+    `instructions:${TASK_ACTIVITY_INSTRUCTIONS}`,
+  );
+});
+
+test('no developer instructions are sent with Simplified English and Recap off', async () => {
+  const { pane, store, send } = codex();
+  store.preferences.recap = false;
   await send('instructions');
   assert.equal(
     pane.messages.find((item) => item.id === 'a1')?.text,

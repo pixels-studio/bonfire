@@ -106,7 +106,7 @@
             class={cn(
               'rounded-full px-2 py-0.5 text-xs font-medium',
               pull.state === 'merged'
-                ? 'bg-brand/15 text-brand'
+                ? 'bg-foreground/10 text-foreground'
                 : pull.draft
                   ? 'bg-secondary text-muted-foreground'
                   : 'bg-success/15 text-success',
