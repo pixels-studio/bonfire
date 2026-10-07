@@ -17,7 +17,9 @@ npm start
 `npm start` builds the renderer, main process, and preload bundle before launching, so it
 also works from a clean checkout. Development: `npm run dev`. Renderer changes hot reload;
 restart after main/preload edits.
-`npm run rebuild` repairs node-pty after changing Electron versions.
+`npm run rebuild` repairs node-pty after changing Electron versions. On Windows, install uses
+node-pty's prebuilt binaries, so no Visual Studio build tools are needed (`npm run rebuild`
+still compiles from source and needs the Spectre-mitigated libraries).
 
 ## Use
 

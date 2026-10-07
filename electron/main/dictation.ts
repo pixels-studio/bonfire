@@ -1,6 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import type { DictationEvent } from '../../shared/contracts';
 
@@ -16,7 +17,10 @@ export class Dictation {
 
   constructor(
     private readonly options: {
-      /** The helper's path; undefined where dictation isn't supported. */
+      /**
+       * The helper's path (a PowerShell script on Windows, a native binary on macOS);
+       * undefined where dictation isn't supported.
+       */
       program: string | undefined;
       /**
        * Whether the helper asks for permissions as itself rather than through the app,
@@ -30,15 +34,46 @@ export class Dictation {
 
   available() {
     const { program } = this.options;
-    return process.platform === 'darwin' && !!program && existsSync(program);
+    return (
+      (process.platform === 'darwin' || process.platform === 'win32') &&
+      !!program &&
+      existsSync(program)
+    );
+  }
+
+  /** How to run the helper; Windows runs it through the PowerShell that ships with the OS. */
+  private command(language: string): [string, string[]] {
+    const program = this.options.program!;
+    if (process.platform !== 'win32') return [program, [language]];
+    const powershell = join(
+      process.env.SystemRoot ?? 'C:\\Windows',
+      'System32',
+      'WindowsPowerShell',
+      'v1.0',
+      'powershell.exe',
+    );
+    return [
+      powershell,
+      [
+        '-NoProfile',
+        '-NonInteractive',
+        '-ExecutionPolicy',
+        'Bypass',
+        '-File',
+        program,
+        language,
+      ],
+    ];
   }
 
   start(language: string) {
     if (!this.available()) throw Error('Dictation is unavailable.');
     this.close();
     const session = randomUUID();
-    const child = spawn(this.options.program!, [language], {
+    const [program, args] = this.command(language);
+    const child = spawn(program, args, {
       stdio: 'pipe',
+      windowsHide: true,
       env: {
         ...process.env,
         ...(this.options.disclaim && { BONFIRE_DICTATION_DISCLAIM: '1' }),

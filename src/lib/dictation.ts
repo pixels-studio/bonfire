@@ -2,6 +2,12 @@ import type { API } from '../../shared/contracts';
 
 /** Maps the helper's error reason to copy shown in the composer. */
 export function dictationErrorMessage(error: unknown): string {
+  const windows =
+    typeof navigator !== 'undefined' && /Windows/i.test(navigator.userAgent);
+  if (error === 'not-allowed' && windows)
+    return 'Microphone access is off. Turn on Settings → Privacy & security → Microphone → Let desktop apps access your microphone.';
+  if (error === 'unavailable' && windows)
+    return 'No speech recognition language is installed. Add one in Settings → Time & language → Speech.';
   if (error === 'not-allowed')
     return 'Microphone access was denied. Allow it in System Settings → Privacy & Security → Microphone.';
   if (error === 'service-not-allowed')
