@@ -22,7 +22,7 @@ import {
 } from '../agent-client';
 import type { AgentMethods, MainMethods } from '../agent-worker';
 import type { ChooseImage } from '../assistant';
-import { imagePreview } from '../attachments';
+import { imagePreview, toolImagePreview } from '../attachments';
 import { claudeExecutable } from '../claude';
 import { CliVersions, type CliTarget } from '../cli-version';
 import { codexProgram } from '../codex-rpc';
@@ -74,6 +74,7 @@ export function agentService({
     chooseImage,
     openUrl,
     imagePreview: (data, mimeType) => imagePreview(Buffer.from(data), mimeType),
+    toolImagePreview,
     imagePreviewOf: async (path, mimeType) =>
       imagePreview(await readFile(path), mimeType, path),
   };

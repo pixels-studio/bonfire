@@ -56,6 +56,11 @@ export type AssistantHost = {
   chooseImage: ChooseImage;
   /** Opens a URL in the user's browser, such as a sign-in page. */
   openUrl: (url: string) => Promise<void>;
+  /** Scales a tool result's image down for display; the agent host has no image tools of its own. */
+  toolImagePreview?: (
+    base64: string,
+    mimeType: string,
+  ) => Promise<string | undefined>;
   /** Shared between providers, so a pane keeps its attachments when its provider changes. */
   attachments?: PendingAttachments;
   /** The machine a project's folder is on, where its agent runs; this computer by default. */
@@ -765,7 +770,9 @@ export abstract class ChatAssistant {
       await Promise.all(
         images
           .slice(0, MAX_TOOL_IMAGES)
-          .map(({ data, mimeType }) => toolImagePreview(data, mimeType)),
+          .map(({ data, mimeType }) =>
+            (this.host.toolImagePreview ?? toolImagePreview)(data, mimeType),
+          ),
       )
     ).filter((preview): preview is string => !!preview);
     if (!previews.length) return;

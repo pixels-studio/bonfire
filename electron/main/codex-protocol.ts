@@ -49,7 +49,16 @@ export type ThreadItem =
       status: ItemStatus;
       prompt: string | null;
     }
-  | { type: 'webSearch'; id: string; query: string };
+  | { type: 'webSearch'; id: string; query: string }
+  | {
+      type: 'imageGeneration';
+      id: string;
+      status: string;
+      revisedPrompt: string | null;
+      /** The generated image's bytes, base64-encoded. */
+      result: string;
+      savedPath?: string;
+    };
 
 /** One block of an MCP tool's result, as the content array of the MCP spec carries it. */
 export type McpContentItem = {
