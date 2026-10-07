@@ -28,6 +28,15 @@ export class Cached<Value> {
     return this.pending;
   }
 
+  /**
+   * Takes a change learned some other way, such as pushed by the provider, as just loaded.
+   * `change` gets the last value (stale or not) and returns undefined to leave it alone.
+   */
+  update(change: (previous: Value | undefined) => Value | undefined) {
+    const value = change(this.entry?.value);
+    if (value !== undefined) this.entry = { at: Date.now(), value };
+  }
+
   /** Forgets the value, so the next read loads it again. */
   clear() {
     this.entry = undefined;

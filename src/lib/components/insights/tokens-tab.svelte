@@ -1,15 +1,22 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
   import { tokens } from '$lib/stores/tokens.svelte';
+  import { tokensPace } from './pace';
+  import { refreshOnTurns } from './refresh-on-turns.svelte';
   import TokenBreakdown from './token-breakdown.svelte';
   import TokenRangeSelect from './token-range-select.svelte';
   import TokenChart from './token-chart.svelte';
   import TokenStatsGrid from './token-stats.svelte';
   import TokensSkeleton from './tokens-skeleton.svelte';
 
+  /** Whether any agent is at work, so usage is worth checking on between turns. */
+  let { working }: { working: boolean } = $props();
+
   const entry = $derived(tokens.current);
 
-  onMount(() => tokens.refresh());
+  refreshOnTurns(
+    () => tokens.refresh(),
+    () => tokensPace(working),
+  );
 </script>
 
 <div class="divide-y divide-border">

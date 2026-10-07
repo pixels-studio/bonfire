@@ -457,6 +457,16 @@ export abstract class ChatAssistant {
     return this.planLimits.get();
   }
 
+  /** Whether the provider says when its limits change, so a turn ending needn't ask again. */
+  protected readonly pushesLimits: boolean = false;
+
+  /** Keeps limits the provider reported on its own, so the next read needn't ask. */
+  protected limitsReported(
+    change: (previous?: ProviderLimits) => ProviderLimits | undefined,
+  ) {
+    this.planLimits.update(change);
+  }
+
   account(): Promise<ProviderAccount> {
     return this.signedInAccount.get();
   }
@@ -608,6 +618,9 @@ export abstract class ChatAssistant {
       this.attachments.delete(attachments.map(({ id }) => id));
       this.turns.delete(pane.id);
       this.store.save(pane);
+      // The turn used up some of the plan, so the next read of its limits asks again,
+      // unless the provider reports its limits as they change.
+      if (!this.pushesLimits) this.planLimits.clear();
       if (turn.errored)
         this.notify({ paneId: pane.id, type: 'status', status: 'failed' });
       else if (!turn.cancelled)

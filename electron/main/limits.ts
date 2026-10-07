@@ -15,6 +15,8 @@ type ClaudeWindow = { utilization: number | null; resets_at: string | null };
 /** The part of Codex's `account/rateLimits/read` answer that holds plan limits. */
 export type CodexRateLimits = {
   rateLimits: {
+    /** Which metered bucket this is; `codex` (or absent) is the plan's own. */
+    limitId?: string | null;
     planType?: string | null;
     primary?: CodexWindow | null;
     secondary?: CodexWindow | null;
@@ -86,5 +88,25 @@ export function codexLimits({ rateLimits }: CodexRateLimits): ProviderLimits {
           },
         ]
       : [],
+  };
+}
+
+/**
+ * Codex's limits after one of its `account/rateLimits/updated` notifications. Those are sparse:
+ * a window or plan left out is unchanged, and an update for another bucket (such as a
+ * per-model one) says nothing of the plan's. Undefined when there's nothing to merge into.
+ */
+export function mergeCodexLimits(
+  previous: ProviderLimits | undefined,
+  update: CodexRateLimits,
+): ProviderLimits | undefined {
+  if (!previous) return undefined;
+  const { limitId } = update.rateLimits;
+  if (limitId && limitId !== 'codex') return previous;
+  const pushed = codexLimits(update);
+  return {
+    provider: 'codex',
+    plan: pushed.plan ?? previous.plan,
+    windows: pushed.windows.length ? pushed.windows : previous.windows,
   };
 }

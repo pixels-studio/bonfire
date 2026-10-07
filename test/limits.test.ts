@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { claudeLimits, codexLimits } from '../electron/main/limits';
+import {
+  claudeLimits,
+  codexLimits,
+  mergeCodexLimits,
+} from '../electron/main/limits';
 
 test('Claude limits list session, weekly, and per-model windows in that order', () => {
   const limits = claudeLimits({
@@ -77,4 +81,42 @@ test('Codex limits keep only the weekly window, with the reset in milliseconds',
   assert.deepEqual(limits.windows, [
     { id: 'weekly', label: 'Weekly', usedPercent: 40, resetsAt: 1791582359000 },
   ]);
+});
+
+test('A Codex limits update merges into the last read, keeping what it leaves out', () => {
+  const previous = {
+    provider: 'codex' as const,
+    plan: 'pro',
+    windows: [{ id: 'weekly', label: 'Weekly', usedPercent: 40 }],
+  };
+  const weekly = { usedPercent: 41, windowDurationMins: 10080, resetsAt: 2 };
+  assert.deepEqual(
+    mergeCodexLimits(previous, { rateLimits: { secondary: weekly } }),
+    {
+      provider: 'codex',
+      plan: 'pro',
+      windows: [
+        { id: 'weekly', label: 'Weekly', usedPercent: 41, resetsAt: 2000 },
+      ],
+    },
+  );
+  // Only the short window came: the weekly one stays as it was.
+  assert.deepEqual(
+    mergeCodexLimits(previous, {
+      rateLimits: { primary: { usedPercent: 5, windowDurationMins: 300 } },
+    }),
+    previous,
+  );
+  // Another bucket's update says nothing of the plan's limits.
+  assert.equal(
+    mergeCodexLimits(previous, {
+      rateLimits: { limitId: 'gpt-5-mini', secondary: weekly },
+    }),
+    previous,
+  );
+  // Nothing read yet: the next read asks.
+  assert.equal(
+    mergeCodexLimits(undefined, { rateLimits: { secondary: weekly } }),
+    undefined,
+  );
 });

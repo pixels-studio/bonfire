@@ -50,6 +50,11 @@ export class PaneStatuses {
     return 'idle';
   }
 
+  /** Whether any pane's agent is in the middle of a turn. */
+  get anyWorking() {
+    return Object.values(this.#running).some(Boolean);
+  }
+
   /** Clears a finished turn's mark once the user has looked at its pane. */
   markSeen(paneId: string) {
     if (this.#unseen[paneId]) this.#unseen[paneId] = false;

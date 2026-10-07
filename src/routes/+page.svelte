@@ -1213,6 +1213,7 @@
                     {:else if id === 'insights'}
                       <InsightsPane
                         bind:tab={insightsTab}
+                        working={statuses.anyWorking}
                         {...panelProps(id)}
                       />
                     {/if}

@@ -45,7 +45,7 @@ import type {
   TurnStatus,
   UserInputQuestion,
 } from './codex-protocol';
-import { codexLimits, type CodexRateLimits } from './limits';
+import { codexLimits, mergeCodexLimits, type CodexRateLimits } from './limits';
 import { localMachine, type Machine, type PipedProcess } from './machines';
 import {
   CodexRpc,
@@ -126,6 +126,7 @@ const INVALID_REQUEST = -32600;
  */
 export class CodexAssistant extends ChatAssistant {
   protected readonly provider = 'codex';
+  protected override readonly pushesLimits = true;
   /** App servers by machine id. */
   private readonly servers = new Map<string, Promise<CodexRpc>>();
   private readonly runs = new Map<string, Run>();
@@ -461,6 +462,14 @@ export class CodexAssistant extends ChatAssistant {
       onNotification: (method, params) => {
         if (method === 'account/login/completed')
           return this.logins.get(params.loginId)?.(params);
+        // Codex reports its limits as turns use them up. Limits are read from this
+        // computer's server, whose account a remote machine's may not share.
+        if (method === 'account/rateLimits/updated')
+          return machine.id === localMachine.id
+            ? this.limitsReported((previous) =>
+                mergeCodexLimits(previous, params),
+              )
+            : undefined;
         const run = this.runs.get(params?.threadId);
         if (run) return this.notification(run, method, params);
         const generation = this.generations.get(params?.threadId);
