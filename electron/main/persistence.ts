@@ -11,6 +11,7 @@ import {
 import { rename, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import {
+  conversationMessageSchema,
   stateSchema,
   type ConversationMessage,
   type Pane,
@@ -29,6 +30,7 @@ import {
   ProjectChanges,
   SettingChanges,
   sendable,
+  settleMessages,
   writable,
   type PaneView,
   type ProjectView,
@@ -97,9 +99,10 @@ export class Store {
   /** How many messages each pane's file held when written, to catch a change nobody reported. */
   private readonly written = new Map<string, number>();
   /**
-   * Archived panes whose conversation stays on disk, unread. Nothing shows or reopens an
-   * archived pane, and archived conversations are most of the history, so reading them
-   * would only slow every start and hold memory for good. Their files are never rewritten.
+   * Archived panes whose conversation stays on disk, unread. Nothing shows an archived pane,
+   * and archived conversations are most of the history, so reading them would only slow
+   * every start and hold memory for good. Their files are never rewritten; one is read
+   * back only when its pane is reopened.
    */
   private readonly unloaded = new Set<string>();
   /**
@@ -139,7 +142,7 @@ export class Store {
     this.data = raw ? stateSchema.parse(raw) : emptyState();
     const state = () => this.data;
     const save = (pane?: PaneView) => this.save(pane);
-    this.panes = new PaneChanges(state, save);
+    this.panes = new PaneChanges(state, save, (pane) => this.load(pane));
     this.projects = new ProjectChanges(state, this.panes, save);
     this.connections = new ConnectionChanges(state, save);
     this.settings = new SettingChanges(state, save);
@@ -347,6 +350,32 @@ export class Store {
     return join(this.conversations, `${id}${CONVERSATION_SUFFIX}`);
   }
 
+  /**
+   * Reads a reopened pane's conversation back, if it was left on disk. Its file is saved
+   * over from then on, so one that exists but can't be read is an error rather than an
+   * empty conversation, which would replace it.
+   */
+  private load(pane: Pane) {
+    if (!this.unloaded.has(pane.id)) return;
+    const file = this.conversationFile(pane.id);
+    let messages: ConversationMessage[] = [];
+    if (existsSync(file)) {
+      try {
+        messages = conversationMessageSchema
+          .array()
+          .parse(JSON.parse(readFileSync(file, 'utf8')));
+      } catch (cause) {
+        console.warn(
+          `Could not read conversation ${pane.id}: ${errorMessage(cause)}`,
+        );
+        throw Error('Could not read this conversation.');
+      }
+    }
+    pane.messages = messages;
+    this.written.set(pane.id, messages.length);
+    this.unloaded.delete(pane.id);
+  }
+
   private readConversation(id: string): ConversationMessage[] {
     try {
       return JSON.parse(readFileSync(this.conversationFile(id), 'utf8'));
@@ -425,12 +454,7 @@ export function stateForWindow(view: StateView): State {
 /** Turns that were cut off by a crash or quit leave messages that would look busy forever. */
 function settleInterrupted(state: State) {
   const settled = new Set<Pane>();
-  for (const pane of state.panes)
-    for (const message of pane.messages)
-      if (message.status === 'streaming') {
-        message.status = message.kind === 'tool' ? 'failed' : 'complete';
-        settled.add(pane);
-      }
+  for (const pane of state.panes) if (settleMessages(pane)) settled.add(pane);
   return settled;
 }
 

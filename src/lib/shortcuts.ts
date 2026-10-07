@@ -142,6 +142,12 @@ export const SHORTCUTS = define({
     scope: 'global',
     chords: [mod('w', { shift: true })],
   },
+  reopenPane: {
+    group: 'Panes',
+    label: 'Reopen closed conversation',
+    scope: 'global',
+    chords: [mod('t', { shift: true })],
+  },
   goToPane: {
     group: 'Panes',
     label: 'Go to pane 1–9',

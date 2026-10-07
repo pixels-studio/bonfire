@@ -159,6 +159,18 @@ export function assistantMessage(
   return { id, role: 'assistant', kind, text, status };
 }
 
+/**
+ * Thrown by a provider's `run` when the session it was asked to resume no longer exists,
+ * such as one its CLI cleaned up after a while. Thrown only before anything ran, so the
+ * turn can start a new session with the same message.
+ */
+export class SessionNotFound extends Error {
+  constructor(readonly threadId: string) {
+    super(`No session ${threadId}`);
+    this.name = 'SessionNotFound';
+  }
+}
+
 /** Labels pasted text so the model can tell it apart from the message itself. */
 export function attachedText({ name, text }: { name: string; text: string }) {
   return `<attachment name="${name}">\n${text}\n</attachment>`;
@@ -584,7 +596,7 @@ export abstract class ChatAssistant {
     try {
       await this.settleFastMode(turn);
       // Stopped while it was being set up: the provider never starts.
-      if (!turn.controller.signal.aborted) await this.run(turn);
+      if (!turn.controller.signal.aborted) await this.runResuming(turn);
     } catch (cause) {
       // A stop isn't a failure, and a failure the provider already showed isn't repeated.
       if (!turn.cancelled && !turn.controller.signal.aborted && !turn.errored)
@@ -604,6 +616,31 @@ export abstract class ChatAssistant {
       this.store.release?.(pane);
       // After a stop or a failure the queue waits, so the user decides what runs next.
       if (!turn.errored && !turn.cancelled) this.startNext(pane);
+    }
+  }
+
+  /**
+   * Runs the turn in the pane's session. If that session is gone, the pane forgets it and
+   * the turn runs once more in a new one, after a notice that the agent has lost what was
+   * said before: the conversation still shows it, but the agent no longer has it.
+   */
+  private async runResuming(turn: ActiveTurn) {
+    try {
+      await this.run(turn);
+    } catch (cause) {
+      if (!(cause instanceof SessionNotFound) || turn.controller.signal.aborted)
+        throw cause;
+      const { pane } = turn;
+      this.store.panes.update(pane, { threadId: undefined });
+      this.publish(
+        pane,
+        assistantMessage(
+          randomUUID(),
+          'notice',
+          `${PROVIDER_LABELS[this.provider]} no longer has the earlier session, so this reply starts a new one without the earlier messages.`,
+        ),
+      );
+      await this.run(turn);
     }
   }
 

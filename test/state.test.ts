@@ -216,3 +216,65 @@ test('an agent pane can open after the view panes while ordinary agents open fir
     action.id,
   ]);
 });
+
+test('only closed agent panes reopen, and only with room and their agent turned on', () => {
+  const store = newStore();
+  const item = store.projects.add(project());
+  store.projects.open(item);
+  let enabled = true;
+  const panes = paneService({
+    store,
+    agents: {
+      requireEnabled() {
+        if (!enabled) throw Error('Turn on Claude Code first.');
+      },
+      discard() {},
+    } as unknown as Agents,
+    terminals: { closePane() {} } as unknown as Terminals,
+    scripts: () => ({ forgetPane() {} }) as unknown as Scripts,
+    emit() {},
+  });
+
+  const terminal = panes.add('terminal');
+  panes.archive(terminal);
+  assert.throws(() => panes.reopen(terminal.id), /Only agent conversations/);
+
+  const conversation = panes.add();
+  panes.archive(conversation);
+  assert.equal(typeof conversation.archivedAt, 'number');
+  enabled = false;
+  assert.throws(() => panes.reopen(conversation.id), /Turn on/);
+  assert.equal(conversation.archived, true);
+
+  enabled = true;
+  panes.reopen(conversation.id);
+  assert.equal(conversation.archived, false);
+  assert.equal(store.state.layout.paneIds[0], conversation.id);
+});
+
+test('a pane closed by hand is listed under the branch checked out as it closed', async () => {
+  const store = newStore();
+  const item = store.projects.add(project());
+  store.projects.open(item);
+  const panes = paneService({
+    store,
+    agents: { requireEnabled() {}, discard() {} } as unknown as Agents,
+    terminals: { closePane() {} } as unknown as Terminals,
+    scripts: () => ({ forgetPane() {} }) as unknown as Scripts,
+    emit() {},
+    currentBranch: async () => 'feature',
+  });
+  const conversation = panes.add();
+  store.panes.update(conversation, {
+    workBranch: { name: 'main', since: 1 },
+  });
+  await panes.close(conversation.id);
+  assert.equal(conversation.archived, true);
+  assert.equal(conversation.closedBranch, 'feature');
+
+  // Closed by the app instead, it falls back to the branch its last turn ran on.
+  panes.reopen(conversation.id);
+  assert.equal(conversation.closedBranch, undefined);
+  panes.archive(conversation);
+  assert.equal(conversation.closedBranch, 'main');
+});

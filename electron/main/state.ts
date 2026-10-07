@@ -43,7 +43,16 @@ export function sendable<T>(view: ReadonlyDeep<T>) {
 
 /** Pane fields that change after the pane is made; `undefined` clears a field. */
 export type PanePatch = Partial<
-  Omit<Pane, 'id' | 'projectId' | 'type' | 'messages' | 'archived'>
+  Omit<
+    Pane,
+    | 'id'
+    | 'projectId'
+    | 'type'
+    | 'messages'
+    | 'archived'
+    | 'archivedAt'
+    | 'closedBranch'
+  >
 >;
 
 export type ProjectPatch = Partial<
@@ -68,6 +77,8 @@ export class PaneChanges {
   constructor(
     private readonly state: () => State,
     private readonly save: Save,
+    /** Reads a closed pane's conversation back from disk, if it was left there; throws if it can't. */
+    private readonly load: (pane: Pane) => void = () => {},
   ) {}
 
   /** Adds an open pane at the front of the layout, or at its end. */
@@ -85,12 +96,42 @@ export class PaneChanges {
     this.save();
   }
 
-  /** Closes the pane for good; its conversation stays on disk. */
-  archive(pane: PaneView) {
-    writable<Pane>(pane).archived = true;
+  /**
+   * Closes the pane for good; its conversation stays on disk. It is listed under the
+   * branch checked out as it closed, when known, else the one its last turn ran on.
+   */
+  archive(pane: PaneView, branch?: string) {
+    const closed = writable<Pane>(pane);
+    closed.archived = true;
+    closed.archivedAt = Date.now();
+    const closedBranch = branch ?? pane.workBranch?.name;
+    if (closedBranch) closed.closedBranch = closedBranch;
+    else delete closed.closedBranch;
     const { layout } = this.state();
     layout.paneIds = layout.paneIds.filter((id) => id !== pane.id);
     this.save();
+  }
+
+  /**
+   * Opens a closed pane again at the front of the layout, with its conversation. An open
+   * pane is left as it is, so a second request does nothing.
+   */
+  reopen(pane: PaneView) {
+    const reopened = writable<Pane>(pane);
+    if (!reopened.archived) return;
+    // Loaded first: a pane whose file is still unread would otherwise be saved as empty.
+    this.load(reopened);
+    reopened.archived = false;
+    delete reopened.archivedAt;
+    delete reopened.closedBranch;
+    // The branch is kept, as closed panes are listed by it, but counted from now: a pull
+    // request merged before the pane reopened would otherwise close it again.
+    if (reopened.workBranch)
+      reopened.workBranch = { ...reopened.workBranch, since: Date.now() };
+    // A turn stopped as the pane closed can leave a message that would look busy forever.
+    settleMessages(reopened);
+    this.state().layout.paneIds.unshift(reopened.id);
+    this.save(reopened);
   }
 
   reorder(ids: string[]) {
@@ -138,6 +179,20 @@ export function putMessage(pane: Pane, message: ConversationMessage) {
   const index = pane.messages.findLastIndex((item) => item.id === message.id);
   if (index === -1) pane.messages.push(message);
   else pane.messages[index] = message;
+}
+
+/**
+ * Ends messages left streaming by a turn that was cut off: tool calls as failed, the rest
+ * as complete. Returns whether any were.
+ */
+export function settleMessages(pane: Pane) {
+  let settled = false;
+  for (const message of pane.messages)
+    if (message.status === 'streaming') {
+      message.status = message.kind === 'tool' ? 'failed' : 'complete';
+      settled = true;
+    }
+  return settled;
 }
 
 /** Adds text to a streaming message's text or tool output; returns the message if it took it. */

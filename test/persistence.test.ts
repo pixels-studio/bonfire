@@ -452,3 +452,91 @@ test('saves reuse finished messages, yet write replaced and streaming ones as th
     ['first', 'replaced', 'growing'],
   );
 });
+
+test('a pane closed before the app started reopens with its conversation, settled and kept', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'bonfire-store-'));
+  const projectId = uuid();
+  const closed = uuid();
+  const first = new Store(directory);
+  first.projects.add({
+    id: projectId,
+    name: 'p',
+    path: '/tmp/p',
+    createdAt: 0,
+    lastOpenedAt: 0,
+  });
+  const pane = first.panes.add(
+    {
+      id: closed,
+      projectId,
+      type: 'claude',
+      title: 'Pane',
+      messages: [],
+      model: '',
+      reasoningEffort: 'medium',
+      fastMode: false,
+      approvals: 'auto',
+      archived: false,
+      workBranch: { name: 'feature', since: 1 },
+    },
+    'front',
+  );
+  // Closed mid-turn: the reply was still streaming.
+  first.panes.putMessage(pane, message('done') as never);
+  first.panes.putMessage(pane, message('cut off', 'streaming') as never);
+  first.save(pane);
+  first.panes.archive(pane);
+  first.flush();
+
+  const store = new Store(directory);
+  const reopened = store.pane(closed);
+  // Unread until reopened.
+  assert.equal(reopened.messages.length, 0);
+  store.panes.reopen(reopened);
+  assert.equal(reopened.archived, false);
+  assert.equal(reopened.archivedAt, undefined);
+  // A merge before it closed must not close it again.
+  assert.equal(reopened.workBranch?.name, 'feature');
+  assert(reopened.workBranch!.since > 1);
+  assert.deepEqual(
+    reopened.messages.map(({ text, status }) => [text, status]),
+    [
+      ['done', 'complete'],
+      ['cut off', 'complete'],
+    ],
+  );
+  assert.deepEqual(store.state.layout.paneIds, [closed]);
+  // Reopening twice does nothing more.
+  store.panes.reopen(reopened);
+  assert.deepEqual(store.state.layout.paneIds, [closed]);
+
+  store.flush();
+  const saved = JSON.parse(
+    readFileSync(join(directory, 'conversations', `${closed}.json`), 'utf8'),
+  );
+  assert.equal(saved.length, 2);
+});
+
+test('a closed conversation whose file cannot be read stays closed and on disk', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'bonfire-store-'));
+  const projectId = uuid();
+  const closed = uuid();
+  writeFileSync(
+    join(directory, 'state.json'),
+    JSON.stringify(
+      legacyState(projectId, [pane(closed, projectId, [], true)], []),
+    ),
+  );
+  mkdirSync(join(directory, 'conversations'), { recursive: true });
+  const file = join(directory, 'conversations', `${closed}.json`);
+  writeFileSync(file, '[{"broken"');
+
+  const store = new Store(directory);
+  assert.throws(
+    () => store.panes.reopen(store.pane(closed)),
+    /Could not read this conversation/,
+  );
+  assert.equal(store.pane(closed).archived, true);
+  store.flush();
+  assert.equal(readFileSync(file, 'utf8'), '[{"broken"');
+});

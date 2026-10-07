@@ -18,6 +18,7 @@ import {
 import {
   type AgentStore,
   ChatAssistant,
+  SessionNotFound,
   attachedText,
   inlineParts,
   type AssistantHost,
@@ -46,7 +47,12 @@ import type {
 } from './codex-protocol';
 import { codexLimits, type CodexRateLimits } from './limits';
 import { localMachine, type Machine, type PipedProcess } from './machines';
-import { CodexRpc, codexCommand, type CodexCommand } from './codex-rpc';
+import {
+  CodexRpc,
+  CodexRpcError,
+  codexCommand,
+  type CodexCommand,
+} from './codex-rpc';
 import type { ProjectView } from './state';
 
 /** If Codex sends nothing for this long, the turn is assumed hung and ended. */
@@ -80,6 +86,38 @@ type Generation = {
   resolve: (text: string) => void;
   reject: (error: Error) => void;
 };
+
+/**
+ * Resumes a thread, or throws `SessionNotFound` if Codex no longer has it. Codex answers
+ * that with the generic invalid-request code, so its message, naming the thread, tells.
+ */
+async function resumeThread(
+  rpc: CodexRpc,
+  threadId: string,
+  settings: Record<string, unknown>,
+) {
+  try {
+    const { thread } = await rpc.request<{ thread: { id: string } }>(
+      'thread/resume',
+      { threadId, ...settings },
+    );
+    return thread.id;
+  } catch (cause) {
+    if (threadNotFound(cause, threadId)) throw new SessionNotFound(threadId);
+    throw cause;
+  }
+}
+
+export function threadNotFound(cause: unknown, threadId: string) {
+  return (
+    cause instanceof CodexRpcError &&
+    cause.code === INVALID_REQUEST &&
+    cause.message === `no rollout found for thread id ${threadId}`
+  );
+}
+
+/** JSON-RPC's code for a request the server can't act on. */
+const INVALID_REQUEST = -32600;
 
 /**
  * Talks to one long-lived `codex app-server`, which multiplexes conversations as
@@ -120,12 +158,7 @@ export class CodexAssistant extends ChatAssistant {
       sandbox: 'workspace-write',
     };
     const threadId = pane.threadId
-      ? (
-          await rpc.request<{ thread: { id: string } }>('thread/resume', {
-            threadId: pane.threadId,
-            ...settings,
-          })
-        ).thread.id
+      ? await resumeThread(rpc, pane.threadId, settings)
       : (
           await rpc.request<{ thread: { id: string } }>(
             'thread/start',
