@@ -142,13 +142,15 @@
                 </Button>
               {/snippet}
             </DropdownMenu.Trigger>
-            <DropdownMenu.Content align="end">
+            <DropdownMenu.Content align="end" class="w-48">
+              <DropdownMenu.Label>Sign in as</DropdownMenu.Label>
               <DropdownMenu.Item onclick={() => signIn('claude', connection)}>
-                <Icon name="claude" /> Sign in to Claude
+                <Icon name="claude" /> Claude
               </DropdownMenu.Item>
               <DropdownMenu.Item onclick={() => signIn('codex', connection)}>
-                <Icon name="codex" /> Sign in to Codex
+                <Icon name="codex" /> Codex
               </DropdownMenu.Item>
+              <DropdownMenu.Separator />
               <DropdownMenu.Item onclick={() => edit(connection)}>
                 <Icon name="settings" /> Edit
               </DropdownMenu.Item>
