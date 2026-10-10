@@ -154,6 +154,10 @@ export const paneSchema = z.object({
   /** The page a browser pane last showed. */
   url: z.string().optional(),
   archived: z.boolean().default(false),
+  /** When the pane was closed, to list the latest first; panes closed before this was kept lack it. */
+  archivedAt: z.number().optional(),
+  /** The branch checked out when the pane was closed, which lists it among that branch's. */
+  closedBranch: z.string().optional(),
 });
 
 /** How a connection signs in: the SSH agent and config as they are, or a key file. */
@@ -667,6 +671,7 @@ export const requests = {
   'panes.add': z.tuple([paneType.optional(), z.boolean().optional()]),
   'panes.fork': z.tuple([id, z.string().min(1).max(200), assistantProvider]),
   'panes.archive': z.tuple([id]),
+  'panes.reopen': z.tuple([id]),
   'panes.reorder': z.tuple([z.array(id).max(100)]),
   'panes.rename': z.tuple([id, z.string().trim().min(1).max(200)]),
   'panes.navigate': z.tuple([id, browserUrl]),
@@ -881,6 +886,8 @@ export type API = {
     ): Promise<{ pane: Pane; attachment: Attachment }>;
     onClosed(listener: (event: PanesClosedEvent) => void): Unsubscribe;
     archive(id: string): Promise<void>;
+    /** Opens a closed agent pane again, with its conversation, at the front of the strip. */
+    reopen(id: string): Promise<void>;
     /** Reorders the given panes among the layout slots they already occupy. */
     reorder(ids: string[]): Promise<void>;
     /** Gives the pane a title of the user's choosing. */

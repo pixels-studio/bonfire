@@ -33,6 +33,7 @@ import {
 } from '../../shared/domain';
 import {
   ChatAssistant,
+  SessionNotFound,
   assistantMessage,
   attachedText,
   inlineParts,
@@ -165,6 +166,8 @@ export class ClaudeAssistant extends ChatAssistant {
     const state: StreamState = { current: '', blocks: new Map() };
     try {
       for await (const event of run) {
+        if (options.resume && sessionNotFound(event, options.resume))
+          throw new SessionNotFound(options.resume);
         this.handle(turn, event, state);
         if (event.type !== 'result') continue;
         // A stop also drops steered messages the CLI still holds, which it would otherwise run.
@@ -796,6 +799,19 @@ export function claudeExecutable() {
       // Not installed for this platform; try the next.
     }
   return 'claude';
+}
+
+/**
+ * Whether the CLI stopped because the session it was asked to resume doesn't exist. It
+ * says so in a result that ran no turns, with an error naming that session, and no code.
+ */
+export function sessionNotFound(event: SDKMessage, resumed: string) {
+  return (
+    event.type === 'result' &&
+    event.subtype === 'error_during_execution' &&
+    event.num_turns === 0 &&
+    event.errors.includes(`No conversation found with session ID: ${resumed}`)
+  );
 }
 
 /** How the SDK starts the CLI: the remote machine's own, or the bundled one by default. */

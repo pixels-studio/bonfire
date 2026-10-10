@@ -69,6 +69,14 @@ export function messageFromItem(
       );
     case 'webSearch':
       return toolMessage(item.id, status, 'WebSearch', item.query);
+    case 'imageGeneration':
+      return toolMessage(
+        item.id,
+        item.status === 'failed' ? 'failed' : status,
+        'ImageGeneration',
+        item.revisedPrompt ?? '',
+        item.savedPath ?? '',
+      );
     default:
       return undefined;
   }
@@ -122,8 +130,19 @@ function contentText(content: McpContentItem[] | null | undefined) {
     .join('\n');
 }
 
+function mimeOfPath(path = '') {
+  const extension = path.split('.').pop()?.toLowerCase();
+  if (extension === 'jpg' || extension === 'jpeg') return 'image/jpeg';
+  if (extension === 'webp') return 'image/webp';
+  return 'image/png';
+}
+
 /** The images an MCP tool result carried, such as a screenshot a browser tool took. */
 export function imagesFromItem(item: ThreadItem) {
+  if (item.type === 'imageGeneration')
+    return item.result
+      ? [{ data: item.result, mimeType: mimeOfPath(item.savedPath) }]
+      : [];
   const content =
     item.type === 'mcpToolCall'
       ? item.result?.content

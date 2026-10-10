@@ -10,6 +10,8 @@ class TokenStore {
     '7d': { loading: false },
     '30d': { loading: false },
   });
+  #running: Partial<Record<TokenRange, Promise<void>>> = {};
+  #queued: Partial<Record<TokenRange, Promise<void>>> = {};
 
   get current() {
     return this.entries[this.range];
@@ -17,15 +19,25 @@ class TokenStore {
 
   select(range: TokenRange) {
     this.range = range;
-    this.refresh();
+    void this.refresh();
   }
 
-  refresh() {
-    const entry = this.entries[this.range];
-    if (!window.bonfire || entry.loading) return;
+  /**
+   * Reads the range again. Asked during a read, it reads once more afterwards, since the
+   * read underway may have started before the logs it was asked for were written.
+   */
+  refresh(range = this.range): Promise<void> {
+    if (!window.bonfire) return Promise.resolve();
+    const running = this.#running[range];
+    if (running)
+      return (this.#queued[range] ??= running.then(() => {
+        this.#queued[range] = undefined;
+        return this.refresh(range);
+      }));
+    const entry = this.entries[range];
     entry.loading = true;
-    window.bonfire.tokens
-      .get(this.range)
+    const load = window.bonfire.tokens
+      .get(range)
       .then((stats) => {
         entry.stats = stats;
         entry.error = undefined;
@@ -33,7 +45,12 @@ class TokenStore {
       .catch((cause) => {
         entry.error = cause instanceof Error ? cause.message : String(cause);
       })
-      .finally(() => (entry.loading = false));
+      .finally(() => {
+        entry.loading = false;
+        this.#running[range] = undefined;
+      });
+    this.#running[range] = load;
+    return load;
   }
 }
 

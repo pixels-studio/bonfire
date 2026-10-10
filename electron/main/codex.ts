@@ -18,6 +18,7 @@ import {
 import {
   type AgentStore,
   ChatAssistant,
+  SessionNotFound,
   attachedText,
   inlineParts,
   type AssistantHost,
@@ -44,9 +45,14 @@ import type {
   TurnStatus,
   UserInputQuestion,
 } from './codex-protocol';
-import { codexLimits, type CodexRateLimits } from './limits';
+import { codexLimits, mergeCodexLimits, type CodexRateLimits } from './limits';
 import { localMachine, type Machine, type PipedProcess } from './machines';
-import { CodexRpc, codexCommand, type CodexCommand } from './codex-rpc';
+import {
+  CodexRpc,
+  CodexRpcError,
+  codexCommand,
+  type CodexCommand,
+} from './codex-rpc';
 import type { ProjectView } from './state';
 
 /** If Codex sends nothing for this long, the turn is assumed hung and ended. */
@@ -82,12 +88,45 @@ type Generation = {
 };
 
 /**
+ * Resumes a thread, or throws `SessionNotFound` if Codex no longer has it. Codex answers
+ * that with the generic invalid-request code, so its message, naming the thread, tells.
+ */
+async function resumeThread(
+  rpc: CodexRpc,
+  threadId: string,
+  settings: Record<string, unknown>,
+) {
+  try {
+    const { thread } = await rpc.request<{ thread: { id: string } }>(
+      'thread/resume',
+      { threadId, ...settings },
+    );
+    return thread.id;
+  } catch (cause) {
+    if (threadNotFound(cause, threadId)) throw new SessionNotFound(threadId);
+    throw cause;
+  }
+}
+
+export function threadNotFound(cause: unknown, threadId: string) {
+  return (
+    cause instanceof CodexRpcError &&
+    cause.code === INVALID_REQUEST &&
+    cause.message === `no rollout found for thread id ${threadId}`
+  );
+}
+
+/** JSON-RPC's code for a request the server can't act on. */
+const INVALID_REQUEST = -32600;
+
+/**
  * Talks to one long-lived `codex app-server`, which multiplexes conversations as
  * threads. The app server (unlike `codex exec`) streams text deltas, asks the
  * client to approve commands and edits, and can interrupt a turn cleanly.
  */
 export class CodexAssistant extends ChatAssistant {
   protected readonly provider = 'codex';
+  protected override readonly pushesLimits = true;
   /** App servers by machine id. */
   private readonly servers = new Map<string, Promise<CodexRpc>>();
   private readonly runs = new Map<string, Run>();
@@ -120,12 +159,7 @@ export class CodexAssistant extends ChatAssistant {
       sandbox: 'workspace-write',
     };
     const threadId = pane.threadId
-      ? (
-          await rpc.request<{ thread: { id: string } }>('thread/resume', {
-            threadId: pane.threadId,
-            ...settings,
-          })
-        ).thread.id
+      ? await resumeThread(rpc, pane.threadId, settings)
       : (
           await rpc.request<{ thread: { id: string } }>(
             'thread/start',
@@ -428,6 +462,14 @@ export class CodexAssistant extends ChatAssistant {
       onNotification: (method, params) => {
         if (method === 'account/login/completed')
           return this.logins.get(params.loginId)?.(params);
+        // Codex reports its limits as turns use them up. Limits are read from this
+        // computer's server, whose account a remote machine's may not share.
+        if (method === 'account/rateLimits/updated')
+          return machine.id === localMachine.id
+            ? this.limitsReported((previous) =>
+                mergeCodexLimits(previous, params),
+              )
+            : undefined;
         const run = this.runs.get(params?.threadId);
         if (run) return this.notification(run, method, params);
         const generation = this.generations.get(params?.threadId);

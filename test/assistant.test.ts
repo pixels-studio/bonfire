@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { assistantMessage } from '../electron/main/assistant';
-import { skillText } from '../electron/main/claude';
+import { SessionNotFound, assistantMessage } from '../electron/main/assistant';
+import { sessionNotFound, skillText } from '../electron/main/claude';
+import { threadNotFound } from '../electron/main/codex';
+import { CodexRpcError } from '../electron/main/codex-rpc';
 import { promptParts, promptText, withoutMarkers } from '../shared/domain';
 import { scripted, sendInput, sleep } from './helpers';
 
@@ -447,4 +449,81 @@ test('a prompt shows its skills where they were typed', () => {
     { text: ' on ' },
     { attachmentId: 'x' },
   ]);
+});
+
+test('a turn whose session is gone runs again in a new one, after a notice', async () => {
+  const { assistant, pane, events } = scripted();
+  pane.threadId = 'old';
+  const resumed: (string | undefined)[] = [];
+  assistant.script = async ({ tools }, turn) => {
+    resumed.push(turn.pane.threadId);
+    if (turn.pane.threadId) throw new SessionNotFound(turn.pane.threadId);
+    tools.publish(pane, assistantMessage('reply', 'text', 'Hello'));
+  };
+  await assistant.send(sendInput());
+
+  assert.deepEqual(resumed, ['old', undefined]);
+  assert.equal(pane.threadId, undefined);
+  assert.deepEqual(
+    pane.messages.map(({ role, kind }) => `${role}:${kind}`),
+    ['user:text', 'assistant:notice', 'assistant:text'],
+  );
+  assert.match(pane.messages[1].text, /no longer has the earlier session/);
+  // The turn succeeded: no error shows and it finishes as completed.
+  assert(!pane.messages.some(({ kind }) => kind === 'error'));
+  assert(
+    events.some(
+      (event) => event.type === 'status' && event.status === 'completed',
+    ),
+  );
+});
+
+test('a session that is gone again in the new one is a plain failure, not a loop', async () => {
+  const { assistant, pane } = scripted();
+  pane.threadId = 'old';
+  let runs = 0;
+  assistant.script = async () => {
+    runs++;
+    throw new SessionNotFound('any');
+  };
+  await assistant.send(sendInput());
+  assert.equal(runs, 2);
+  assert.equal(pane.messages.at(-1)?.kind, 'error');
+});
+
+test('a missing session is told apart from other failures, for each CLI', () => {
+  const id = '00000000-0000-4000-8000-000000000000';
+  // As the Claude CLI reports it.
+  const missing = {
+    type: 'result',
+    subtype: 'error_during_execution',
+    num_turns: 0,
+    errors: [`No conversation found with session ID: ${id}`],
+  } as never;
+  assert.equal(sessionNotFound(missing, id), true);
+  assert.equal(sessionNotFound(missing, 'another'), false);
+  assert.equal(
+    sessionNotFound({ ...(missing as object), num_turns: 1 } as never, id),
+    false,
+  );
+  assert.equal(
+    sessionNotFound(
+      { ...(missing as object), errors: ['Request timed out'] } as never,
+      id,
+    ),
+    false,
+  );
+
+  // As `codex app-server` answers `thread/resume`.
+  const gone = new CodexRpcError(
+    -32600,
+    `no rollout found for thread id ${id}`,
+  );
+  assert.equal(threadNotFound(gone, id), true);
+  assert.equal(threadNotFound(gone, 'another'), false);
+  assert.equal(
+    threadNotFound(new CodexRpcError(-32600, 'thread is busy'), id),
+    false,
+  );
+  assert.equal(threadNotFound(Error(gone.message), id), false);
 });

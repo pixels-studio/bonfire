@@ -30,6 +30,8 @@ type PaneOptions = {
   /** Called on use, as scripts open panes through this service too. */
   scripts: () => Scripts;
   emit: (event: AssistantEvent) => void;
+  /** The branch the project's folder has checked out; unset if detached or not a repository. */
+  currentBranch?: (projectId: string) => Promise<string | undefined>;
 };
 
 /** Opening, closing, arranging and forking a project's panes. */
@@ -39,6 +41,7 @@ export function paneService({
   terminals,
   scripts,
   emit,
+  currentBranch = async () => undefined,
 }: PaneOptions) {
   const openPanesOf = (project: ProjectView) =>
     store.state.panes.filter(
@@ -116,12 +119,44 @@ export function paneService({
     );
   }
 
-  function archive(pane: PaneView) {
+  function archive(pane: PaneView, branch?: string) {
     // An archived pane has no view left to show, answer its turn, or type into its shell.
     agents.discard(pane);
     terminals.closePane(pane.id);
     scripts().forgetPane(pane.id);
-    store.panes.archive(pane);
+    store.panes.archive(pane, branch);
+  }
+
+  /**
+   * Closes a pane the user closed, noting the branch checked out, so it is listed among
+   * that branch's closed panes even if its last turn ran on another.
+   */
+  async function close(id: string) {
+    const pane = store.pane(id);
+    if (pane.archived) return;
+    const branch = pane.projectId
+      ? await currentBranch(pane.projectId)
+      : undefined;
+    // Closed some other way while the branch was looked up.
+    if (!pane.archived) archive(pane, branch);
+  }
+
+  /**
+   * Opens a closed agent pane again, at the front of its project's strip. Tool panes are not
+   * reopened: a terminal's shell ended as it closed, and the others have nothing to restore.
+   */
+  function reopen(id: string) {
+    const pane = store.pane(id);
+    if (!pane.archived) return;
+    if (!isAssistantPane(pane))
+      throw Error('Only agent conversations can be reopened.');
+    // Panes from before projects existed have no folder left to work in.
+    if (!pane.projectId) throw Error('This conversation has no project.');
+    const project = store.project(pane.projectId);
+    agents.requireEnabled(pane.type);
+    if (openPanesOf(project).length >= MAX_PANES)
+      throw new Error(`A project can have up to ${MAX_PANES} panes open.`);
+    store.panes.reopen(pane);
   }
 
   /** Starts a pane with another agent from a summary of the conversation up to a reply. */
@@ -162,7 +197,8 @@ export function paneService({
 
   function navigate(id: string, url: string) {
     const pane = store.pane(id);
-    if (pane.type !== 'browser') throw Error('Only a browser pane opens pages.');
+    if (pane.type !== 'browser')
+      throw Error('Only a browser pane opens pages.');
     if (pane.url !== url) store.panes.update(pane, { url });
   }
 
@@ -170,6 +206,8 @@ export function paneService({
     openPanesOf,
     add,
     archive,
+    close,
+    reopen,
     fork,
     rename,
     navigate,

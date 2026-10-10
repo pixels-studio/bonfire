@@ -23,6 +23,11 @@ export type MainMethods = {
   openUrl(url: string): Promise<void>;
   /** A preview of image data with no file, as a pasted screenshot until it is written. */
   imagePreview(data: Uint8Array, mimeType: string): Promise<string | undefined>;
+  /** A preview of a tool result's image, given as base64. */
+  toolImagePreview(
+    base64: string,
+    mimeType: string,
+  ): Promise<string | undefined>;
   /** A preview of an image file, which main reads itself rather than be sent its bytes. */
   imagePreviewOf(path: string, mimeType: string): Promise<string | undefined>;
 };
@@ -64,6 +69,8 @@ export function startAgentWorker(
     {
       chooseImage: () => main.call('chooseImage'),
       openUrl: (url) => main.call('openUrl', url),
+      toolImagePreview: (base64, mimeType) =>
+        main.call('toolImagePreview', base64, mimeType),
       attachments: new PendingAttachments((data, mimeType, path) =>
         path
           ? main.call('imagePreviewOf', path, mimeType)

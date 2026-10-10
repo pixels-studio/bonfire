@@ -56,6 +56,11 @@ export type AssistantHost = {
   chooseImage: ChooseImage;
   /** Opens a URL in the user's browser, such as a sign-in page. */
   openUrl: (url: string) => Promise<void>;
+  /** Scales a tool result's image down for display; the agent host has no image tools of its own. */
+  toolImagePreview?: (
+    base64: string,
+    mimeType: string,
+  ) => Promise<string | undefined>;
   /** Shared between providers, so a pane keeps its attachments when its provider changes. */
   attachments?: PendingAttachments;
   /** The machine a project's folder is on, where its agent runs; this computer by default. */
@@ -152,6 +157,18 @@ export function assistantMessage(
   status: MessageStatus = 'complete',
 ): ConversationMessage {
   return { id, role: 'assistant', kind, text, status };
+}
+
+/**
+ * Thrown by a provider's `run` when the session it was asked to resume no longer exists,
+ * such as one its CLI cleaned up after a while. Thrown only before anything ran, so the
+ * turn can start a new session with the same message.
+ */
+export class SessionNotFound extends Error {
+  constructor(readonly threadId: string) {
+    super(`No session ${threadId}`);
+    this.name = 'SessionNotFound';
+  }
 }
 
 /** Labels pasted text so the model can tell it apart from the message itself. */
@@ -440,6 +457,16 @@ export abstract class ChatAssistant {
     return this.planLimits.get();
   }
 
+  /** Whether the provider says when its limits change, so a turn ending needn't ask again. */
+  protected readonly pushesLimits: boolean = false;
+
+  /** Keeps limits the provider reported on its own, so the next read needn't ask. */
+  protected limitsReported(
+    change: (previous?: ProviderLimits) => ProviderLimits | undefined,
+  ) {
+    this.planLimits.update(change);
+  }
+
   account(): Promise<ProviderAccount> {
     return this.signedInAccount.get();
   }
@@ -579,7 +606,7 @@ export abstract class ChatAssistant {
     try {
       await this.settleFastMode(turn);
       // Stopped while it was being set up: the provider never starts.
-      if (!turn.controller.signal.aborted) await this.run(turn);
+      if (!turn.controller.signal.aborted) await this.runResuming(turn);
     } catch (cause) {
       // A stop isn't a failure, and a failure the provider already showed isn't repeated.
       if (!turn.cancelled && !turn.controller.signal.aborted && !turn.errored)
@@ -591,6 +618,9 @@ export abstract class ChatAssistant {
       this.attachments.delete(attachments.map(({ id }) => id));
       this.turns.delete(pane.id);
       this.store.save(pane);
+      // The turn used up some of the plan, so the next read of its limits asks again,
+      // unless the provider reports its limits as they change.
+      if (!this.pushesLimits) this.planLimits.clear();
       if (turn.errored)
         this.notify({ paneId: pane.id, type: 'status', status: 'failed' });
       else if (!turn.cancelled)
@@ -599,6 +629,31 @@ export abstract class ChatAssistant {
       this.store.release?.(pane);
       // After a stop or a failure the queue waits, so the user decides what runs next.
       if (!turn.errored && !turn.cancelled) this.startNext(pane);
+    }
+  }
+
+  /**
+   * Runs the turn in the pane's session. If that session is gone, the pane forgets it and
+   * the turn runs once more in a new one, after a notice that the agent has lost what was
+   * said before: the conversation still shows it, but the agent no longer has it.
+   */
+  private async runResuming(turn: ActiveTurn) {
+    try {
+      await this.run(turn);
+    } catch (cause) {
+      if (!(cause instanceof SessionNotFound) || turn.controller.signal.aborted)
+        throw cause;
+      const { pane } = turn;
+      this.store.panes.update(pane, { threadId: undefined });
+      this.publish(
+        pane,
+        assistantMessage(
+          randomUUID(),
+          'notice',
+          `${PROVIDER_LABELS[this.provider]} no longer has the earlier session, so this reply starts a new one without the earlier messages.`,
+        ),
+      );
+      await this.run(turn);
     }
   }
 
@@ -765,7 +820,9 @@ export abstract class ChatAssistant {
       await Promise.all(
         images
           .slice(0, MAX_TOOL_IMAGES)
-          .map(({ data, mimeType }) => toolImagePreview(data, mimeType)),
+          .map(({ data, mimeType }) =>
+            (this.host.toolImagePreview ?? toolImagePreview)(data, mimeType),
+          ),
       )
     ).filter((preview): preview is string => !!preview);
     if (!previews.length) return;

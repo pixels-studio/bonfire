@@ -51,7 +51,7 @@
   import type { ShortcutId } from '$lib/shortcuts';
   import { cliVersions } from '$lib/stores/cli-versions.svelte';
   import { preferences } from '$lib/stores/preferences.svelte';
-  import { cn } from '$lib/utils';
+  import { cn, formatAge } from '$lib/utils';
   import { CLI_NAMES, PROVIDER_LABELS, isViewPaneType } from '$shared/domain';
   import type { AssistantProvider, PaneType } from '$shared/contracts';
 
@@ -88,7 +88,6 @@
   let {
     panels,
     ontogglePanel,
-    onhelp,
     onaddPane,
     panes,
     canAddPane,
@@ -96,12 +95,14 @@
     startingProvider,
     onselectPane,
     onselectPanel,
+    closedPanes = [],
+    closedBranch,
+    onreopenPane,
     trafficLightInset = false,
   }: {
     /** The panels open ahead of the panes, in strip order. */
     panels: AppPanel[];
     ontogglePanel: (panel: AppPanel) => void;
-    onhelp: () => void;
     /** Opens a pane of the chosen type at the front of the strip. */
     onaddPane: (type: PaneType) => void;
     /** The agent ⌘N opens; ⇧⌘N opens the other one. */
@@ -113,6 +114,16 @@
     onselectPane: (paneId: string) => void;
     /** Scrolls an open panel into sight. */
     onselectPanel: (panel: AppPanel) => void;
+    /** The project's closed agent panes, latest first, which the clock row lists to reopen. */
+    closedPanes?: {
+      id: string;
+      title: string;
+      type: AssistantProvider;
+      archivedAt?: number;
+    }[];
+    /** The branch the closed panes are listed for; unset in a folder that isn't a repository. */
+    closedBranch?: string;
+    onreopenPane?: (paneId: string) => void;
     /** Drops the logo below the native window controls. */
     trafficLightInset?: boolean;
   } = $props();
@@ -266,6 +277,9 @@
           </nav>
         </div>
       {/if}
+      {#if closedPanes.length}
+        {@render closedRow()}
+      {/if}
     </div>
   </div>
   <div class="flex flex-col items-center gap-3.5">
@@ -275,25 +289,52 @@
     {#each GLOBAL_PANELS as item (item.panel)}
       {@render panelButton(item)}
     {/each}
-    <Tooltip.Root>
-      <Tooltip.Trigger>
-        {#snippet child({ props })}
-          <Button
-            {...props}
-            variant="secondary"
-            size="icon"
-            class={BUTTON_CLASS}
-            aria-label="Help"
-            onclick={onhelp}
-          >
-            <Icon name="help" />
-          </Button>
-        {/snippet}
-      </Tooltip.Trigger>
-      <Tooltip.Content side="right">Help</Tooltip.Content>
-    </Tooltip.Root>
   </div>
 </nav>
+
+{#snippet closedRow()}
+  <DropdownMenu.Root>
+    <DropdownMenu.Trigger>
+      {#snippet child({ props })}
+        <Button
+          {...props}
+          variant="secondary"
+          size="icon"
+          class={BUTTON_CLASS}
+          aria-label="Reopen a closed conversation"
+          title="Recently closed"
+        >
+          <Icon name="clock" />
+        </Button>
+      {/snippet}
+    </DropdownMenu.Trigger>
+    <DropdownMenu.Content side="right" align="start" class="w-72">
+      <DropdownMenu.Label class="truncate">
+        {closedBranch
+          ? `Recently closed on ${closedBranch}`
+          : 'Recently closed'}
+      </DropdownMenu.Label>
+      {#each closedPanes as pane (pane.id)}
+        {@const enabled = preferences.enabledProviders.includes(pane.type)}
+        <DropdownMenu.Item
+          disabled={!canAddPane || !enabled}
+          title={enabled
+            ? undefined
+            : `Turn on ${PROVIDER_LABELS[pane.type]} to reopen this conversation`}
+          onclick={() => onreopenPane?.(pane.id)}
+        >
+          <Icon name={pane.type} />
+          <span class="min-w-0 truncate">{pane.title}</span>
+          {#if pane.archivedAt}
+            <span class="ml-auto shrink-0 pl-2 text-xs text-muted-foreground">
+              {formatAge(pane.archivedAt)}
+            </span>
+          {/if}
+        </DropdownMenu.Item>
+      {/each}
+    </DropdownMenu.Content>
+  </DropdownMenu.Root>
+{/snippet}
 
 {#snippet updateButton()}
   <Tooltip.Root>

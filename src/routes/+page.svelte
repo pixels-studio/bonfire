@@ -133,6 +133,43 @@
           !!pane && !pane.archived && pane.projectId === project?.id,
       ),
   );
+  /** How many closed conversations the rail lists to reopen. */
+  const CLOSED_LISTED = 15;
+  /**
+   * The branch closed conversations are listed for: the one checked out, `null` in a folder
+   * that isn't a repository, where every one is listed, or `undefined` while the head is
+   * being looked up or is detached, where none are.
+   */
+  const closedBranch = $derived(
+    !branch.head ? undefined : branch.head.isGit ? branch.head.branch : null,
+  );
+  /**
+   * The closed agent panes of the project and branch on screen, latest first. Tool panes
+   * are left out: a terminal's shell ended as it closed, and the others have nothing to
+   * restore. A pane belongs to the branch checked out as it closed; one closed before that
+   * was kept, to the branch its last turn ran on.
+   */
+  const closedPanes = $derived(
+    workspace.panes
+      .filter(
+        (pane) =>
+          pane.archived &&
+          pane.projectId === project?.id &&
+          isAssistantPane(pane) &&
+          closedBranch !== undefined &&
+          (closedBranch === null ||
+            (pane.closedBranch ?? pane.workBranch?.name) === closedBranch),
+      )
+      // Panes closed before the time was kept go last, in the order they were made.
+      .sort((a, b) => (b.archivedAt ?? 0) - (a.archivedAt ?? 0))
+      .slice(0, CLOSED_LISTED)
+      .map(({ id, title, type, archivedAt }) => ({
+        id,
+        title,
+        type: type as AssistantProvider,
+        archivedAt,
+      })),
+  );
   /** The open view panes, which the header's toggles show as pressed. */
   const views = $derived(panes.filter((pane) => isViewPaneType(pane.type)));
   const openViews = $derived(
@@ -222,6 +259,19 @@
     if (panes.some((pane) => pane.id === paneId && pane.type === 'diff'))
       selectedDiff = undefined;
     return changePanes(() => window.bonfire.panes.archive(paneId));
+  }
+
+  /** Opens a closed conversation again at the front of the strip and brings it into sight. */
+  async function reopenPane(paneId: string) {
+    if (busy) return;
+    if (!canAddPane) {
+      toast(`A project can have up to ${MAX_PANES} panes open.`);
+      return;
+    }
+    await changePanes(() => window.bonfire.panes.reopen(paneId));
+    if (!panes.some((pane) => pane.id === paneId)) return;
+    paneStrip?.scrollTo({ left: 0, behavior: scrollBehavior() });
+    void focusPane(paneId);
   }
 
   function addProject() {
@@ -697,6 +747,9 @@
         if (target) void closePane(target.id);
         break;
       }
+      case 'reopenPane':
+        if (closedPanes[0]) void reopenPane(closedPanes[0].id);
+        break;
       case 'goToPane':
         if (panes[digit - 1]) void focusPane(panes[digit - 1].id);
         break;
@@ -1022,7 +1075,6 @@
         {panels}
         ontogglePanel={togglePanel}
         {trafficLightInset}
-        onhelp={() => window.bonfire.navigation.help()}
         onaddPane={addPane}
         startingProvider={startingProvider(
           preferences.current,
@@ -1037,6 +1089,9 @@
         {canAddTerminal}
         onselectPane={scrollToPane}
         onselectPanel={scrollToPanel}
+        {closedPanes}
+        closedBranch={closedBranch ?? undefined}
+        onreopenPane={reopenPane}
       />
       <div class="flex min-w-0 flex-1 flex-col">
         <AppHeader
@@ -1158,6 +1213,7 @@
                     {:else if id === 'insights'}
                       <InsightsPane
                         bind:tab={insightsTab}
+                        working={statuses.anyWorking}
                         {...panelProps(id)}
                       />
                     {/if}

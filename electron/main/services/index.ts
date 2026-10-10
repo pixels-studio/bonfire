@@ -122,6 +122,8 @@ export function services(options: ServiceOptions) {
     terminals,
     scripts: () => scripts,
     emit: emitAssistantEvent,
+    currentBranch: (projectId) =>
+      git.currentBranch(repository.folder(projectId)),
   });
   const scripts: Scripts = new Scripts({
     store,
@@ -261,7 +263,8 @@ export function services(options: ServiceOptions) {
         );
         return { pane: sendable<Pane>(pane), attachment };
       },
-      archive: async (id) => panes.archive(store.pane(id)),
+      archive: (id) => panes.close(id),
+      reopen: async (id) => panes.reopen(id),
       reorder: async (ids) => panes.reorder(ids),
       rename: async (id, title) => panes.rename(id, title),
       navigate: async (id, url) => panes.navigate(id, url),

@@ -54,6 +54,17 @@ export function codexCommand(machine?: Machine): CodexCommand {
   return { ...program, args: [...program.args, 'app-server'] };
 }
 
+/** An error the server answered a request with, with its JSON-RPC code. */
+export class CodexRpcError extends Error {
+  constructor(
+    readonly code: number | undefined,
+    message: string,
+  ) {
+    super(message);
+    this.name = 'CodexRpcError';
+  }
+}
+
 /**
  * A JSON-RPC connection to `codex app-server` over stdio. Messages are one JSON
  * object per line, with the `jsonrpc` field left out.
@@ -165,7 +176,12 @@ export class CodexRpc {
       if (!pending) return;
       this.pending.delete(id);
       if (message.error)
-        pending.reject(Error(message.error.message ?? 'Codex request failed'));
+        pending.reject(
+          new CodexRpcError(
+            message.error.code,
+            message.error.message ?? 'Codex request failed',
+          ),
+        );
       else pending.resolve(message.result);
     } else if (id === undefined) {
       this.handlers.onNotification(method, message.params);

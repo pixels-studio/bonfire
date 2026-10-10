@@ -17,7 +17,8 @@
   let opened = $state(false);
 </script>
 
-<details class="group text-sm">
+<div class="text-sm">
+<details class="group">
   <!-- Marked on click, before the native toggle paints, so the output shows in the same frame. -->
   <summary
     onclick={() => (opened = true)}
@@ -35,24 +36,6 @@
       </code>
     {/if}
   </summary>
-  {#if tool.images?.length}
-    <div class="mt-2 flex flex-wrap gap-2">
-      {#each tool.images as src, index (index)}
-        <button
-          type="button"
-          class="overflow-hidden rounded-xl border border-border transition-colors hover:border-foreground/40"
-          onclick={(event) =>
-            lightbox.show({
-              src,
-              alt: `${tool.name} result`,
-              origin: rectOf(event.currentTarget),
-            })}
-        >
-          <img {src} alt="" class="block max-h-72 max-w-xs object-contain" />
-        </button>
-      {/each}
-    </div>
-  {/if}
   {#if opened && (tool.input || tool.output)}
     <pre
       {@attach overlayScrollbar}
@@ -61,3 +44,22 @@
         >{'\n'}{/if}{tool.output}</pre>
   {/if}
 </details>
+{#if tool.images?.length}
+  <div class="mt-2 flex flex-col gap-2">
+    {#each tool.images as src, index (index)}
+      <button
+        type="button"
+        class="block w-full overflow-hidden rounded-xl border border-border transition-colors hover:border-foreground/40"
+        onclick={(event) =>
+          lightbox.show({
+            src,
+            alt: `${tool.name} result`,
+            origin: rectOf(event.currentTarget),
+          })}
+      >
+        <img {src} alt="" class="block h-auto max-h-96 w-full object-cover" />
+      </button>
+    {/each}
+  </div>
+{/if}
+</div>
