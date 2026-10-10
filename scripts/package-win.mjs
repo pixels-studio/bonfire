@@ -20,8 +20,21 @@ const arch = process.argv.includes('--arm64') ? 'arm64' : 'x64';
 const withAgents = process.argv.includes('--with-agents');
 const name = `Bonfire-win32-${arch}`;
 const out = join(root, 'release', name);
+// On Windows npm is npm.cmd, which needs a shell, and Windows 10+ ships bsdtar that reads and writes zips.
+const onWindows = process.platform === 'win32';
+const shell = onWindows;
+const tar = join(
+  process.env.SystemRoot ?? 'C:\\Windows',
+  'System32',
+  'tar.exe',
+);
 const run = (command, args, options = {}) =>
-  execFileSync(command, args, { stdio: 'inherit', cwd: root, ...options });
+  execFileSync(command, args, {
+    stdio: 'inherit',
+    cwd: root,
+    shell,
+    ...options,
+  });
 
 run('npm', ['run', 'build']);
 
@@ -43,18 +56,56 @@ const zip = await downloadArtifact({
 
 rmSync(out, { recursive: true, force: true });
 mkdirSync(out, { recursive: true });
-run('unzip', ['-q', zip, '-d', out]);
+if (onWindows) run(tar, ['-xf', zip, '-C', out], { shell: false });
+else run('unzip', ['-q', zip, '-d', out]);
 
 const resources = join(out, 'resources');
 const app = join(resources, 'app');
 rmSync(join(resources, 'default_app.asar'), { force: true });
 renameSync(join(out, 'electron.exe'), join(out, 'Bonfire.exe'));
 
+// Windows takes the taskbar, Start menu and Settings icon from the exe, so replace Electron's.
+// rcedit needs Wine off Windows, so other hosts keep Electron's icon.
+if (onWindows) {
+  const ico = join(root, 'release', 'icon.ico');
+  mkdirSync(join(root, 'release'), { recursive: true });
+  // VS Code terminals set ELECTRON_RUN_AS_NODE, which would start Electron as plain Node.
+  const { ELECTRON_RUN_AS_NODE, ...env } = process.env;
+  run('npx', ['electron', 'scripts/build-ico.cjs', ico], { env });
+  const { rcedit } = await import('rcedit');
+  await rcedit(join(out, 'Bonfire.exe'), {
+    icon: ico,
+    'version-string': {
+      ProductName: 'Bonfire',
+      FileDescription: 'Bonfire',
+      InternalName: 'Bonfire',
+      OriginalFilename: 'Bonfire.exe',
+    },
+    'product-version': pkg.version,
+    'file-version': pkg.version,
+  });
+} else {
+  console.warn("Not on Windows: Bonfire.exe keeps Electron's icon.");
+}
+
 mkdirSync(app, { recursive: true });
 writeFileSync(
   join(app, 'package.json'),
   JSON.stringify(
-    { name: pkg.name, version: pkg.version, main: pkg.main, type: pkg.type },
+    {
+      name: pkg.name,
+      version: pkg.version,
+      main: pkg.main,
+      type: pkg.type,
+      // The Codex package itself stays out of this build, but the app still needs to know
+      // which version it expects, to tell the user when theirs is outdated.
+      codexVersion: JSON.parse(
+        readFileSync(
+          join(root, 'node_modules/@openai/codex/package.json'),
+          'utf8',
+        ),
+      ).version,
+    },
     null,
     2,
   ),
@@ -71,9 +122,11 @@ const isAgentBinary = (path) =>
 const tree = execFileSync('npm', ['ls', '--omit=dev', '--all', '--parseable'], {
   cwd: root,
   encoding: 'utf8',
+  shell,
 });
 for (const path of tree
   .split('\n')
+  .map((line) => line.trim().replace(/\\/g, '/'))
   .filter((line) => line.includes('/node_modules/'))) {
   if (isAgentBinary(path) || path.endsWith('/node_modules/@openai/codex'))
     continue;
@@ -111,5 +164,10 @@ for (const file of readdirSync(locales))
 mkdirSync(join(root, 'release'), { recursive: true });
 const archive = join(root, 'release', `${name}.zip`);
 rmSync(archive, { force: true });
-run('zip', ['-qr', archive, name], { cwd: join(root, 'release') });
+if (onWindows)
+  run(tar, ['-a', '-cf', archive, name], {
+    cwd: join(root, 'release'),
+    shell: false,
+  });
+else run('zip', ['-qr', archive, name], { cwd: join(root, 'release') });
 console.log(`Packaged ${relative(root, out)} and ${relative(root, archive)}`);

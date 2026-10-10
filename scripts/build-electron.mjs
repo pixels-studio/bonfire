@@ -28,6 +28,13 @@ await build({
   external: ['electron'],
 });
 
+// On Windows, dictation is a PowerShell script on the system's speech recognizer; it ships as is.
+if (process.platform === 'win32') {
+  const { copyFileSync, mkdirSync } = await import('node:fs');
+  mkdirSync('dist/bin', { recursive: true });
+  copyFileSync('native/dictation/windows.ps1', 'dist/bin/bonfire-dictation.ps1');
+}
+
 // Dictation runs on macOS's speech recognizer through a small native helper. Its Info.plist
 // is embedded so macOS has wording for the microphone and speech recognition requests.
 if (process.platform === 'darwin') {

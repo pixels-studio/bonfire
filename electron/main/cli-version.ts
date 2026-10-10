@@ -50,7 +50,18 @@ function requiredVersion(provider: AssistantProvider): string | undefined {
         )
       : packageField(require.resolve('@openai/codex/package.json'), 'version');
   } catch {
-    return undefined;
+    // A packaged build leaves the Codex package out and records its version in the app's own
+    // package.json instead.
+    try {
+      const { codexVersion } = JSON.parse(
+        readFileSync(join(__dirname, '../../package.json'), 'utf8'),
+      );
+      return provider === 'codex' && typeof codexVersion === 'string'
+        ? codexVersion
+        : undefined;
+    } catch {
+      return undefined;
+    }
   }
 }
 

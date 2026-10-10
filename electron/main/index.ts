@@ -402,6 +402,10 @@ function connectTerminals() {
   mainWindow.webContents.postMessage(events.terminalPort, null, [port2]);
 }
 
+// Without an ID Windows groups the taskbar button under Electron's.
+if (process.platform === 'win32')
+  app.setAppUserModelId('studio.pixels.bonfire');
+
 app
   .whenReady()
   .then(async () => {
@@ -436,7 +440,12 @@ app
       send,
       log,
       dictation: {
-        program: resolve(__dirname, '../bin/bonfire-dictation'),
+        program: resolve(
+          __dirname,
+          process.platform === 'win32'
+            ? '../bin/bonfire-dictation.ps1'
+            : '../bin/bonfire-dictation',
+        ),
         disclaim: !app.isPackaged,
       },
       openTerminalChannel: connectTerminals,
